@@ -1,5 +1,7 @@
 # ChordWeaver
 
+**[chordweaver.github.io](https://chordweaver.github.io)** · [Descargar la última versión](https://github.com/ChordWeaver/chordweaver/releases/latest)
+
 Optimiza el *voice leading* entre acordes elegidos por vos, usando un
 algoritmo genético. Vos elegís los acordes y su duración; el AG decide
 qué nota del acorde canta cada voz y en qué octava, para que el
