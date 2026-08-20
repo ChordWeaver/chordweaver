@@ -1,0 +1,42 @@
+# --- Generados por Python ---
+__pycache__/
+*.py[cod]
+
+# --- Motor compilado (opcional, lo hace build_engine.py) ---
+# Un .pyd al lado de un .py gana en el orden de importación: si se
+# versionaran, un clone quedaría corriendo un motor viejo y editar el
+# .py no haría nada. Se regeneran con `python build_engine.py`.
+engine/*.pyd
+engine/*.so
+engine/*.c
+engine/*.html
+
+# --- Empaquetado ---
+build/
+dist/
+
+# --- Salida del programa ---
+output/
+
+# --- Datos del usuario (history.base_directory) ---
+# No son código: son el historial, los logros, el sendero del modo
+# historia, los huevos encontrados, las visitas y las preferencias.
+history.json
+achievements.json
+story.json
+eggs.json
+visitors.json
+settings.json
+
+# --- Entornos y herramientas locales ---
+.venv/
+venv/
+env/
+.claude/settings.local.json
+
+# --- Sistema operativo / editores ---
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/

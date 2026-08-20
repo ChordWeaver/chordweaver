@@ -1,0 +1,5 @@
+# Engine: standard library only.
+# GUI (stage 2):
+customtkinter>=5.2.0
+# Packaging:
+pyinstaller>=6.0
