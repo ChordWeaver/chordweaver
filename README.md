@@ -2,10 +2,14 @@
 
 **[chordweaver.github.io](https://chordweaver.github.io)** · [Descargar la última versión](https://github.com/ChordWeaver/chordweaver/releases/latest)
 
-Optimiza el *voice leading* entre acordes elegidos por vos, usando un
-algoritmo genético. Vos elegís los acordes y su duración; el AG decide
-qué nota del acorde canta cada voz y en qué octava, para que el
-movimiento total entre voces sea el mínimo posible.
+Tus acordes, tu melodía, o una hoja en blanco: un algoritmo genético convierte
+cualquiera de las tres en una progresión escrita a varias voces. Decide qué nota
+del acorde canta cada voz y en qué octava, para que el movimiento total sea el
+mínimo posible sin romper las reglas de contrapunto del género elegido.
+
+El AG **nunca cambia los acordes ni su orden** — sólo el registro y el reparto de
+notas. En el Organizador los acordes los escribís vos; en el Generador los arma
+el programa; en el Armonizador los busca debajo de la melodía que dibujaste.
 
 ![La pantalla que abre el programa: los tres modos de trabajo](capturas/01-modos.png)
 
