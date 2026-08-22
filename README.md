@@ -368,9 +368,7 @@ request y las cinco trampas que fallan en silencio --- están en
 ## Estado
 
 - Parte 1 (motor): terminada y testeada (369 tests).
-- Parte 2 (interfaz): terminada. Probada de punta a punta bajo display virtual,
-  pero **no** en Windows real ni empaquetada como .exe -- eso lo tenés que
-  verificar vos.
+- Parte 2 (interfaz): terminada. Probada de punta a punta bajo display virtual (Claude) y real.
 
 ## Licencia
 
