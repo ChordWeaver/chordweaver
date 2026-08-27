@@ -1101,6 +1101,14 @@ class ModulationTarget:
     def is_modal(self) -> bool:
         return self.offset == 0
 
+    @property
+    def short_label(self) -> str:
+        """El nombre sin el prefijo del menú: «menor», «Dominante (V)»."""
+        prefix = "Modal: a "
+        if self.label.startswith(prefix):
+            return self.label[len(prefix):]
+        return self.label
+
 
 #: Destinations, grounded in the standard account of closely related keys:
 #: the five keys built on the diatonic triads (ii, iii, IV, V, vi) plus the
@@ -1210,18 +1218,24 @@ class ModulationSettings:
 #: authentic and plagal forms of each mode are.
 #: Destinations are fixed per style rather than offered freely: a piece does
 #: not modulate wherever it likes, it goes where its idiom goes. Common
-#: practice travels to the closest keys, jazz adds the parallel mode and the
-#: flat mediant, and modal writing shifts by fourth and fifth, which is what
-#: the authentic and plagal forms of each mode are.
+#: practice travels to the closest keys and swaps major for minor over the
+#: same tonic, jazz adds the flat mediant, and modal writing shifts by fourth
+#: and fifth, which is what the authentic and plagal forms of each mode are.
+#:
+#: Cada lista tiene que incluir destinos de los dos tipos si el estilo ofrece
+#: los dos interruptores: el tilde «de modo» sin un destino modal en la lista
+#: se enciende y no hace absolutamente nada.
 GENRE_MODULATION: Dict[str, ModulationSettings] = {
     "classical": ModulationSettings(
         key_enabled=False, modal_enabled=False,
-        targets=("V", "vi", "IV"), weight=-22.0, switch_cost=70.0,
+        targets=("V", "vi", "IV", "parallel_minor", "parallel_major"),
+        weight=-22.0, switch_cost=70.0,
         min_bars=2, home_margin_bars=2, weak_return=140.0,
     ),
     "chorale": ModulationSettings(
         key_enabled=False, modal_enabled=False,
-        targets=("V", "vi"), weight=-16.0, switch_cost=62.0,
+        targets=("V", "vi", "parallel_minor", "parallel_major"),
+        weight=-16.0, switch_cost=62.0,
         min_bars=2, home_margin_bars=2, weak_return=160.0,
     ),
     "gregorian": ModulationSettings(
@@ -1241,27 +1255,113 @@ GENRE_MODULATION: Dict[str, ModulationSettings] = {
 }
 
 
+#: Modos que nombran el mismo color sobre una misma tónica. La menor
+#: armónica es la menor con la sensible levantada, no otro sitio adonde ir:
+#: una pieza en una no puede "modular" a la otra.
+_SAME_COLOUR_AS = {"harmonic": "minor"}
+
+
+def _modal_colour(mode_key: str) -> str:
+    return _SAME_COLOUR_AS.get(mode_key, mode_key)
+
+
+def available_targets(
+    settings: Optional[ModulationSettings],
+    home_mode_key: str = "major",
+) -> Tuple[str, ...]:
+    """
+    Los destinos que le quedan en pie a una pieza escrita en este modo.
+
+    Descarta dos cosas. La primera son los tipos que el usuario no encendió.
+    La segunda es el destino modal que coincide con el modo en el que la
+    pieza ya está: "modular" de menor a menor no es ningún viaje, y ofrecerlo
+    gastaba uno de los pocos destinos del estilo en no ir a ninguna parte ---
+    en menor el ganador era irse a la menor paralela, que es donde ya estaba.
+
+    Es la única lista que hay que consultar para saber si un interruptor
+    tiene algo que hacer: si ``modal_enabled`` está prendido y esto vuelve
+    sin ningún destino modal, el tilde no va a producir nada.
+    """
+    if settings is None or not settings.enabled:
+        return ()
+    home = _modal_colour(home_mode_key)
+    kept = []
+    for key in settings.targets:
+        target = MODULATION_TARGETS.get(key)
+        if target is None or target.mode_key not in MODES:
+            continue
+        if target.is_modal:
+            if not settings.modal_enabled:
+                continue
+            if _modal_colour(target.mode_key) == home:
+                continue
+        elif not settings.key_enabled:
+            continue
+        kept.append(key)
+    return tuple(kept)
+
+
+def modulation_key_name(key_area: str, tonic_pc: int) -> str:
+    """
+    Cómo se llama la tonalidad a la que lleva un área: «Sol Mayor (jónico)».
+
+    La cifra romana prefijada ---``V:ii``--- dice desde dónde se viaja, no a
+    dónde se llegó: hay que saber en qué tonalidad está la pieza y sumar la
+    quinta de cabeza. Esto lo contesta directamente, que es lo que la
+    pantalla de resultados necesita escribir arriba del tramo violeta.
+
+    Devuelve cadena vacía si el área no existe, para que quien lo llame no
+    tenga que distinguir el caso.
+    """
+    target = MODULATION_TARGETS.get(key_area)
+    if target is None:
+        return ""
+    mode = MODES.get(target.mode_key)
+    if mode is None:
+        return ""
+    # Sostenidos, que es como se llaman las tónicas en el menú del que salió
+    # ésta; salvo los destinos que ya se nombran con bemol ---el bIII--- que
+    # escritos con sostenido quedaban como «Re# Mayor», un nombre que no se
+    # usa para esa tonalidad.
+    names = FLAT_NAMES if key_area.startswith("b") else SHARP_NAMES
+    return f"{names[(tonic_pc + target.offset) % 12]} {mode.label}"
+
+
+def modulation_scales(
+    tonic_pc: int,
+    settings: Optional[ModulationSettings],
+    home_mode_key: str = "major",
+) -> Dict[str, Tuple[int, ...]]:
+    """
+    La escala de cada área tonal que la pieza puede visitar.
+
+    La clave vacía es la de casa. Existe para las notas de paso: un adorno
+    diatónico se elige contra una escala, y mientras la pieza está de viaje
+    la escala que vale es la del lugar donde está, no la de donde salió ---
+    una nota de paso «diatónica» sacada de la tonalidad de origen suena
+    contra el acorde que la sostiene, que es exactamente lo que el adorno no
+    tiene que hacer.
+    """
+    scales: Dict[str, Tuple[int, ...]] = {}
+    for key in available_targets(settings, home_mode_key):
+        target = MODULATION_TARGETS[key]
+        mode = MODES[target.mode_key]
+        scales[key] = tuple(
+            mode.pitch_classes((tonic_pc + target.offset) % 12))
+    return scales
+
+
 def modulation_pool(
     tonic_pc: int,
     settings: ModulationSettings,
     with_sevenths: bool = False,
+    home_mode_key: str = "major",
 ) -> List[ChordOption]:
     """Chords from every key area the piece is allowed to visit."""
-    if not settings.enabled:
-        return []
-
     options: List[ChordOption] = []
-    for key in settings.targets:
-        target = MODULATION_TARGETS.get(key)
-        if target is None:
-            continue
-        if target.is_modal and not settings.modal_enabled:
-            continue
-        if not target.is_modal and not settings.key_enabled:
-            continue
-        mode = MODES.get(target.mode_key)
-        if mode is None:
-            continue
+    for key in available_targets(settings, home_mode_key):
+        target = MODULATION_TARGETS[key]
+        mode = MODES[target.mode_key]
         new_tonic = (tonic_pc + target.offset) % 12
         for option in diatonic_options(new_tonic, mode, with_sevenths):
             options.append(ChordOption(

@@ -361,7 +361,7 @@ def ornaments_of(spec, solution) -> List[Tuple[int, int, int, float]]:
     final, que la puede fijar cada slot por su cuenta: es lo que hace que no
     todos los adornos duren lo mismo.
     """
-    found: List[Tuple[int, int, int, float]] = []
+    found: List[Tuple[int, int, Tuple[int, ...], float]] = []
     rows = getattr(solution, "passing", None) or []
     shares = getattr(solution, "passing_share", None) or []
     default = getattr(spec, "passing_share", 0.5)
@@ -371,9 +371,10 @@ def ornaments_of(spec, solution) -> List[Tuple[int, int, int, float]]:
             continue
         if cursor < len(rows):
             share = shares[cursor] if cursor < len(shares) else default
-            for voice, note in enumerate(rows[cursor]):
-                if note is not None:
-                    found.append((index, voice, int(note), float(share)))
+            for voice, entry in enumerate(rows[cursor]):
+                shape = passing.figure(entry)
+                if shape:
+                    found.append((index, voice, shape, float(share)))
         cursor += 1
     return found
 
@@ -406,11 +407,14 @@ def playback_events(
     while len(out_durations) < len(out_chords):
         out_durations.append(2.0)
 
-    decorated: Dict[int, List[Tuple[int, int, float]]] = {}
+    decorated: Dict[int, List[Tuple[int, Tuple[int, ...], float]]] = {}
     for entry in ornaments:
         slot, voice, note, share = (list(entry) + [0.5])[:4]
+        # `note` puede ser una altura suelta o una figura entera, y de un
+        # historial viejo llega siempre suelta: `passing.figure` normaliza
+        # las dos formas.
         decorated.setdefault(int(slot), []).append(
-            (int(voice), int(note), float(share)))
+            (int(voice), passing.figure(note), float(share)))
 
     notes: List[Tuple[int, float, float]] = []
     position = 0.0
@@ -422,13 +426,22 @@ def playback_events(
             head = quarters * (1.0 - share)
             tail = quarters - head
             if head > 0.0 and tail > 0.0:
-                moved = {voice: note for voice, note, _s in here}
+                moved = {voice: shape for voice, shape, _s in here if shape}
+                # La cola se parte en tantos pedazos como notas tenga la
+                # figura mas larga. Es la misma cola: el compas sigue
+                # sumando lo que sumaba.
+                steps = max((len(s) for s in moved.values()), default=1)
+                span = tail / steps
                 for voice, pitch in enumerate(chord):
                     if voice == drop_voice:
                         continue
-                    if voice in moved:
+                    shape = moved.get(voice)
+                    if shape:
                         notes.append((pitch, position, head))
-                        notes.append((moved[voice], position + head, tail))
+                        for step in range(steps):
+                            note = shape[min(step, len(shape) - 1)]
+                            notes.append((note, position + head + span * step,
+                                          span))
                     else:
                         notes.append((pitch, position, quarters))
                 # Sus voces ya están en `notes`; el slot ocupa su tiempo y
@@ -765,9 +778,20 @@ def generate_random(
             defaults = harmony.GENRE_MODULATION.get(request.genre_key)
             if defaults is not None:
                 modulation = replace(modulation, targets=defaults.targets)
-        pool = pool + harmony.modulation_pool(
-            tonic_pc, modulation, request.with_sevenths
-        )
+        # Los destinos se recortan acá, una sola vez, y no en cada lugar que
+        # los mira: el plan de viaje del AG sortea sobre `targets`, así que un
+        # destino que el pool no tiene ---uno modal cuando el usuario sólo
+        # pidió tonalidades, o el modo en el que la pieza ya está--- se
+        # llevaba una de las tres soluciones y no viajaba a ninguna parte.
+        modulation = replace(modulation, targets=harmony.available_targets(
+            modulation, request.mode_key))
+        if not modulation.targets:
+            modulation = None
+        else:
+            pool = pool + harmony.modulation_pool(
+                tonic_pc, modulation, request.with_sevenths,
+                home_mode_key=request.mode_key,
+            )
     if not pool:
         return JobOutcome(result=GAResult([], 0, 0, 0), spec=None,
                           errors=["No hay acordes disponibles en esta tonalidad."])
@@ -869,7 +893,11 @@ def generate_random(
                  solutions_wanted=request.solutions_wanted,
                  harmony_weights=weights, tonic_pc=tonic_pc,
                  passing_rules=request.passing_rules,
-                 scale_pcs=mode.pitch_classes(tonic_pc))
+                 scale_pcs=mode.pitch_classes(tonic_pc),
+                 # Mientras la pieza está de viaje, sus adornos se eligen
+                 # con la escala del lugar donde está.
+                 area_scales=harmony.modulation_scales(
+                     tonic_pc, modulation, home_mode_key=request.mode_key))
 
     # Cuál eligió la búsqueda, antes de que la cita se meta adelante. Los
     # `slots` de abajo se sellan con esto y no con `solutions[0]`, que puede
@@ -1321,3 +1349,202 @@ def _make_room_for_melody(requirement, pitch: int, voice_count: int) -> None:
         if candidate in keep and candidate != sounded:
             keep.remove(candidate)
     requirement.required_pitch_classes = keep
+
+
+# ---------------------------------------------------------------------------
+# El analizador
+# ---------------------------------------------------------------------------
+#
+# El analizador no genera nada: recibe una partitura escrita y le pone
+# nombres. Lo único que necesita de la fachada es volver a escribirla, y eso
+# se hace con el mismo exportador que usan los tres modos --- una partitura
+# analizada se guarda igual que cualquier otra, con las mismas voces en las
+# mismas claves.
+
+#: Qué voz del catálogo recibe cada línea, según cuántas haya. De acá sale el
+#: reparto de claves al exportar: el exportador manda al pentagrama de fa al
+#: bajo, al barítono y al tenor, y al de sol a todo lo demás.
+ANALYSIS_VOICE_SETS: Dict[int, List[str]] = {
+    1: ["S"],
+    2: ["B", "S"],
+    3: ["B", "A", "S"],
+    4: ["B", "T", "A", "S"],
+    5: ["B", "T", "A", "MS", "S"],
+    6: ["B", "Bar", "T", "A", "MS", "S"],
+}
+
+#: Cómo se escribe cada nota del acorde, para que el exportador la deletree
+#: bien. El tamaño del intervalo es lo que decide la letra: tres semitonos
+#: son una tercera menor en un acorde menor y una segunda aumentada en otro
+#: lado, y el analizador ya sabe cuál de las dos es.
+_DEGREE_BY_SIZE = {
+    1: {0: "1"},
+    2: {2: "sus2"},
+    3: {3: "b3", 4: "3"},
+    4: {5: "sus4"},
+    5: {6: "b5", 7: "5", 8: "#5"},
+    6: {9: "6"},
+    7: {9: "bb7", 10: "b7", 11: "7"},
+}
+
+_ROLE_BY_NAME = {
+    "root": "root", "third": "third", "fifth": "fifth", "seventh": "seventh",
+}
+
+
+def _chord_from_reading(reading) -> Chord:
+    """Pasar una lectura del analizador al acorde que el exportador entiende."""
+    from .theory import ChordTone
+
+    tones = []
+    for pc, role, size in reading.tones:
+        interval = (pc - reading.root_pc) % 12
+        degree = _DEGREE_BY_SIZE.get(size, {}).get(interval, "1")
+        tones.append(ChordTone(interval, _ROLE_BY_NAME.get(role, "extension"),
+                               degree))
+    chord = Chord(symbol=reading.symbol, root_pc=reading.root_pc,
+                  root_letter=reading.root_name[0], tones=tones)
+    if reading.bass_pc is not None and reading.bass_pc != reading.root_pc:
+        chord.bass_pc = reading.bass_pc
+        chord.bass_letter = None
+    return chord
+
+
+def _bars_of(score) -> List[Tuple[int, float, float]]:
+    """
+    Los compases que la pieza ocupa de verdad: número, comienzo y duración.
+
+    `Score.bar_grid` sigue contando más allá del final ---necesita un compás
+    de más para ubicar la última nota--- y escribir ésos dejaría compases
+    vacíos al final del archivo.
+    """
+    finish = score.length()
+    bars = []
+    for number, start, per_bar in score.bar_grid():
+        if start >= finish - 1e-6:
+            break
+        bars.append((number, start, per_bar))
+    return bars
+
+
+def _written_bar(part, start: float, end: float):
+    """Lo que canta una voz dentro de un compás: pares (altura, duración).
+
+    Los huecos salen como silencios y una nota que cruza la barra se corta
+    en la barra: un compás de MusicXML tiene que sumar lo que dura el
+    compás, y una nota que se pasa lo desborda.
+    """
+    events: List[Tuple[Optional[int], float]] = []
+    cursor = start
+    for note in part.notes:
+        if note.pitch is None or note.end <= start + 1e-6:
+            continue
+        if note.onset >= end - 1e-6:
+            break
+        onset = max(note.onset, start)
+        finish = min(note.end, end)
+        if onset > cursor + 1e-6:
+            events.append((None, onset - cursor))
+        if finish - onset > 1e-6:
+            events.append((note.pitch, finish - onset))
+        cursor = max(cursor, finish)
+    if end - cursor > 1e-6:
+        events.append((None, end - cursor))
+    return events
+
+
+def analysis_score_spec(result, title: str = "Análisis"):
+    """
+    Armar la partitura exportable de un análisis.
+
+    Lo que se exporta es la pieza **como está escrita**: cada voz con su
+    propio ritmo, sus silencios y su armadura. Antes se escribía un hueco
+    por sonoridad ---o sea, un ataque de todas las voces cada vez que se
+    movía cualquiera---, y en una textura arpegiada eso quiere decir que la
+    redonda del bajo salía reatacada dieciséis veces por compás: el Preludio
+    de Bach volvía escrito entero en semicorcheas. Los compases salen de la
+    grilla de la partitura ---con sus cambios de compás y su anacrusa--- y
+    cada voz se escribe adentro de cada uno.
+
+    Devuelve ``(spec, chromosome, filled)``, que es lo que espera
+    :func:`engine.export.write_solution`. ``filled`` quedó en ``False``: los
+    silencios ahora se escriben como silencios y no hay nada que tapar.
+    """
+    from .ga import Chromosome
+
+    score = result.score
+    voice_count = max(1, len(score.parts))
+    keys = ANALYSIS_VOICE_SETS.get(
+        voice_count,
+        ["B"] + ["T"] * ((voice_count - 2) // 2)
+        + ["A"] * (voice_count - 2 - (voice_count - 2) // 2) + ["S"])
+    voices = build_voice_parts(keys[:voice_count])
+
+    bars = _bars_of(score)
+    if not bars:
+        bars = [(1, 0.0, score.metrics_at(1)[0] or 4.0)]
+
+    # El acorde de cada compás es el del segmento que lo gobierna. No se usa
+    # para escribir las alturas ---eso lo decide la armadura--- pero el
+    # exportador pide un acorde por hueco, y darle el que suena deja el
+    # archivo diciendo la verdad si algún día se lo mira.
+    slots: List[ChordSlot] = []
+    pitch_rows: List[List[int]] = []
+    for number, start, per_bar in bars:
+        segment = None
+        for candidate in result.segments:
+            if candidate.start - 1e-6 <= start < candidate.end - 1e-6:
+                segment = candidate
+                break
+        reading = segment.reading if segment is not None else None
+        chord = (_chord_from_reading(reading) if reading is not None
+                 else make_custom_chord([0], "acorde"))
+        try:
+            requirement = build_requirement(chord, voice_count)
+        except Exception:                                   # noqa: BLE001
+            requirement = build_requirement(make_custom_chord([0], "acorde"),
+                                            voice_count)
+        slots.append(ChordSlot(requirement=requirement,
+                               duration_quarters=per_bar, bar_index=number))
+        pitch_rows.append([60] * voice_count)
+
+    lines: Dict[int, export.MelodyLine] = {}
+    for voice, part in enumerate(score.parts):
+        written = {number: _written_bar(part, start, start + per_bar)
+                   for number, start, per_bar in bars}
+        lines[voice] = export.MelodyLine(voice_index=voice, bars=written)
+
+    signatures = [export.TimeSignature(*score.metre_at(max(1, number)))
+                  for number, _start, _per_bar in bars]
+    spec = export.ScoreSpec(
+        slots=slots, voices=voices,
+        time_signature=export.TimeSignature(score.beats, score.beat_type),
+        bar_time_signatures=signatures,
+        title=title, fifths=score.fifths,
+        voice_lines=lines, spell_by_key=True,
+        pickup=bool(bars) and bars[0][0] == 0)
+    solution = Chromosome(slots=pitch_rows, choices=[0] * len(slots))
+    return spec, solution, False
+
+
+def export_analysis(
+    result,
+    directory: Optional[str] = None,
+    formats: Sequence[str] = ("musicxml", "midi"),
+    title: str = "Análisis",
+) -> List[str]:
+    """
+    Escribir la partitura analizada, con los mismos formatos que el resto.
+
+    No se anota en el historial: el historial guarda corridas del motor ---
+    qué se le pidió y qué salió --- y un análisis no es una corrida. Nada de
+    lo que el historial muestra (género, voces, ajustes del algoritmo)
+    existe acá.
+    """
+    if not result.sonorities:
+        return []
+    target = directory or history.default_output_directory()
+    os.makedirs(target, exist_ok=True)
+    spec, solution, _filled = analysis_score_spec(result, title)
+    stem = history.unique_basename(target, title)
+    return export.write_solution(spec, solution, stem, formats)

@@ -18,7 +18,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from .ga import ChordSlot, Chromosome
-from .theory import SHARP_NAMES, VoicePart, octave_of, spell_pitch
+from .passing import figure
+from .theory import SHARP_NAMES, VoicePart, octave_of, spell_in_key, spell_pitch
 
 #: MusicXML divisions per quarter note. 8 lets us write everything down to a
 #: 32nd note with integer durations, which keeps the file tidy.
@@ -100,6 +101,35 @@ class ScoreSpec:
     #: that have no given melody, and those write every voice from the
     #: chromosome exactly as they always did.
     melody: Optional["MelodyLine"] = None
+    #: La armadura, en sostenidos (+) o bemoles (-). Los tres modos que
+    #: generan música escriben en Do y dejan esto en cero: la altura de cada
+    #: nota ya viene decidida y la armadura sólo cambiaría cómo se escribe.
+    #: El analizador sí la trae, porque analiza una partitura que ya tenía
+    #: una y devolverla en Do sería devolver otra partitura.
+    fifths: int = 0
+    #: Una línea escrita **por voz**, indexada por voz del motor. Es lo
+    #: mismo que ``melody`` pero para todas: cuando la partitura ya venía
+    #: escrita ---el analizador--- lo que hay que guardar no es un acorde
+    #: por hueco sino el ritmo de cada voz. Sin esto, una textura arpegiada
+    #: salía con todas las voces reatacando en cada semicorchea: la nota
+    #: tenida del bajo se escribía dieciséis veces por compás.
+    voice_lines: Optional[Dict[int, "MelodyLine"]] = None
+    #: Escribir cada altura por la armadura y no por el acorde. Lo pide lo
+    #: que ya venía escrito: ahí la alteración es un hecho de la partitura y
+    #: deducirla del acorde que suene encima la cambia.
+    spell_by_key: bool = False
+    #: Si el primer compás es una anacrusa. MusicXML lo marca ``implicit``,
+    #: que es lo que hace que el programa que lo abra no lo cuente ni le
+    #: reclame los tiempos que le faltan.
+    pickup: bool = False
+
+    def line_for(self, voice_index: int) -> Optional["MelodyLine"]:
+        """La línea escrita de una voz, si la hay."""
+        if self.melody is not None and self.melody.voice_index == voice_index:
+            return self.melody
+        if self.voice_lines is not None:
+            return self.voice_lines.get(voice_index)
+        return None
 
     def signature_for_bar(self, bar_index: int) -> TimeSignature:
         if self.bar_time_signatures and bar_index < len(self.bar_time_signatures):
@@ -138,6 +168,38 @@ def _duration_parts(quarters: float) -> Tuple[str, bool]:
     # Fall back to the closest known duration so odd values still render.
     closest = min(_NOTE_TYPES, key=lambda d: abs(d - quarters))
     return _NOTE_TYPES[closest], closest in _DOTTED
+
+
+#: Las figuras escribibles, de mayor a menor. Con puntillo incluidas: una
+#: negra con puntillo es una figura y escribirla como negra ligada a corchea
+#: es escribir dos.
+_WRITABLE = (8.0, 6.0, 4.0, 3.0, 2.0, 1.5, 1.0, 0.75, 0.5, 0.25)
+
+
+def _writable_pieces(quarters: float) -> List[float]:
+    """
+    Repartir una duración en figuras que existan, de mayor a menor.
+
+    Una duración que no es ninguna figura ---la mitad de un tresillo, lo que
+    queda de un compás partido por una barra--- no se puede escribir con un
+    solo signo. Antes se la escribía con la figura más parecida y el
+    ``<duration>`` de la real: el archivo sonaba bien y se veía mal, con
+    corcheas que decían durar una negra. Repartida y ligada, dice lo que
+    dura y se ve lo que es.
+    """
+    if quarters <= 1e-6:
+        return []
+    pieces: List[float] = []
+    left = quarters
+    for figure in _WRITABLE:
+        while left >= figure - 1e-6:
+            pieces.append(figure)
+            left -= figure
+    if left > 1e-6:
+        # Lo que no cierre con ninguna figura se escribe igual: mentirle a
+        # la duración correría todo lo que viene después.
+        pieces.append(round(left, 6))
+    return pieces or [quarters]
 
 
 def _escape(text: str) -> str:
@@ -207,7 +269,8 @@ def build_musicxml(spec: ScoreSpec, solution: Chromosome) -> str:
                     "\n        <clef number=\"2\"><sign>F</sign><line>4</line></clef>"
                 )
             key_block = (
-                "\n        <key><fifths>0</fifths></key>" if bar_number == 1 else ""
+                f"\n        <key><fifths>{spec.fifths}</fifths></key>"
+                if bar_number == 1 else ""
             )
             attributes = (
                 "\n      <attributes>"
@@ -233,32 +296,40 @@ def build_musicxml(spec: ScoreSpec, solution: Chromosome) -> str:
                     f"{int(round(total * DIVISIONS_PER_QUARTER))}"
                     "</duration></backup>"
                 )
-            melody_events = (
-                spec.melody.events_for(bar_slots[0].bar_index)
-                if spec.melody is not None
-                and voice_index == spec.melody.voice_index
-                else None
-            )
-            if melody_events is not None:
+            line = spec.line_for(voice_index)
+            written = (line.events_for(bar_slots[0].bar_index)
+                       if line is not None else None)
+            if written is not None:
                 # Written from the line itself, so its rhythm survives. The
                 # slot is still handed over for spelling: accidentals are
-                # read off the chord sounding underneath.
-                for melody_pitch, quarters in melody_events:
-                    if melody_pitch is None:
-                        body.append(_rest_xml(
-                            slot=bar_slots[0],
+                # read off the chord sounding underneath, unless the spec
+                # says to read them off the key signature instead.
+                for pitch, quarters in written:
+                    pieces = _writable_pieces(quarters)
+                    for position, span in enumerate(pieces):
+                        if pitch is None:
+                            body.append(_rest_xml(
+                                slot=bar_slots[0],
+                                voice_number=musicxml_voice(voice_index),
+                                staff=staff_of(voice_index),
+                                duration_override=span,
+                            ))
+                            continue
+                        # Una nota repartida en varias figuras se liga: son
+                        # una sola nota escrita con mas de un signo.
+                        tie = None
+                        if len(pieces) > 1:
+                            tie = ("start" if position == 0
+                                   else "stop" if position == len(pieces) - 1
+                                   else "both")
+                        body.append(_note_xml(
+                            pitch=pitch, slot=bar_slots[0],
                             voice_number=musicxml_voice(voice_index),
                             staff=staff_of(voice_index),
-                            duration_override=quarters,
+                            stem=stem_of(voice_index), fifths=spec.fifths,
+                            duration_override=span, tie=tie,
+                            spell_by_key=spec.spell_by_key,
                         ))
-                        continue
-                    body.append(_note_xml(
-                        pitch=melody_pitch, slot=bar_slots[0],
-                        voice_number=musicxml_voice(voice_index),
-                        staff=staff_of(voice_index),
-                        stem=stem_of(voice_index),
-                        duration_override=quarters,
-                    ))
                 continue
 
             sounding_index = sounding_before[bar_number - 1]
@@ -273,7 +344,7 @@ def build_musicxml(spec: ScoreSpec, solution: Chromosome) -> str:
                 pitch = solution.slots[sounding_index][voice_index]
                 notes = (solution.passing[sounding_index]
                          if sounding_index < len(solution.passing) else [])
-                has_passing = any(n is not None for n in notes)
+                has_passing = any(figure(n) for n in notes)
                 sounding_index += 1
 
                 if not has_passing:
@@ -281,7 +352,7 @@ def build_musicxml(spec: ScoreSpec, solution: Chromosome) -> str:
                         pitch=pitch, slot=slot,
                         voice_number=musicxml_voice(voice_index),
                         staff=staff_of(voice_index),
-                        stem=stem_of(voice_index),
+                        stem=stem_of(voice_index), fifths=spec.fifths,
                     ))
                     continue
 
@@ -289,13 +360,14 @@ def build_musicxml(spec: ScoreSpec, solution: Chromosome) -> str:
                 # single note for the whole duration: re-articulating them
                 # made every part move at once, so a single ornament looked
                 # like all four voices changing together.
-                moved_here = notes[voice_index] if voice_index < len(notes) else None
-                if moved_here is None:
+                moved_here = figure(notes[voice_index]
+                                    if voice_index < len(notes) else None)
+                if not moved_here:
                     body.append(_note_xml(
                         pitch=pitch, slot=slot,
                         voice_number=musicxml_voice(voice_index),
                         staff=staff_of(voice_index),
-                        stem=stem_of(voice_index),
+                        stem=stem_of(voice_index), fifths=spec.fifths,
                     ))
                     continue
 
@@ -306,25 +378,34 @@ def build_musicxml(spec: ScoreSpec, solution: Chromosome) -> str:
                          else spec.passing_share)
                 head = slot.duration_quarters * (1.0 - share)
                 tail = slot.duration_quarters - head
-                moved = notes[voice_index] if voice_index < len(notes) else None
                 body.append(_note_xml(
                     pitch=pitch, slot=slot,
                     voice_number=musicxml_voice(voice_index),
                     staff=staff_of(voice_index),
-                    stem=stem_of(voice_index),
+                    stem=stem_of(voice_index), fifths=spec.fifths,
                     duration_override=head,
                 ))
-                body.append(_note_xml(
-                    pitch=moved if moved is not None else pitch, slot=slot,
-                    voice_number=musicxml_voice(voice_index),
-                    staff=staff_of(voice_index),
-                    stem=stem_of(voice_index),
-                    duration_override=tail,
-                ))
+                # La cola se reparte entre las notas de la figura. Una figura
+                # de una nota escribe exactamente lo que escribia antes; una
+                # de tres escribe tres, y el compas sigue sumando lo mismo
+                # porque lo que se reparte es la misma cola.
+                span = tail / len(moved_here)
+                for moved in moved_here:
+                    body.append(_note_xml(
+                        pitch=moved, slot=slot,
+                        voice_number=musicxml_voice(voice_index),
+                        staff=staff_of(voice_index),
+                        stem=stem_of(voice_index), fifths=spec.fifths,
+                        duration_override=span,
+                    ))
 
         slot_cursor += len(bar_slots)
+        # La anacrusa se marca `implicit`: es un compas incompleto a
+        # proposito, y sin la marca cualquier editor lo cuenta como el
+        # primero y avisa que le faltan tiempos.
+        implicit = ' implicit="yes"' if spec.pickup and bar_number == 1 else ""
         measures.append(
-            f'\n    <measure number="{bar_number}">{attributes}'
+            f'\n    <measure number="{bar_number}"{implicit}>{attributes}'
             + "".join(body)
             + "\n    </measure>"
         )
@@ -373,6 +454,21 @@ def _rest_xml(slot: ChordSlot, voice_number: int, staff: int,
     )
 
 
+#: En qué orden altera una armadura a las letras. Sirve para no escribir un
+#: sostenido que la armadura ya puso: un fa sostenido en Sol mayor no lleva
+#: accidente, y escribírselo igual llena la partitura de alteraciones de más.
+_SHARP_ORDER = ("F", "C", "G", "D", "A", "E", "B")
+_FLAT_ORDER = ("B", "E", "A", "D", "G", "C", "F")
+
+
+def _signature_alteration(letter: str, fifths: int) -> int:
+    if fifths > 0 and letter in _SHARP_ORDER[:min(7, fifths)]:
+        return 1
+    if fifths < 0 and letter in _FLAT_ORDER[:min(7, -fifths)]:
+        return -1
+    return 0
+
+
 def _note_xml(
     pitch: int,
     slot: ChordSlot,
@@ -380,6 +476,9 @@ def _note_xml(
     staff: int,
     stem: str,
     duration_override: Optional[float] = None,
+    fifths: int = 0,
+    tie: Optional[str] = None,
+    spell_by_key: bool = False,
 ) -> str:
     """Render one <note> element, spelling accidentals from the chord degree."""
     chord = slot.requirement.chord
@@ -391,7 +490,12 @@ def _note_xml(
     # passing tone -- has no degree to spell it by, and reading the interval
     # from the root produced things like E# where the music says F. Those
     # are spelled from the note itself instead.
-    if tone is None and chord.bass_pc is not None and pitch % 12 == chord.bass_pc:
+    if spell_by_key:
+        # Lo que ya venía escrito se escribe como estaba: la armadura manda
+        # y el acorde no opina. Deducirlo del acorde llenaba de sostenidos
+        # una armonización leída en Fa.
+        step, alter, octave = spell_in_key(pitch, fifths)
+    elif tone is None and chord.bass_pc is not None and pitch % 12 == chord.bass_pc:
         step, alter, octave = spell_pitch(pitch, SHARP_NAMES[chord.bass_pc][0],
                                           0, "1")
     else:
@@ -405,23 +509,43 @@ def _note_xml(
     alter_xml = f"<alter>{alter}</alter>" if alter else ""
     dot_xml = "<dot/>" if dotted else ""
     accidental_xml = ""
-    if alter == 1:
-        accidental_xml = "<accidental>sharp</accidental>"
-    elif alter == -1:
-        accidental_xml = "<accidental>flat</accidental>"
-    elif alter == 2:
-        accidental_xml = "<accidental>double-sharp</accidental>"
-    elif alter == -2:
-        accidental_xml = "<accidental>flat-flat</accidental>"
+    # Sólo lo que la armadura no puso ya. Con la armadura en Do ---los tres
+    # modos que generan música--- esto no cambia nada, porque ahí toda
+    # alteración es un accidente.
+    if alter != _signature_alteration(step, fifths):
+        accidental_xml = {
+            1: "<accidental>sharp</accidental>",
+            -1: "<accidental>flat</accidental>",
+            2: "<accidental>double-sharp</accidental>",
+            -2: "<accidental>flat-flat</accidental>",
+            0: "<accidental>natural</accidental>",
+        }.get(alter, "")
+
+    # La ligadura de prolongación se escribe dos veces: `<tie>` es lo que
+    # suena y `<tied>` es lo que se dibuja, y un programa de notación
+    # necesita las dos. La cola de una ligadura no repite el accidente: la
+    # nota es la misma que ya estaba sonando.
+    tie_xml = tied_xml = ""
+    kinds = (("start", "stop") if tie == "both" else (tie,) if tie else ())
+    for kind in kinds:
+        tie_xml += '<tie type="%s"/>' % kind
+        tied_xml += '<tied type="%s"/>' % kind
+    if tie in ("stop", "both"):
+        accidental_xml = ""
+    tie_line = ("\n        " + tie_xml) if tie_xml else ""
+    notations = (("\n        <notations>" + tied_xml + "</notations>")
+                 if tied_xml else "")
 
     return (
         "\n      <note>"
         f"\n        <pitch><step>{step}</step>{alter_xml}<octave>{octave}</octave></pitch>"
         f"\n        <duration>{duration_units}</duration>"
+        f"{tie_line}"
         f"\n        <voice>{voice_number}</voice>"
         f"\n        <type>{note_type}</type>{dot_xml}{accidental_xml}"
         f"\n        <stem>{stem}</stem>"
         f"\n        <staff>{staff}</staff>"
+        f"{notations}"
         "\n      </note>"
     )
 
@@ -492,10 +616,11 @@ def build_midi(spec: ScoreSpec, solution: Chromosome, velocity: int = 80) -> byt
         pending_rest_ticks = 0
         sounding_index = 0
 
-        if spec.melody is not None and voice_index == spec.melody.voice_index:
+        line = spec.line_for(voice_index)
+        if line is not None:
             for bar_slots in group_slots_into_bars(spec):
                 for melody_pitch, quarters in (
-                        spec.melody.events_for(bar_slots[0].bar_index) or []):
+                        line.events_for(bar_slots[0].bar_index) or []):
                     ticks = int(round(quarters * TICKS_PER_QUARTER))
                     if melody_pitch is None:
                         pending_rest_ticks += ticks
@@ -518,10 +643,11 @@ def build_midi(spec: ScoreSpec, solution: Chromosome, velocity: int = 80) -> byt
             pitch = solution.slots[sounding_index][voice_index]
             notes = (solution.passing[sounding_index]
                      if sounding_index < len(solution.passing) else [])
-            moved = notes[voice_index] if voice_index < len(notes) else None
+            moved = figure(notes[voice_index]
+                           if voice_index < len(notes) else None)
             sounding_index += 1
 
-            if moved is None:
+            if not moved:
                 events.append((pending_rest_ticks,
                                bytes([0x90 | channel, pitch, velocity])))
                 pending_rest_ticks = 0
@@ -537,8 +663,15 @@ def build_midi(spec: ScoreSpec, solution: Chromosome, velocity: int = 80) -> byt
                            bytes([0x90 | channel, pitch, velocity])))
             pending_rest_ticks = 0
             events.append((head_ticks, bytes([0x80 | channel, pitch, 0])))
-            events.append((0, bytes([0x90 | channel, moved, velocity])))
-            events.append((tail_ticks, bytes([0x80 | channel, moved, 0])))
+            # La cola, repartida entre las notas de la figura. El ultimo
+            # pedazo se lleva lo que sobra de la division entera para que el
+            # compas cierre en el tick exacto.
+            span = tail_ticks // len(moved)
+            for index, note in enumerate(moved):
+                last = index == len(moved) - 1
+                length = tail_ticks - span * index if last else span
+                events.append((0, bytes([0x90 | channel, note, velocity])))
+                events.append((length, bytes([0x80 | channel, note, 0])))
 
         tracks.append(_midi_track(events))
 

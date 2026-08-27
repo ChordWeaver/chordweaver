@@ -70,7 +70,24 @@ a = Analysis(
         'engine.eggs',
         # Las visitas: el guion de los que se aparecen y su registro.
         'engine.visitors',
+        # El experimentador de armonicos: la sintesis y el widget. Como
+        # `cinematic` y `staff`, `spectrum` no vive en `engine/` y se importa
+        # igual desde `app.py`.
+        'engine.harmonics',
+        # El analizador: la lectura de la partitura y su pantalla. `analyzer`
+        # tampoco vive en `engine/` --- como `spectrum` y `staff` --- y se
+        # importa desde `app.py` igual que ellos.
+        'engine.analysis',
+        # El aviso de version nueva: la consulta (pura, en `engine/`) y el
+        # cartel. `updater` tampoco vive en `engine/` --- como `spectrum`,
+        # `staff` y `analyzer` --- y se importa desde `app.py` igual que
+        # ellos. Sin estos dos, el ejecutable arranca y nunca avisa nada.
+        'engine.updates',
         'cinematic',
+        'spectrum',
+        'staff',
+        'analyzer',
+        'updater',
     ],
     hookspath=[],
     hooksconfig={},

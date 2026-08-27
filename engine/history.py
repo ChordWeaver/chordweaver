@@ -301,6 +301,12 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     #: Qué anotaciones del libro de teoría ya se leyeron, para poder marcar
     #: las nuevas. Son claves de logro; la lista crece sola.
     "book_seen": [],
+    #: Qué guías de pantalla ya se mostraron. Cada una se abre sola la
+    #: primera vez que se llega a su pantalla y no vuelve; reiniciar el
+    #: tutorial desde el engranaje vacía esta lista y todas vuelven a
+    #: aparecer. Va acá y no en un archivo propio porque es exactamente lo
+    #: mismo que `tutorial_seen`: una preferencia sobre cuánto se explica.
+    "guides_seen": [],
 }
 
 

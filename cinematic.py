@@ -37,6 +37,7 @@ from __future__ import annotations
 import math
 import os
 import random
+import time
 import tkinter as tk
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -66,6 +67,10 @@ SKIES = {
     "void": ("#0B0C10", "#0A0B0E", "#08090C", "#050507"),
     # El cruce de caminos de la visión. Noche abierta, sin luna.
     "crossroads": ("#0A0C12", "#101422", "#161B2A", "#0B0D14"),
+    # Negro pelado: ni degradado, ni horizonte, ni polvo flotando. No es un
+    # lugar a oscuras --- eso es `void`, que sí tiene un charco de luz y
+    # motas --- sino la pantalla apagada con algo escrito encima.
+    "black": (BLACK, BLACK, BLACK, BLACK),
 }
 
 #: El color que se ve por debajo del negro de una visita.
@@ -119,6 +124,14 @@ SPEAKERS: Dict[str, dict] = {
     visitors.WATCHER: dict(name="? ? ?",
                            font=("Consolas", 15), colour="#98A6B8",
                            blip="blip_watcher", speed=1.1),
+    # El creador. En la sans más común que hay --- la misma con la que está
+    # escrita la interfaz entera --- y no en una serifa de época ni en una
+    # de ancho fijo: los demás vienen de otro siglo o de ninguna parte, y él
+    # viene de la ventana que el usuario tiene abierta. La letra tenía que
+    # ser la de los botones.
+    visitors.CREATOR: dict(name="? ? ?",
+                           font=("Segoe UI", 16), colour="#C6CBD4",
+                           blip="blip_creator", speed=1.6),
 }
 
 #: Poses que además suenan. La única, por ahora, es la cara con la que el
@@ -156,11 +169,18 @@ def assets_directory() -> str:
 #: Las poses de cada personaje. ``oscuro`` es la silueta que se usa mientras
 #: está lejos: se lo ve venir pero no se sabe quién es.
 POSES: Dict[str, Dict[str, str]] = {
+    # ``sombra`` es la pose normal pasada a negro puro --- el mismo recorte
+    # con el alfa intacto y el color en cero ---, y existe para una sola cosa:
+    # en la segunda visión se lo ve de espaldas, y de espaldas no hay recorte.
+    # Una silueta maciza no tiene frente ni dorso, así que la de adelante
+    # sirve para las dos. `oscuro` no alcanza: está apagado, no negro, y
+    # todavía se le ve la cara.
     story.DEVIL: {"normal": "devil-normal.png",
                   "siniestro": "devil-siniestro.png",
                   "enojado": "devil-enojado.png",
                   "perfil": "devil-perfil.png",
-                  "oscuro": "devil-oscuro.png"},
+                  "oscuro": "devil-oscuro.png",
+                  "sombra": "devil-sombra.png"},
     story.DJANGO: {"normal": "django-normal.png",
                    "feliz": "django-feliz2.png",
                    "quieto": "django-feliz.png",
@@ -190,6 +210,30 @@ POSES: Dict[str, Dict[str, str]] = {
     visitors.ROBERT: {"normal": "robert-frente.png",
                       "frente": "robert-frente.png",
                       "espalda": "robert-espalda.png"},
+    # El creador. Los dos recortes ya vienen en negro casi puro --- se lo
+    # llega a ver, y apenas ---, así que la pose de lejos es la misma que la
+    # de cerca: no hay nada que oscurecer. Es el mismo caso que la entidad, y
+    # por el motivo contrario: a ella no se le ve la cara porque está tapada,
+    # a él porque está a contraluz de su propia pantalla.
+    visitors.CREATOR: {"normal": "creator-normal.png",
+                       "brazos": "creator-brazos.png",
+                       "oscuro": "creator-normal.png"},
+}
+
+#: Los objetos que aparecen en una escena y no son nadie.
+#:
+#: Van aparte de `POSES` porque no son poses: no se intercambian con nada, no
+#: los usa ningún personaje y por eso **no** están atados a `ASSET_HEIGHT`.
+#: Un retrato tiene que medir siempre lo mismo o cambia de tamaño al cambiar
+#: de pose en la mitad de una frase; un objeto se dibuja una vez, en un solo
+#: plano, y lo único que decide su tamaño es a qué profundidad del camino se
+#: lo apoya.
+PROPS: Dict[str, str] = {
+    # La lápida de la tercera visión. Sin nombre escrito: dice «acá yace un
+    # bluesman» y nada más, que es exactamente lo que se sabe de la tumba de
+    # verdad --- hay tres, en tres cementerios distintos, y ninguna con
+    # papeles.
+    "lapida": "lapida.png",
 }
 
 #: Alto al que están guardados los recortes.
@@ -231,7 +275,16 @@ def load_pose(speaker: str, pose: str, step: int, blur: int = 1):
     de cerca se sabe quién es.
     """
     table = POSES.get(speaker, {})
-    name = table.get(pose) or table.get("normal")
+    return _load_image(table.get(pose) or table.get("normal"), step, blur)
+
+
+def load_prop(key: str, step: int):
+    """Un objeto de escena al tamaño de un plano. ``None`` si no está."""
+    return _load_image(PROPS.get(key), step)
+
+
+def _load_image(name: Optional[str], step: int, blur: int = 1):
+    """El archivo, achicado y cacheado. Lo comparten poses y objetos."""
     if not name:
         return None
     key = (name, step, blur)
@@ -495,6 +548,12 @@ class Cutscene(SoundCues):
         self._settle(start_step)
         if start_step == 2:
             self._hops = 2
+        if self.entrance == "unseen":
+            # Nadie en pantalla: sólo el negro y el cartel. El retrato se
+            # crea igual --- media escena lo da por hecho --- y se esconde.
+            # **Las líneas de una escena así no pueden llevar pose**: una
+            # pose vuelve a llamar a `Portrait.show`, que lo pone visible.
+            self.portrait.hide()
         if self.entrance == "descend":
             # Fuera de la pantalla, por arriba. Sin esto se lo veía parado en
             # el piso un segundo y recién después empezaba a bajar, que es
@@ -565,6 +624,14 @@ class Cutscene(SoundCues):
 
     def _draw_sky(self) -> None:
         """Un degradado hecho con franjas: Tk no sabe pintar otra cosa."""
+        if self.sky == "black":
+            self.canvas.create_rectangle(0, 0, self.width, self.height,
+                                         fill=BLACK, outline="")
+            if self.title:
+                self.canvas.create_text(
+                    self.width / 2, 40, text=self.title, fill=GOLD_DEEP,
+                    font=self._font(("Georgia", 12)))
+            return
         if self.sky == "void":
             self._draw_void()
             return
@@ -624,7 +691,10 @@ class Cutscene(SoundCues):
         # en redondo --- y por la misma razón que el halo de la luna: dos
         # formas tramadas iguales pintan los mismos píxeles y superponerlas
         # no oscurece nada.
-        for step in range(8, 0, -1):
+        #
+        # Sin nadie parado ahí no va: un charco de luz vacío se lee como un
+        # foco apuntando a un hueco.
+        for step in range(8, 0, -1) if self.entrance != "unseen" else ():
             position = step / 8.0
             radius_x = self.width * 0.30 * position
             radius_y = 78 * position
@@ -781,7 +851,12 @@ class Cutscene(SoundCues):
         Pocas y baratas: se mueven con ``coords`` y no hay ningún widget en el
         medio, así que treinta cuadros por segundo no le cuestan nada a la
         ventana.
+
+        En el negro pelado no va ninguna: no hay aire porque no hay lugar, y
+        veintiséis rayitas moviéndose lo convertirían en uno.
         """
+        if self.sky == "black":
+            return
         rng = random.Random(11)
         kind = {"valley": "wind", "ashes": "ember",
                 "heaven": "mote", "void": "mote"}.get(self.sky, "wind")
@@ -1226,7 +1301,11 @@ class Cutscene(SoundCues):
             self._pause -= 1
             return
         before = self.revealed
-        self.revealed = min(len(line.text), self.revealed + style["speed"])
+        # La velocidad es la del personaje, dividida por lo que pida el
+        # renglón: una escena puede querer que el mismo que siempre habla
+        # normal se tome su tiempo.
+        pace = style["speed"] / max(0.25, getattr(line, "drag", 1.0) or 1.0)
+        self.revealed = min(len(line.text), self.revealed + pace)
         shown = int(self.revealed)
         self.canvas.itemconfigure(self.body_text, text=line.text[:shown])
         if shown >= len(line.text):
@@ -1235,10 +1314,11 @@ class Cutscene(SoundCues):
         # Un respiro en la puntuación: es lo que convierte una tira de letras
         # en alguien hablando.
         last = line.text[shown - 1: shown]
+        drag = max(0.25, getattr(line, "drag", 1.0) or 1.0)
         if last in ".…!?":
-            self._pause = 14
+            self._pause = int(14 * drag)
         elif last in ",;:—":
-            self._pause = 7
+            self._pause = int(7 * drag)
         if int(before) // 3 != shown // 3:
             ambience.play(style["blip"])
 
@@ -1497,8 +1577,11 @@ class Cutscene(SoundCues):
 
     # -- la salida ----------------------------------------------------------------
 
+    # ``cut`` no anima nada: esconde el cuadro y espera un momento en negro.
+    # Es la salida de una escena que ya era una pantalla negra --- ahí un
+    # desvanecimiento es negro sobre negro, o sea segundo y medio de nada.
     LEAVE_FRAMES = {"smoke": 84, "recede": 92, "vanish": 52, "ascend": 86,
-                    "burn": 62}
+                    "burn": 62, "cut": 10}
 
     def _leave(self) -> None:
         self.phase = "leave"
@@ -1654,11 +1737,32 @@ STAGING = {
     visitors.WATCHER: dict(sky="void", bed="hollow", entrance="approach",
                            leap=True, departure="vanish", enter_sound="toll",
                            exit_sound="toll"),
+    # El creador, con la puesta de los dos maestros: el negro, y estar y
+    # dejar de estar en un pestañeo. No se acerca desde ningún lado --- eso
+    # es la entrada del señor del sombrero y cuenta otra historia, la de
+    # algo que se viene acercando hace rato.
+    #
+    # **Sin cama y sin ruido de llegada ni de partida**, que es lo único en
+    # que se aparta de ellos. Su escena abre con el ventilador de la máquina
+    # callándose y cierra con el ventilador volviendo: cualquier cosa que
+    # suene ahí contradice lo único que el narrador dice de la sala.
+    visitors.CREATOR: dict(sky="void", bed="", entrance="present",
+                           departure="vanish", enter_sound="",
+                           exit_sound=""),
 }
 
 
 def staging_for(speaker: str) -> dict:
-    return dict(STAGING.get(speaker, STAGING[story.DEVIL]))
+    """
+    La puesta de un personaje.
+
+    El respaldo es **el negro**, no el valle. Un personaje que falte en la
+    tabla no es un error visible: la escena se dibuja igual, y con el valle
+    salía con el cielo, la luna, el humo y el viento del señor del sombrero
+    --- una puesta que dice algo muy concreto de quien la usa. El negro no
+    dice nada de nadie, que es lo que corresponde cuando no se sabe.
+    """
+    return dict(STAGING.get(speaker, STAGING[visitors.BACH]))
 
 
 def offer(app, on_choice: Callable[[str], None], font_scale: float = 1.0
@@ -1693,6 +1797,12 @@ def speak(app, speaker: str, lines: Sequence[story.Line], *,
         # Un salto único es una manera de acercarse, así que pedir otra
         # entrada lo cancela.
         setup.pop("leap", None)
+        if entrance == "unseen":
+            # No entra nadie y no se va nadie: los ruidos de llegada y de
+            # partida no tienen a quién acompañar. Y tampoco va la cama de
+            # ambiente: una pantalla negra con tres palabras escritas no
+            # está en ningún lugar, y un viento debajo la manda a uno.
+            setup["enter_sound"] = setup["exit_sound"] = setup["bed"] = ""
     if departure:
         setup["departure"] = departure
     if sky:
@@ -1726,6 +1836,21 @@ class Vision(SoundCues):
     decir nada. Lo único que se repite es el pestañeo --- cerrar los ojos y
     que al abrirlos algo esté en otro lado --- porque es el idioma con el
     que este programa mueve a la gente por la pantalla.
+
+    Con ``kind="pact"`` es **la misma escena hasta que él aparece**, y de ahí
+    en adelante otra: en vez de darse vuelta y alejarse, la pantalla se apaga
+    y vuelve con dos --- él de frente y donde estaba, y delante suyo una
+    silueta negra que no estaba.
+
+    Con ``kind="tomb"`` es el mismo camino **años más tarde**: sin tren, sin
+    nadie parado en él y con una tormenta encima. Ahí el negro del medio no
+    trae a nadie: trae la lluvia, y cuando se abre lo que hay plantado en la
+    mitad del camino es una lápida.
+
+    Es una sola clase y no tres porque la primera mitad no es *parecida* en
+    las tres: es la misma noche, el mismo camino y el mismo pasto, y tenerla
+    escrita tres veces garantizaba que a la segunda vuelta sólo una de las
+    tres se arreglara.
     """
 
     WAKE_FRAMES = 40           # lo que tarda en abrirse al principio
@@ -1759,21 +1884,161 @@ class Vision(SoundCues):
             (6, 0.17, "espalda"),
             (8, 0.06, "espalda"))
 
-    def __init__(self, app, on_done: Optional[Callable[[], None]] = None):
+    # -- y lo que pasa en la segunda -----------------------------------------
+
+    # **Los tres cortes de la segunda visión son cortes, no pestañeos.** El
+    # negro entra de golpe y se va de golpe, que es lo mismo que hace el
+    # camino cuando aparece el primero: un fundido convierte una aparición en
+    # una transición.
+    MEET_BLACK = 46            # el negro entre uno y otro
+    MEET_FRAMES = 152          # los dos quietos en el camino
+    SEAL_HOLD = 40             # y el negro del que va a salir el cartel
+
+    #: Él, que se queda de frente y donde estaba: el que se ve es él.
+    #: Divisor del recorte y pose.
+    BACK = (3, "frente")
+
+    #: Y el otro **delante**, entre él y la cámara, en negro puro. De
+    #: espaldas no hay recorte y no hace falta: una silueta maciza no tiene
+    #: frente ni dorso.
+    FRONT = (2, "sombra")
+
+    #: Dónde queda cada uno, en anchos de pantalla desde el centro. El par va
+    #: centrado sobre el camino --- que es donde ocurre esto --- y separado
+    #: lo justo: los dos tienen los ojos en la línea del horizonte, así que
+    #: lo único que puede dejar ver al de atrás es correrlo de costado.
+    BACK_X = 0.035
+    FRONT_X = -0.025
+
+    # -- y lo que pasa en la tercera -------------------------------------------
+
+    STORM_FRAMES = 190         # la tormenta con la lápida: seis segundos
+
+    #: A qué altura del negro anterior arranca la lluvia y a cuál se pide el
+    #: golpe de suspenso.
+    #:
+    #: El golpe tarda `DREAD_SWELL` cuadros en desplomarse, así que se pide
+    #: **antes** de que el negro se levante y no cuando se levanta: así la
+    #: tensión crece a oscuras y el desplome cae en el cuadro exacto en que
+    #: se ve la lápida. Pedirlo al abrir dejaba dos segundos y medio de
+    #: tormenta ya vista antes de que sonara nada, que es la manera más
+    #: segura de que un susto no asuste.
+    DREAD_SWELL = 73
+
+    #: Cuánto tarda el golpe en desplomarse **en segundos**, que es el
+    #: `drop` de `ambience._dread`.
+    #:
+    #: El pedido se hace por reloj y no por cuadros. Un cuadro de esta
+    #: escena no dura `FRAME`: dura `FRAME` más lo que Tk tarde en redibujar
+    #: la lluvia y el pasto, o sea la mitad otra vez. Contando cuadros, los
+    #: 73 de `DREAD_SWELL` eran tres segundos y medio de reloj, y el
+    #: desplome caía un segundo antes de que se levantara el negro --- el
+    #: susto entero ocurría a oscuras. El archivo se desploma cuando se
+    #: desploma; lo único que se puede hacer es pedirlo cuando falte
+    #: exactamente eso.
+    DREAD_FALL = 2.4
+
+    #: Y a qué altura del negro rueda el primer trueno, todavía a oscuras.
+    #: Temprano a propósito: su latigazo tiene que haber pasado antes de que
+    #: el golpe de suspenso se empiece a oír, o los dos ataques se pisan.
+    FIRST_THUNDER = 4
+
+    #: Dónde queda plantada la lápida: divisor del recorte y a qué altura del
+    #: camino se apoya.
+    #:
+    #: **Exactamente donde estaba parado él en las otras dos.** Es el mismo
+    #: punto del mismo camino, y que la piedra ocupe ese lugar y no otro es
+    #: la mitad de lo que la escena tiene para decir. Queda un poco más baja
+    #: que como se lo veía a él, que es la proporción que hay entre un hombre
+    #: y su lápida --- y lo justo para que se alcance a leer lo que dice.
+    STONE = (4, 0.56)
+
+    #: Cuánto se estira hacia la cámara la tierra removida que la piedra
+    #: encabeza, en profundidad del camino. Es lo que la vuelve una tumba y
+    #: no una piedra apoyada: lo que hay delante de una lápida no es una
+    #: sombra redonda, es un rectángulo del tamaño de un cajón.
+    PLOT = 0.28
+
+    #: Y cuánto se mete el borde de atrás **por debajo** de la piedra. El
+    #: recorte trae un poco de transparencia bajo la base, así que apoyando
+    #: la fosa exactamente en la línea del suelo quedaba una franja de camino
+    #: entre las dos y la piedra parecía estar delante de la tumba y no
+    #: encabezándola.
+    PLOT_TUCK = 0.03
+
+    #: Cuántas gotas se dibujan a la vez. Son elementos de lienzo movidos uno
+    #: por uno en cada cuadro, igual que el pasto: a doscientas la lluvia se
+    #: ve cerrada y la ventana sigue yendo a treinta cuadros. El polvo del
+    #: viento se apaga mientras tanto --- son rayas horizontales y acá no
+    #: vuela nada, llueve --- así que el presupuesto es casi el mismo.
+    DROPS = 210
+
+    #: Lo que la tercera puede tener sonando cuando se va a negro, y que hay
+    #: que cortarle antes de que alguien hable encima.
+    STORM_SOUNDS = ("rain", "thunder", "dread")
+
+    #: Cuándo cae cada rayo dentro de la tormenta, y cuántos cuadros dura su
+    #: fogonazo. El primero no lleva trueno: cae junto con el desplome del
+    #: golpe de suspenso, que ya es un grave enorme, y encimarle un trueno
+    #: sólo emborrona los dos.
+    #:
+    #: El primero va en **uno** y no en cero: el bucle adelanta el reloj
+    #: antes de repartir el cuadro, así que el cuadro cero de una fase no
+    #: existe --- se entra en ella con el reloj en uno.
+    BOLTS = ((1, 8, False), (58, 5, True), (132, 6, True))
+
+    def __init__(self, app, on_done: Optional[Callable[[], None]] = None,
+                 kind: str = "", blackout: bool = False):
         self.app = app
         self.on_done = on_done
+        #: Cuál de las tres es: "", "pact" o "tomb".
+        self.kind = str(kind or "")
+        #: Si es la segunda visión: la misma noche, y lo que pasó después.
+        self.pact = self.kind == "pact"
+        #: Y si es la tercera: el mismo camino años más tarde.
+        self.tomb = self.kind == "tomb"
+        #: Si al terminar deja la pantalla en negro en vez de devolverla.
+        #: Igual que en :class:`Cutscene`, y por lo mismo: atrás viene otra
+        #: cosa y entre las dos no se puede ver el programa.
+        self.blackout = bool(blackout)
         self.phase = "wake"
         self.tick = 0
         self.hop = 0
         self.particles: List[dict] = []
         self.blades: List[dict] = []
+        #: Las gotas, mientras dure la tormenta.
+        self.drops: List[dict] = []
+        #: Mientras está en True, el polvo del viento sigue volando. Se apaga
+        #: cuando empieza a llover.
+        self._dust = True
+        #: Cuántos cuadros le quedan al fogonazo del rayo, y cuántos duraba.
+        self._flash = 0
+        self._flash_total = 1
+        #: La lápida, mientras esté en pantalla. Tk no se queda con las
+        #: imágenes: si la referencia muere, el camino queda vacío.
+        self._stone = None
         self._after: Optional[str] = None
         self._closed = False
         self._bed_on = False
-        #: Cuadros que el viento tiene que quedarse callado. Es lo que deja
+        #: Cuál es la cama de ambiente ahora mismo. En las dos primeras
+        #: visiones es siempre el viento; en la tercera pasa a ser la lluvia
+        #: en cuanto se larga.
+        self._bed_name = "gale"
+        #: Cuadros que la cama tiene que quedarse callada. Es lo que deja
         #: sonar solo a lo que importa.
-        self._bed_hold = 0
+        #:
+        #: Arranca callada lo que dura la pantalla negra del principio: la
+        #: escena no empieza cuando se la manda a abrir, empieza cuando se ve
+        #: algo, y el viento sonando encima de un rectángulo negro es la
+        #: escena filtrándose antes de tiempo. Entra en seco, con el camino.
+        self._bed_hold = self.WAKE_FRAMES
+        #: Cuándo entró el negro de la tercera, y si el golpe ya se pidió.
+        #: Ver `_dread_due`.
+        self._black_at = 0.0
+        self._dreaded = False
         self._image = None
+        #: Las dos imágenes del encuentro, mientras dure.
+        self._meeting = None
         self._sounded = False
         self._init_cues()
 
@@ -1798,7 +2063,13 @@ class Vision(SoundCues):
 
         self._draw_night(bands)
         self._draw_road(bands)
-        self._draw_train(bands)
+        # Sin tren en la tercera. No es que pase y no se vea: no está, y el
+        # camino vacío es medio motivo por el que esa noche se parece a la
+        # primera sin ser la primera.
+        self.train: List[int] = []
+        self.train_span = 0.0
+        if not self.tomb:
+            self._draw_train(bands)
         self._draw_grass(bands)
         self._draw_particles()
         # La sombra va **debajo** del retrato y se crea antes que él, que es
@@ -1810,6 +2081,23 @@ class Vision(SoundCues):
         self.figure = self.canvas.create_image(self.centre, self.height,
                                                anchor="s", state="hidden")
         self._draw_eyelids()
+        # Y **acá** se abren los alias del reproductor, con la pantalla
+        # todavía en negro.
+        #
+        # El primer sonido de la sesión no suena: antes de sonar hay que
+        # abrirle a MCI un alias por sonido y por voz, y son noventa y ocho
+        # llamadas bloqueantes que cuestan **un segundo y medio** en el hilo
+        # que dibuja. Eso siempre se pagó en esta escena --- la cama
+        # arrancaba en el primer cuadro --- y no se notaba porque el primer
+        # cuadro es negro. Con la cama esperando a que se abra el camino, la
+        # misma factura se mudó al cuadro en que aparece el camino y ahí se
+        # ve: la escena se clava un segundo y medio justo cuando empieza.
+        # Pagarla antes del bucle la devuelve a donde estaba.
+        self.canvas.update_idletasks()
+        try:
+            ambience._open_all()
+        except Exception:                                   # noqa: BLE001
+            pass
         # Un clic no la saltea. Dura veinte segundos, ocurre una vez en la
         # vida del programa y no pide nada a cambio: lo único que se puede
         # hacer con ella es mirarla.
@@ -2232,13 +2520,19 @@ class Vision(SoundCues):
         ambience.pump()
         self._start_bed()
         self._pump_cues()
-        self._move_particles()
+        if self._dust:
+            self._move_particles()
         self._move_grass()
+        self._move_rain()
         {"wake": self._step_wake,
          "road": self._step_road,
          "black": self._step_black,
          "stare": self._step_stare,
          "walk": self._step_walk,
+         "shut": self._step_shut,
+         "meet": self._step_meet,
+         "storm": self._step_storm,
+         "seal": self._step_seal,
          "gone": self._step_gone}.get(self.phase, self._step_gone)()
         try:
             self._after = self.app.after(FRAME, self._loop)
@@ -2246,14 +2540,30 @@ class Vision(SoundCues):
             return
 
     def _start_bed(self) -> None:
-        """El viento, salvo que esté callado a propósito."""
+        """La cama de la escena, salvo que esté callada a propósito."""
         if self._bed_hold > 0:
             self._bed_hold -= 1
             return
-        if self._bed_on or not ambience.made("gale"):
+        if self._bed_on or not ambience.made(self._bed_name):
             return
-        ambience.play("gale", loop=True)
+        ambience.play(self._bed_name, loop=True)
         self._bed_on = True
+
+    def _switch_bed(self, name: str) -> None:
+        """
+        Cambiar de cama: se va una y entra la otra.
+
+        La tercera visión empieza con el mismo viento que las otras dos y
+        termina bajo una lluvia cerrada, y las dos cosas son camas en bucle
+        que no pueden sonar juntas: dos ruidos de banda ancha encimados no
+        suenan a viento con lluvia, suenan a ruido. Entra en el cuadro
+        siguiente, que es lo que tarda `_start_bed` en darse cuenta.
+        """
+        if self._bed_on:
+            ambience.stop(self._bed_name)
+        self._bed_name = name
+        self._bed_on = False
+        self._bed_hold = 0
 
     def _hush(self, frames: int) -> None:
         """
@@ -2268,7 +2578,7 @@ class Vision(SoundCues):
         """
         self._bed_hold = frames
         if self._bed_on:
-            ambience.stop("gale")
+            ambience.stop(self._bed_name)
             self._bed_on = False
 
     def _step_wake(self) -> None:
@@ -2277,13 +2587,14 @@ class Vision(SoundCues):
             self.phase, self.tick = "road", 0
 
     def _step_road(self) -> None:
-        self._move_train()
-        # El tren se oye desde que empieza a cruzar, y los búhos un momento
-        # después: dos animales contestándose es lo que dice que no hay nadie
-        # más.
-        if self.tick == 2:
-            self._cue("train")
-        elif self.tick == 26:
+        if not self.tomb:
+            self._move_train()
+            # El tren se oye desde que empieza a cruzar.
+            if self.tick == 2:
+                self._cue("train")
+        # Y los búhos un momento después: dos animales contestándose es lo
+        # que dice que no hay nadie más. Están en las tres, tren o no.
+        if self.tick == 26:
             self._cue("owls")
         if self.tick >= self.ROAD_FRAMES:
             # De golpe. No hay fundido: el corte a negro es lo que convierte
@@ -2292,6 +2603,9 @@ class Vision(SoundCues):
             self.phase, self.tick = "black", 0
 
     def _step_black(self) -> None:
+        if self.tomb:
+            self._step_black_storm()
+            return
         if self.tick < self.BLACK_FRAMES:
             return
         # Y de golpe vuelve, con alguien parado en el medio del camino que
@@ -2310,8 +2624,389 @@ class Vision(SoundCues):
 
     def _step_stare(self) -> None:
         """Se queda mirando. No hace nada más, y dura a propósito."""
-        if self.tick >= self.STARE_FRAMES:
-            self.phase, self.tick, self.hop = "walk", 0, 0
+        if self.tick < self.STARE_FRAMES:
+            return
+        if self.pact:
+            self.phase, self.tick = "shut", 0
+            return
+        self.phase, self.tick, self.hop = "walk", 0, 0
+
+    # -- la segunda visión: con quién estaba hablando --------------------------
+
+    def _step_shut(self) -> None:
+        """
+        Pantallazo negro, y detrás se arma el encuentro.
+
+        Es el mismo corte que lo trajo a él al camino, usado de nuevo: negro
+        de golpe, un silencio, y al volver hay alguien más. **No es un
+        pestañeo** --- los párpados no se cierran, la pantalla se apaga ---
+        porque un pestañeo dice que uno cerró los ojos y acá lo que pasa es
+        que la visión salta.
+
+        La escena se monta con la pantalla tapada, y por eso el negro se
+        vuelve a subir después de dibujarla: en un lienzo lo último que se
+        crea queda arriba de todo, y sin eso el encuentro se vería durante
+        el segundo y medio que tiene que estar oculto.
+        """
+        if self.tick == 1:
+            self._eyelids(1.0)
+            self._hide()
+            self._show_meeting()
+            self._eyelids(1.0)
+            # **Se corta el viento**, igual que cuando apareció él: el aire
+            # que se va de golpe es lo que anuncia que algo va a pasar, y
+            # además deja al tritono llegar solo. No vuelve.
+            self._hush(10 ** 6)
+            return
+        if self.tick >= self.MEET_BLACK:
+            self._eyelids(0.0)
+            # *Diabolus in musica*: la disonancia que el libro explica dos
+            # capítulos antes, en el cuadro exacto en que se lo ve.
+            self._cue("tritone")
+            self.phase, self.tick = "meet", 0
+
+    def _step_meet(self) -> None:
+        """Los dos en el camino, quietos, y ni una palabra todavía."""
+        if self.tick >= self.MEET_FRAMES:
+            self._eyelids(1.0)
+            self.phase, self.tick = "seal", 0
+
+    def _step_seal(self) -> None:
+        """El negro del que sale el cartel. Ya está puesto: acá sólo se espera."""
+        if self.tick >= self.SEAL_HOLD:
+            self._done()
+
+    def _show_meeting(self) -> None:
+        """
+        El encuentro: él de frente, y delante suyo alguien en negro.
+
+        Los dos parados en el medio del camino y lejos de la cámara, que es
+        donde esto pasa: acercarlos convertía una cosa que se ve de lejos en
+        un primer plano, y correrlos al costado los sacaba del único lugar
+        que la escena tiene.
+
+        El de adelante va **en negro puro** y de espaldas. Ese recorte es su
+        pose de frente pasada a silueta, y alcanza: una silueta maciza no
+        tiene cara, así que no tiene lado. Lo que lo pone delante es **el
+        orden de creación**, que en un lienzo es el orden de dibujo.
+
+        Los dos apoyan donde su tamaño los pone: la línea del horizonte es
+        la altura de la cámara, así que tiene que cruzar a los dos a la
+        altura de los ojos. Y la referencia a las imágenes tiene que quedar
+        viva en algún lado --- Tk no se queda con ellas --- o el recolector
+        se las lleva y el camino queda vacío.
+        """
+        back = load_pose(visitors.ROBERT, self.BACK[1], self.BACK[0])
+        front = load_pose(story.DEVIL, self.FRONT[1], self.FRONT[0])
+        if back is None or front is None:
+            return
+        self._meeting = (back, front)
+        for image, share in ((back, self.BACK_X), (front, self.FRONT_X)):
+            floor = self.horizon + image.height() * 0.92
+            x = self.centre + self.width * share
+            width = image.width()
+            self.canvas.create_oval(
+                x - width * 0.42, floor - width * 0.10,
+                x + width * 0.42, floor + width * 0.10,
+                fill="#0A0A0C", outline="", stipple="gray50")
+            self.canvas.create_image(x, floor, anchor="s", image=image)
+
+    # -- la tercera visión: lo que quedó en el camino --------------------------
+
+    def _step_black_storm(self) -> None:
+        """
+        El mismo negro, con la tormenta llegando por debajo.
+
+        Lo que se oye viene antes que lo que se ve, y a propósito: primero
+        se larga la lluvia a oscuras, después empieza a crecer el golpe de
+        suspenso, y el negro se levanta justo cuando ese golpe se desploma.
+        Al revés ---abrir y después sonar--- lo que se ve llega solo y lo
+        que se oye llega tarde, que es como se desarma un susto.
+        """
+        if self.tick == 1:
+            # El viento se va: lo que viene tiene su propia cama.
+            self._switch_bed("rain")
+            # Y esa cama espera al otro lado del negro. La lluvia es ruido de
+            # banda ancha y el golpe de suspenso es exactamente lo que el
+            # ruido de banda ancha tapa: con el agua debajo, los dos segundos
+            # que el golpe pasa subiendo no se oían subir y lo único que
+            # llegaba era el desplome. Entra cuando se la ve caer, que además
+            # es donde tiene que estar.
+            self._bed_hold = self.BLACK_FRAMES
+            self._black_at = time.monotonic()
+            self._build_storm()
+            self._eyelids(1.0)
+        elif self.tick == self.FIRST_THUNDER:
+            self._cue("thunder", patience=45)
+        elif not self._dreaded and self._dread_due():
+            self._dreaded = True
+            self._cue("dread")
+        if self.tick >= self.BLACK_FRAMES:
+            self._eyelids(0.0)
+            self.phase, self.tick = "storm", 0
+
+    def _dread_due(self) -> bool:
+        """
+        ¿Falta justo lo que el golpe tarda en desplomarse?
+
+        Se mide **cuánto está durando un cuadro de esta escena en
+        particular** ---lo que va del negro dividido los cuadros que
+        pasaron--- y con eso se estima cuánto falta de reloj para que el
+        negro se levante. Cuando eso baja de `DREAD_FALL`, se pide.
+
+        Medido y no supuesto porque no hay un número que sirva: el mismo
+        negro dura distinto en una máquina que en otra, y en la misma
+        máquina dura distinto con la tormenta ya armada que sin ella.
+        """
+        left = self.BLACK_FRAMES - self.tick
+        if left <= 0:
+            return True
+        pace = (time.monotonic() - self._black_at) / max(1, self.tick)
+        return left * pace <= self.DREAD_FALL
+
+    def _step_storm(self) -> None:
+        """El camino bajo el agua, con la lápida y los rayos."""
+        for at, frames, thunder in self.BOLTS:
+            if self.tick == at:
+                self._strike(frames)
+                if thunder:
+                    self._cue("thunder", patience=20)
+        self._burn()
+        if self.tick >= self.STORM_FRAMES:
+            self._eyelids(1.0)
+            # Y con el negro se corta la tormenta entera, de golpe y sin
+            # cola. Atrás de este negro alguien empieza a hablar, y una
+            # tormenta apagándose despacio debajo de la primera frase se
+            # lleva puesta la frase. Por nombre y no con `stop_all`, que
+            # sólo sabe de bucles: lo que hay que callar acá son sobre todo
+            # los sueltos --- el trueno rueda seis segundos.
+            self._hush(10 ** 6)
+            for name in self.STORM_SOUNDS:
+                ambience.stop(name)
+            self.phase, self.tick = "seal", 0
+
+    def _build_storm(self) -> None:
+        """
+        Armar la tormenta con la pantalla tapada: cielo, agua y la piedra.
+
+        Se monta entera detrás del negro y por eso el negro se vuelve a subir
+        después: en un lienzo lo último que se crea queda arriba de todo, y
+        sin eso la lápida se vería durante los tres segundos que tiene que
+        estar oculta.
+
+        Nada de esto reemplaza al camino: el camino sigue debajo. Lo que se
+        le pone encima es un cielo macizo ---que se lleva puestas la luna y
+        las estrellas, porque en una tormenta no se ven--- y un velo tramado
+        sobre el suelo, que apaga la tierra sin borrarla. Un tramado y no un
+        color: el pasto tiene que seguir viéndose moverse por debajo.
+        """
+        self._dust = False
+        for dot in self.particles:
+            try:
+                self.canvas.itemconfigure(dot["item"], state="hidden")
+            except tk.TclError:
+                return
+
+        # El cielo cerrado. Macizo hasta el horizonte: es lo que borra la
+        # luna, que es la única cosa de la escena que una tormenta no puede
+        # dejar en su lugar. Va en franjas, más claro cerca del horizonte,
+        # que es donde una noche encapotada devuelve algo de luz.
+        rng = random.Random(1938)
+        steps = 24
+        for index in range(steps):
+            top = self.horizon * index / steps
+            self.canvas.create_rectangle(
+                0, top, self.width, top + self.horizon / steps + 2,
+                fill=mix("#07080E", "#131724", (index / (steps - 1)) ** 1.6),
+                outline="")
+
+        # Las nubes. **Anchas, chatas y apenas más claras que el cielo**, y
+        # de un ancho que se pasa de la pantalla: nubes del tamaño de una
+        # nube, con su borde a la vista y todas parecidas, se leen como una
+        # fila de platos voladores --- que es exactamente lo que se veía. Lo
+        # que hace un cielo encapotado no son las nubes sino que no se
+        # distinga dónde termina una y empieza la otra, así que van en tres
+        # capas encimadas y con muy poco contraste entre ellas.
+        for layer, (count, low, high) in enumerate(
+                ((7, 0.75, 1.7), (9, 0.45, 1.1), (11, 0.30, 0.75))):
+            for _ in range(count):
+                span = self.width * rng.uniform(low, high)
+                x = rng.uniform(-span * 0.6, self.width)
+                y = rng.uniform(-self.horizon * 0.45,
+                                self.horizon * (0.35 + 0.22 * layer))
+                high_px = span * rng.uniform(0.10, 0.20)
+                self.canvas.create_oval(
+                    x, y, x + span, y + high_px, outline="",
+                    fill=mix("#0A0C14", "#1A1F30",
+                             rng.uniform(0.10, 0.30 + 0.18 * layer)))
+
+        # Y el velo del suelo: la misma tierra, apagada y enfriada. Media
+        # trama y no tres cuartos --- a tres cuartos el camino directamente
+        # desaparecía y la escena quedaba siendo lluvia sobre negro --- pero
+        # de un azul y no del marrón de la tierra: lo que apaga un cielo
+        # cerrado no es sólo la cantidad de luz, es de qué color es la poca
+        # que queda.
+        self.canvas.create_rectangle(0, self.horizon, self.width, self.height,
+                                     fill="#0A1020", outline="",
+                                     stipple="gray50")
+
+        self._show_stone()
+
+        # El agua. Va después de la piedra: la lluvia cae **delante** de todo
+        # lo que hay en el camino, que es la mitad de lo que la hace lluvia y
+        # no un fondo con rayitas.
+        for _ in range(self.DROPS):
+            depth = rng.random() ** 0.7
+            item = self.canvas.create_line(
+                0, 0, 0, 1, width=1 if depth < 0.55 else 2,
+                fill=mix("#232B3E", "#C2CFEA", 0.20 + 0.80 * depth))
+            self.drops.append({
+                "item": item,
+                "x": rng.uniform(-self.width * 0.3, self.width * 1.1),
+                "y": rng.uniform(-self.height, self.height),
+                "length": 18.0 + 46.0 * depth,
+                "speed": 30.0 + 56.0 * depth,
+                "slant": -5.0 - 9.0 * depth})
+
+        # El fogonazo y el rayo, creados apagados y arriba de todo lo demás.
+        # El rayo son dos trazos sobre el mismo recorrido: uno ancho y apagado
+        # que hace de resplandor y otro fino y blanco encima. Un solo trazo se
+        # ve como una grieta dibujada; con el resplandor detrás se ve como
+        # algo que ilumina.
+        #
+        # El fogonazo va en **dos** rectángulos y no en uno: el cielo se
+        # prende y el suelo apenas se levanta. Uno solo tapando la pantalla
+        # entera no iluminaba nada --- subía todo por igual, que es lo mismo
+        # que no subir nada --- y lo que hacía era borrar la lápida en el
+        # cuadro exacto en que el rayo tenía que mostrarla. Un relámpago se
+        # ve arriba; abajo lo único que llega es un reflejo.
+        self.flash = self.canvas.create_rectangle(
+            0, 0, self.width, self.height, fill="#BACBEF", outline="",
+            state="hidden", stipple="gray50")
+        self.glow = self.canvas.create_line(0, 0, 0, 1, fill="#7C8FC4",
+                                            width=7, state="hidden")
+        self.bolt = self.canvas.create_line(0, 0, 0, 1, fill="#F2F6FF",
+                                            width=3, state="hidden")
+
+    def _show_stone(self) -> None:
+        """
+        La lápida, plantada en el medio del camino, con la fosa delante.
+
+        Se apoya igual que se apoyaba el que estaba parado ahí: el recorte se
+        ancla por la base a la altura del camino que le toca. Lo que va
+        debajo, en cambio, **no es la sombra ovalada de una persona**: es un
+        rectángulo, del ancho de la piedra y del largo de un cajón, que sale
+        de la base hacia la cámara. Es lo que hay delante de una lápida de
+        verdad, y es lo que convierte una piedra apoyada en el piso en una
+        tumba.
+
+        Rectángulo en el **suelo**, o sea un trapecio en la pantalla: los dos
+        lados se abren con el camino, y el borde de atrás es más corto que el
+        de adelante porque está más lejos. Dibujado con los cuatro lados
+        paralelos quedaría parado en un piso distinto del que pisa todo lo
+        demás.
+        """
+        divisor, depth = self.STONE
+        image = load_prop("lapida", divisor)
+        if image is None:
+            return
+        self._stone = image
+        floor = self._road_y(depth)
+        head = max(0.0, depth - self.PLOT_TUCK)
+        near = min(0.98, depth + self.PLOT)
+        # El medio ancho, medido **en anchos de camino** y no en píxeles: así
+        # los dos bordes se abren en la misma proporción en que se abre la
+        # tierra debajo de ellos.
+        share = (image.width() * 0.52) / self._road_half(depth)
+        self.canvas.create_polygon(
+            self.centre - share * self._road_half(head), self._road_y(head),
+            self.centre + share * self._road_half(head), self._road_y(head),
+            self.centre + share * self._road_half(near), self._road_y(near),
+            self.centre - share * self._road_half(near), self._road_y(near),
+            fill="#05050A", outline="", stipple="gray50")
+        self.canvas.create_image(self.centre, floor, anchor="s", image=image)
+
+    def _move_rain(self) -> None:
+        """
+        Cada gota baja lo suyo y vuelve arriba cuando se pasa de largo.
+
+        Las de adelante caen más rápido, más largas y más claras que las del
+        fondo, que es todo lo que hace falta para que una cortina de rayas
+        se lea como profundidad. Y caen en diagonal: una lluvia vertical se
+        ve dibujada, porque una lluvia fuerte siempre viene con viento.
+        """
+        if not self.drops:
+            return
+        for drop in self.drops:
+            drop["y"] += drop["speed"]
+            drop["x"] += drop["slant"]
+            if drop["y"] > self.height + 20:
+                drop["y"] -= self.height + 40
+                drop["x"] = random.uniform(-self.width * 0.2, self.width * 1.1)
+            elif drop["x"] < -self.width * 0.25:
+                drop["x"] += self.width * 1.35
+            try:
+                self.canvas.coords(
+                    drop["item"], drop["x"], drop["y"],
+                    drop["x"] + drop["slant"] * drop["length"] / drop["speed"],
+                    drop["y"] - drop["length"])
+            except tk.TclError:
+                return
+
+    def _strike(self, frames: int) -> None:
+        """Un rayo: el trazo quebrado y el fogonazo que lo acompaña."""
+        rng = random.Random(self.tick * 977 + 13)
+        x = self.centre + self.width * rng.uniform(-0.42, 0.42)
+        points = [x, 0.0]
+        y = 0.0
+        while y < self.horizon - 6:
+            y += (self.horizon / 7.0) * rng.uniform(0.6, 1.4)
+            x += self.width * rng.uniform(-0.05, 0.05)
+            points.extend((x, min(y, self.horizon - 4)))
+        try:
+            for item in (self.glow, self.bolt):
+                self.canvas.coords(item, *points)
+                self.canvas.itemconfigure(item, state="normal")
+        except tk.TclError:
+            return
+        self._flash = self._flash_total = frames
+
+    #: Con qué densidad se apaga el fogonazo y a partir de qué fracción de
+    #: su duración vale cada una. Se mide en **fracción y no en cuadros**
+    #: porque no todos los rayos duran lo mismo: contando cuadros, el rayo
+    #: corto arrancaba ya por la mitad de la tabla y lo único que se veía de
+    #: él era el resto pálido.
+    #:
+    #: Un rayo no se desvanece: parpadea y se corta, y la trama es lo único
+    #: que un lienzo de Tk tiene para decir «medio blanco».
+    #:
+    #: Un rayo no se desvanece: parpadea y se corta, y la trama es lo único
+    #: que un lienzo de Tk tiene para decir «medio blanco».
+    #: Y no pasa de un cuarto de trama. El relámpago tiene que **iluminar**
+    #: la escena y no borrarla: encima de un camino de noche ---que es casi
+    #: negro--- media trama de un azul claro ya da un promedio de gris
+    #: medio, o sea dos cuadros de pantalla lavada en los que la lápida
+    #: desaparece, que es exactamente lo contrario de para qué está el rayo.
+    #: A un cuarto se levanta lo suficiente para que se note y todo lo que
+    #: hay sigue leyéndose.
+    BURN = ((0.55, "gray25"), (0.0, "gray12"))
+
+    def _burn(self) -> None:
+        """Sostener y apagar el fogonazo, un cuadro por vez."""
+        if self._flash <= 0:
+            return
+        self._flash -= 1
+        try:
+            if self._flash <= 0:
+                for item in (self.flash, self.glow, self.bolt):
+                    self.canvas.itemconfigure(item, state="hidden")
+                return
+            share = self._flash / max(1, self._flash_total)
+            stipple = next(name for edge, name in self.BURN if share > edge)
+            self.canvas.itemconfigure(self.flash, state="normal",
+                                      stipple=stipple)
+        except tk.TclError:
+            return
 
     def _step_walk(self) -> None:
         """
@@ -2364,6 +3059,19 @@ class Vision(SoundCues):
 
     def _done(self) -> None:
         finish, self.on_done = self.on_done, None
+        if self.blackout:
+            # Atrás viene el cartel. Igual que en `Cutscene`: la pantalla se
+            # queda en negro, se abre lo que sigue encima y recién después
+            # se muere esto, así entre la visión y lo que se dice no se ve
+            # el programa ni por un cuadro.
+            self._eyelids(1.0)
+            if finish is not None:
+                finish()
+            try:
+                self.app.after(600, self.close)
+            except tk.TclError:
+                self.close()
+            return
 
         def close_now() -> None:
             self.close()
@@ -2376,8 +3084,17 @@ class Vision(SoundCues):
             close_now()
 
 
-def vision(app, on_done: Optional[Callable[[], None]] = None) -> Vision:
-    """La visión del cruce de caminos. Una vez, y nunca más."""
-    scene = Vision(app, on_done=on_done)
+def vision(app, on_done: Optional[Callable[[], None]] = None, *,
+           kind: str = "", blackout: bool = False) -> Vision:
+    """
+    La visión del cruce de caminos. Una vez cada una, y nunca más.
+
+    ``kind`` elige cuál: vacío es la primera, ``"pact"`` la segunda --- la
+    misma noche hasta que él aparece, y de ahí el encuentro --- y ``"tomb"``
+    la tercera, el mismo camino años más tarde bajo una tormenta. Las dos
+    últimas terminan en negro (``blackout``) porque lo que sigue es el
+    cartel de diálogo, y entre las dos cosas no se puede ver el programa.
+    """
+    scene = Vision(app, on_done=on_done, kind=kind, blackout=blackout)
     scene.start()
     return scene

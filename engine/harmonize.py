@@ -61,6 +61,11 @@ class MelodyNote:
     #: del tiempo anterior --- que casi siempre está bien, y a veces es
     #: justamente la nota que la persona quería sostener.
     must_harmonise: bool = False
+    #: El pedido contrario: el usuario apagó el dorado que el programa había
+    #: puesto acá. El lugar de acorde que caía sobre esta nota se saca y su
+    #: duración se la queda un lugar vecino del **mismo compás**, así que el
+    #: compás sigue sumando lo que dice su cifra.
+    skip_harmonise: bool = False
 
 
 @dataclass
@@ -274,6 +279,52 @@ def harmony_spots(melody: Melody) -> List[HarmonySpot]:
         if spot is not None:
             spot.required_note = note
     return spots
+
+
+def drop_skipped_spots(
+    melody: Melody,
+    spots: List[HarmonySpot],
+    settings: "HarmonisationSettings",
+) -> List[HarmonySpot]:
+    """
+    Sacar los lugares cuyo acorde caía sobre una nota que el usuario apagó.
+
+    El dorado del pentagrama es una respuesta del programa, y hasta acá era
+    una respuesta que no se podía discutir: se podía pedir un acorde de más
+    y nunca uno de menos. Apagar una nota saca su lugar, y lo que ese lugar
+    ocupaba se lo queda un vecino **del mismo compás** --- el anterior si lo
+    hay, si no el siguiente, que se estira hacia atrás. Repartirlo fuera del
+    compás lo dejaría sumando de más, que es una partitura que ningún editor
+    acepta.
+
+    Un lugar que no tiene con quién repartir ---el único de su compás--- se
+    queda: su nota sigue dorada, que es la manera honesta de decir que ahí
+    el acorde no se puede sacar.
+    """
+    if not any(note.skip_harmonise for note in melody.notes):
+        return spots
+    kept: List[HarmonySpot] = []
+    for index, spot in enumerate(spots):
+        pool = _pool_for_bar(melody.bar(spot.bar_index), settings)
+        note = spot.required_note or choose_note_for_spot(
+            melody, spot, pool, settings.allow_colour)
+        if (note is None or not note.skip_harmonise
+                or spot.required_note is not None):
+            kept.append(spot)
+            continue
+        earlier = kept[-1] if kept else None
+        if earlier is not None and earlier.bar_index == spot.bar_index:
+            earlier.duration_quarters += spot.duration_quarters
+            continue
+        later = next((s for s in spots[index + 1:]
+                      if s.bar_index == spot.bar_index), None)
+        if later is not None:
+            later.duration_quarters += (later.offset_quarters
+                                        - spot.offset_quarters)
+            later.offset_quarters = spot.offset_quarters
+            continue
+        kept.append(spot)
+    return kept or spots
 
 
 def spot_for_note(spots: List[HarmonySpot],
@@ -526,6 +577,8 @@ def pin_leading_tone(
     if len(notes) < 2 or not spots:
         return
     penultimate = notes[-2]
+    if penultimate.skip_harmonise:
+        return          # el usuario apagó justamente esa nota
     bar = melody.bar(penultimate.bar_index)
     if penultimate.pitch % 12 != (bar.tonic - 1) % 12:
         return
@@ -567,7 +620,7 @@ def harmonise(
     later chord exists.
     """
     picker = rng or random.Random()
-    spots = harmony_spots(melody)
+    spots = drop_skipped_spots(melody, harmony_spots(melody), settings)
     if not spots:
         return []
     pin_leading_tone(melody, spots, settings)
@@ -639,7 +692,7 @@ def planned_notes(
     respuesta hasta después de esperar la búsqueda entera, y era la única
     manera de entender por qué una nota sonaba contra la armonía anterior.
     """
-    spots = harmony_spots(melody)
+    spots = drop_skipped_spots(melody, harmony_spots(melody), settings)
     if not spots:
         return []
     pin_leading_tone(melody, spots, settings)

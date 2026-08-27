@@ -387,3 +387,217 @@ def key_from_fifths(fifths: int, minor: bool = False):
     if minor:
         return (tonic + 9) % 12, "minor"
     return tonic, "major"
+
+
+# ---------------------------------------------------------------------------
+# Reading every voice, for the analyser
+# ---------------------------------------------------------------------------
+
+#: Cómo se llaman las voces según cuántas haya, de grave a aguda. El
+#: analizador habla de ellas todo el tiempo --- "el tenor y el alto hacen
+#: quintas" --- y "voz 2 y voz 3" no dice nada. Más de seis y se numeran: a
+#: esa altura ya no es un coro y ponerle nombres de coro sería inventar.
+VOICE_LADDERS = {
+    2: ("Bajo", "Soprano"),
+    3: ("Bajo", "Alto", "Soprano"),
+    4: ("Bajo", "Tenor", "Alto", "Soprano"),
+    5: ("Bajo", "Tenor", "Alto", "Mezzo", "Soprano"),
+    6: ("Bajo", "Barítono", "Tenor", "Alto", "Mezzo", "Soprano"),
+}
+
+
+def voice_names(count: int) -> List[str]:
+    ladder = VOICE_LADDERS.get(count)
+    if ladder:
+        return list(ladder)
+    return [f"Voz {n + 1}" for n in range(count)]
+
+
+def read_voices(path: str):
+    """
+    Leer una partitura conservando cada voz por separado.
+
+    Donde :func:`read_musicxml` junta todo lo que suena a la vez en un
+    acorde, acá hace falta lo contrario: el análisis contrapuntístico
+    pregunta qué hace **cada voz** entre un acorde y el siguiente, y eso se
+    pierde en cuanto las notas se apilan.
+
+    Una voz es un par (parte, número de voz): un coral escrito en dos
+    pentagramas con dos voces cada uno tiene cuatro, igual que uno escrito
+    en cuatro partes. Cuando dentro de una voz aparece un acorde escrito
+    --- varias notas marcadas como simultáneas --- se lo reparte en tantas
+    líneas como notas tenga, porque para el contrapunto eso es lo que es:
+    varias voces anotadas juntas.
+
+    Las ligaduras de prolongación se unen en una sola nota: una blanca
+    ligada a otra es una nota de dos blancas, y contarla dos veces
+    inventaría un ataque donde no lo hay.
+    """
+    from . import analysis
+
+    root = _load_root(path)
+    title = _text(root.find(".//work/work-title")) or _text(
+        root.find(".//movement-title"))
+
+    beats, beat_type, fifths = 4, 4, 0
+    read_signature = False
+    #: (parte, voz, altura dentro del acorde) -> lista de notas
+    lines: Dict[Tuple[int, str, int], List] = {}
+    #: Dónde arranca cada compás en la línea de tiempo de la pieza. Lo
+    #: calcula la primera parte y las demás lo reusan: si cada parte llevara
+    #: su propio reloj, un compás mal cerrado correría a esa parte respecto
+    #: de las otras desde ahí hasta el final.
+    bar_starts: List[float] = []
+    pickup = 0.0
+    #: Los cambios de compás, por número de compás leído. Una pieza puede
+    #: cambiar de compás en el medio, y forzarla al primero corre todas las
+    #: barras que vienen después --- y con ellas los tiempos fuertes, que es
+    #: de donde sale la lectura de acordes.
+    metre_changes: Dict[int, Tuple[int, int]] = {}
+
+    for part_index, part in enumerate(root.iter("part")):
+        cursor = 0.0
+        divisions = 1.0
+        local_beats, local_beat_type = beats, beat_type
+        for bar_index, measure in enumerate(part.iter("measure")):
+            attributes = measure.find("attributes")
+            if attributes is not None:
+                node = attributes.find("divisions")
+                if node is not None:
+                    divisions = float(_text(node, "1") or 1)
+                time_node = attributes.find("time")
+                if time_node is not None:
+                    local_beats = int(_text(time_node.find("beats"), "4") or 4)
+                    local_beat_type = int(
+                        _text(time_node.find("beat-type"), "4") or 4)
+                    if part_index == 0:
+                        metre_changes[bar_index] = (local_beats,
+                                                    local_beat_type)
+                    if not read_signature:
+                        beats, beat_type = local_beats, local_beat_type
+                key_node = attributes.find("key")
+                if key_node is not None and not read_signature:
+                    fifths = int(_text(key_node.find("fifths"), "0") or 0)
+                    read_signature = True
+
+            per_bar = local_beats * 4.0 / local_beat_type
+            if part_index == 0 and bar_index >= len(bar_starts):
+                bar_starts.append(cursor)
+            if bar_index < len(bar_starts):
+                cursor = bar_starts[bar_index]
+
+            start_of_bar = cursor
+            previous = 0.0
+            #: Cuántas notas lleva el acorde que se está escribiendo, para
+            #: saber a qué línea va la siguiente.
+            chord_depth = 0
+            written = 0.0
+
+            for element in measure:
+                if element.tag == "backup":
+                    cursor -= float(
+                        _text(element.find("duration"), "0") or 0) / divisions
+                    previous = 0.0
+                    chord_depth = 0
+                    continue
+                if element.tag == "forward":
+                    cursor += float(
+                        _text(element.find("duration"), "0") or 0) / divisions
+                    previous = 0.0
+                    chord_depth = 0
+                    continue
+                if element.tag != "note":
+                    continue
+
+                duration = float(
+                    _text(element.find("duration"), "0") or 0) / divisions
+                voice = _text(element.find("voice"), "1") or "1"
+                if element.find("chord") is not None:
+                    cursor -= previous
+                    chord_depth += 1
+                else:
+                    chord_depth = 0
+
+                pitch_node = element.find("pitch")
+                if element.find("rest") is None and pitch_node is not None:
+                    midi = _pitch_to_midi(pitch_node)
+                    if midi is not None:
+                        key = (part_index, voice, chord_depth)
+                        notes = lines.setdefault(key, [])
+                        if _continues_a_tie(element) and notes:
+                            # Ligada a la anterior: se estira aquélla en vez
+                            # de empezar una nota nueva.
+                            notes[-1].duration = (cursor + duration
+                                                  - notes[-1].onset)
+                        else:
+                            notes.append(analysis.Note(
+                                pitch=midi, onset=cursor, duration=duration))
+                cursor += duration
+                previous = duration
+                written = max(written, cursor - start_of_bar)
+
+            if part_index == 0:
+                if bar_index == 0 and 0 < written < per_bar - 1e-6:
+                    # Primer compás incompleto: es una anacrusa, y de ahí
+                    # sale la grilla de tiempos fuertes de toda la pieza.
+                    pickup = written
+                    cursor = start_of_bar + written
+                else:
+                    cursor = start_of_bar + per_bar
+                if bar_index + 1 >= len(bar_starts):
+                    bar_starts.append(cursor)
+
+    if not lines:
+        raise ImportError_("La partitura no tiene notas que leer.")
+
+    parts = []
+    for key in sorted(lines):
+        notes = sorted(lines[key], key=lambda n: n.onset)
+        if notes:
+            parts.append(analysis.Part(name="", notes=notes))
+    parts.sort(key=lambda p: p.mean_pitch())
+    for name, part in zip(voice_names(len(parts)), parts):
+        part.name = name
+
+    # El compás de la anacrusa es el 0, así que el primer compás completo
+    # es el 1 y los que le siguen se corren con él.
+    shift = 0 if pickup > 1e-6 else 1
+    metres = tuple(sorted((index + shift, count, figure)
+                          for index, (count, figure) in metre_changes.items()
+                          if index + shift >= 1))
+    return analysis.Score(parts=parts, fifths=fifths, beats=beats,
+                          beat_type=beat_type, title=title,
+                          pickup_quarters=pickup, metres=metres)
+
+
+def written_line(part) -> List[Tuple[Optional[int], float]]:
+    """
+    Una voz leída, escrita como se escribe: con sus silencios.
+
+    :func:`read_voices` devuelve sólo las notas, cada una con el momento en
+    que empieza. Un pentagrama, en cambio, escribe una cosa detrás de otra,
+    así que los huecos entre notas tienen que existir como silencios o la
+    voz se corre hacia adelante. Y una voz corrida contra las otras no es un
+    detalle de dibujo: la armonía que se lee en cada tiempo pasa a ser otra.
+
+    Devuelve pares (altura o None, duración), donde None es un silencio.
+    """
+    written: List[Tuple[Optional[int], float]] = []
+    cursor = 0.0
+    for note in part.notes:
+        if note.onset > cursor + 1e-6:
+            written.append((None, note.onset - cursor))
+        written.append((note.pitch, note.duration))
+        cursor = max(cursor, note.onset + note.duration)
+    return written
+
+
+def _continues_a_tie(note: ET.Element) -> bool:
+    """Es esta nota la cola de una ligadura de prolongación."""
+    for tie in note.findall("tie"):
+        if tie.get("type") == "stop":
+            return True
+    for tied in note.findall("notations/tied"):
+        if tied.get("type") == "stop":
+            return True
+    return False

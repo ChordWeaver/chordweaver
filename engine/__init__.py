@@ -12,4 +12,4 @@ The usual entry point is :func:`engine.session.generate`.
 
 #: La versión del programa entero, y la única. La interfaz la muestra al pie
 #: de la configuración; cualquier otro lugar que la necesite la lee de acá.
-__version__ = "1.0.1"
+__version__ = "1.1"

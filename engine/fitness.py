@@ -30,6 +30,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from .style import (
     ChordContext,
+    adjacent_semitone_clashes,
     ambitus_penalty,
     cadential_six_four,
     repose_dissonances,
@@ -237,6 +238,26 @@ class GenreProfile:
     #: ninths above a non-root tone (the jazz avoid-note test).
     weight_harmonic_dissonance: float = 0.0
     weight_minor_ninth: float = 0.0
+    #: Cost per pair of NEIGHBOURING voices sounding a real semitone apart.
+    #:
+    #: Compartido por todos los estilos porque el roce se escucha en todos:
+    #: dos voces pegadas dejan de oírse como dos notas de un acorde y se oyen
+    #: como una sola nota sucia. Hasta acá sólo se cobraba en los acordes de
+    #: reposo ---`repose_dissonances`--- y en el modal, de refilón, por
+    #: `weight_harmonic_dissonance`; en el medio de una pieza salía gratis, y
+    #: la búsqueda lo compraba cada vez que ahorraba un par de semitonos de
+    #: movimiento.
+    #:
+    #: Se mide el intervalo real y entre vecinas: una novena menor son las
+    #: mismas dos notas separadas una octava, y ésa es justamente la
+    #: disposición que arregla el problema ---la mira `weight_minor_ninth`---
+    #: así que cobrarla acá empujaría en contra.
+    #:
+    #: Al lado de `weight_motion` (10 por semitono) el valor dice cuántos
+    #: semitonos de movimiento de más vale la pena pagar por deshacer el
+    #: roce: ocho en la escritura de práctica común, cinco en jazz, donde el
+    #: racimo es a veces la disposición que se busca.
+    weight_semitone_clash: float = 80.0
 
     # --- balance between "move as little as possible" and "sound like the
     # style". Both are multipliers applied at the very end, so the user can
@@ -470,6 +491,7 @@ JAZZ = GenreProfile(
     weight_unresolved_seventh=25.0,
     weight_common_tone=-10.0,
     weight_minor_ninth=45.0,
+    weight_semitone_clash=50.0,
     weight_double_seventh=30.0,
     weight_overlap=15.0,
     # Jazz cadences routinely end on a major seventh, which is a dissonance
@@ -771,6 +793,13 @@ def evaluate(
         result.style += harmonic_dissonance_penalty(
             pitches, profile.weight_harmonic_dissonance
         )
+        # Sólo donde la disposición es libre. En el Armonizador la nota de
+        # arriba viene dada y el roce contra ella ya lo cobra
+        # `weight_melody_clash`, con su propio peso y su propio factor en los
+        # extremos: sumarle éste encima sería cobrar dos veces lo mismo.
+        if profile.weight_semitone_clash and settings.melody_voice is None:
+            result.style += (profile.weight_semitone_clash
+                             * adjacent_semitone_clashes(pitches))
 
         if profile.weight_colour_tone and settings.colour_pitch_classes:
             colours = set(settings.colour_pitch_classes[index]) if index < len(

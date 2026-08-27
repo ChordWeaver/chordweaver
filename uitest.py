@@ -49,6 +49,13 @@ class Session:
         if getattr(self.win, "tutorial", None) is not None:
             self.win.tutorial._clear()
             self.win.tutorial = None
+        # Y las guías de pantalla, por lo mismo: se abren solas la primera
+        # vez que se llega a los acordes, al pentagrama o a las reglas, y son
+        # el mismo velo a pantalla completa. Se apagan en memoria --- la
+        # preferencia guardada no se toca, así que el usuario las sigue
+        # viendo cuando le corresponde.
+        self.win.guides_enabled = False
+        self.win._close_guide()
         # Lo mismo con el modo historia: la figura aparece sola después de un
         # rato y su escena tapa la ventana entera, así que el arnés no podría
         # tocar nada. Se apaga sólo en memoria --- `story.json` no se toca ---
@@ -95,6 +102,11 @@ class Session:
         self.win.story.file_path = os.path.join(
             scratch, "chordweaver-uitest-story.json")
         self.win.visits.vision = "uitest"
+        self.win.visits.pact = "uitest"
+        # La tercera también: es la única visión que entrega un logro, así
+        # que una corrida del arnés que se la cruce lo desbloquearía sin que
+        # el usuario haya visto nada.
+        self.win.visits.tomb = "uitest"
         self.win.visits.seen = {key: "uitest" for key in visitors.VISITS}
         self.win.visits.path = os.path.join(tempfile.gettempdir(),
                                             "chordweaver-uitest-visitors.json")
@@ -161,6 +173,11 @@ class Session:
     def key(self, tonic: str, mode_label: str) -> "Session":
         self.win.tonic_menu.set(tonic)
         self.win.mode_menu.set(mode_label)
+        # `set()` no dispara el `command` del menú, y elegir con el mouse sí:
+        # sin esto la pantalla se quedaba con los grados y los destinos de
+        # modulación de la tonalidad anterior, que es justo lo que un usuario
+        # nunca ve.
+        self.win._follow_key_change()
         self.win.update()
         return self
 

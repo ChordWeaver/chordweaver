@@ -44,8 +44,10 @@ from .fitness import (
     evaluate,
     parallel_interval_violation,
 )
-from .harmony import HarmonyWeights, progression_cost
-from .passing import PassingRules, passing_candidates, score_passing
+from .harmony import HarmonyWeights, is_applied_dominant, progression_cost
+from .passing import (HARD_MAX_PASSING, MAX_LEAPS, STEP, PassingRules,
+                      figure, figure_candidates, passing_candidates,
+                      pick_figure, score_passing)
 from .style import (
     CONSONANT_ABOVE_BASS,
     ChordContext,
@@ -152,8 +154,10 @@ class Chromosome:
         """Flat tuple of every pitch and chord choice, to spot duplicates."""
         return (tuple(pitch for slot in self.slots for pitch in slot)
                 + tuple(self.choices)
-                + tuple(-1 if n is None else n
-                        for row in self.passing for n in row))
+                # Cada celda como tupla: un adorno puede ser una figura de
+                # varias notas, y `-1 if n is None else n` mezclaba enteros
+                # con tuplas en la misma firma.
+                + tuple(figure(n) for row in self.passing for n in row))
 
 
 @dataclass
@@ -993,12 +997,82 @@ def _uncross(
     return ordered
 
 
+def _chosen_harmony(
+    chromosome: Chromosome,
+    table: Optional[CandidateTable],
+    slot_index: int,
+):
+    """El acorde que este cromosoma eligió en ese lugar, o None."""
+    if table is None or slot_index >= len(table.harmony):
+        return None
+    options = table.harmony[slot_index]
+    if not options:
+        return None
+    choice = (chromosome.choices[slot_index]
+              if slot_index < len(chromosome.choices) else 0)
+    return options[min(max(choice, 0), len(options) - 1)]
+
+
+def _passing_scale(
+    chromosome: Chromosome,
+    table: Optional[CandidateTable],
+    slot_index: int,
+    scale_pcs: Sequence[int],
+    area_scales: Optional[Dict[str, Sequence[int]]],
+) -> Sequence[int]:
+    """
+    Contra qué escala se elige el adorno que sale de este lugar.
+
+    La de casa, salvo mientras la pieza está de viaje: ahí vale la del lugar
+    donde está. Una nota de paso «diatónica» sacada de la tonalidad de
+    origen suena contra el acorde que la sostiene, que es justo lo que un
+    adorno no puede hacer. El adorno vive en la cola del acorde del que
+    sale, así que manda el área de ESE lugar y no la del siguiente.
+    """
+    if not area_scales:
+        return scale_pcs
+    option = _chosen_harmony(chromosome, table, slot_index)
+    area = getattr(option, "key_area", "") if option is not None else ""
+    return area_scales.get(area, scale_pcs) if area else scale_pcs
+
+
+def _passing_forbidden(
+    chromosome: Chromosome,
+    table: Optional[CandidateTable],
+    slot_index: int,
+) -> bool:
+    """
+    Acordes que no admiten adorno de salida.
+
+    Dos casos, y por el mismo motivo: el acorde ya es el efecto. Una
+    dominante aplicada es una tónica pasajera que existe para tensar hacia
+    donde apunta, y un intercambio modal existe por la nota de fuera de la
+    escala que trae. Un adorno encima de cualquiera de los dos no decora
+    nada --- tapa lo único que el acorde vino a decir, y con notas que
+    contradicen justamente la alteración por la que se lo eligió.
+
+    Una modulación no cuenta: viaja en el mismo campo (``is_borrowed``) pero
+    ahí el acorde es diatónico de otra tonalidad, y su adorno se elige
+    contra la escala de esa tonalidad --- ver `_passing_scale`.
+    """
+    option = _chosen_harmony(chromosome, table, slot_index)
+    if option is None:
+        return False
+    if getattr(option, "key_area", ""):
+        return False
+    if is_applied_dominant(option):
+        return True
+    return bool(getattr(option, "is_borrowed", False))
+
+
 def _seed_passing(
     chromosome: Chromosome,
     rules: PassingRules,
     scale_pcs: Sequence[int],
     rng: random.Random,
     bar_of: Optional[Callable[[int], int]] = None,
+    table: Optional[CandidateTable] = None,
+    area_scales: Optional[Dict[str, Sequence[int]]] = None,
 ) -> None:
     """
     Place ornaments up front, according to the density the user chose.
@@ -1022,20 +1096,62 @@ def _seed_passing(
             continue
         if rng.random() >= rules.density:
             continue
-        # One voice per transition: several at once stop reading as
-        # decoration and start sounding like a second, clashing harmony.
+        if _passing_forbidden(chromosome, table, slot_index):
+            continue
+        here = _passing_scale(chromosome, table, slot_index, scale_pcs,
+                              area_scales)
         eligible = [v for v in rules.voices if v < voice_count]
         rng.shuffle(eligible)
-        for voice in eligible:
-            options = passing_candidates(
-                chromosome.slots[slot_index][voice],
-                chromosome.slots[slot_index + 1][voice],
-                scale_pcs, rules.diatonic_only, rules.max_leg,
-            )
-            if options:
-                chromosome.passing[slot_index][voice] = rng.choice(options)
-                chromosome.passing_share[slot_index] = rng.choice(rules.shares)
-                break
+        _place_figure(chromosome, slot_index, eligible, here, rules, rng)
+
+
+def _place_figure(chromosome, slot_index, eligible, scale_pcs, rules, rng,
+                  roll=False):
+    """
+    Poner el adorno de una transicion: una voz, una figura.
+
+    Sigue siendo **una sola voz por transicion** --- varias a la vez dejan de
+    leerse como decoracion y suenan como una segunda armonia que choca. Lo
+    que cambio es que esa voz ya no pone una nota sino una figura de hasta
+    tres: ver `passing.figure_candidates`.
+
+    ``roll`` hace que cada voz pase primero por el sorteo de la barra de
+    frecuencia, que es lo que la mutacion necesita y la siembra no: la
+    siembra ya sorteo la transicion entera antes de llegar aca.
+    """
+    if slot_index + 1 >= len(chromosome.slots):
+        return
+    here = chromosome.slots[slot_index]
+    there = chromosome.slots[slot_index + 1]
+    chosen = -1
+    shape = ()
+    for voice in eligible:
+        if roll and rng.random() >= rules.density:
+            continue
+        options = figure_candidates(here[voice], there[voice], scale_pcs,
+                                    rules.diatonic_only, rules.max_leg,
+                                    rules.max_notes)
+        shape = pick_figure(options, rng, rules.density)
+        if shape:
+            chosen = voice
+            break
+    if chosen < 0 or not shape:
+        return
+    chromosome.passing[slot_index][chosen] = shape
+    if slot_index < len(chromosome.passing_share):
+        chromosome.passing_share[slot_index] = rng.choice(rules.shares)
+
+
+def _figure_survives(shape, start, end, max_leg, allowed):
+    """Si esta figura sigue siendo cantable entre estas dos alturas."""
+    legs = [abs(b - a) for a, b in zip((start,) + shape, shape + (end,))]
+    if any(leg == 0 or leg > max_leg for leg in legs):
+        return False
+    if sum(1 for leg in legs if leg > STEP) > MAX_LEAPS:
+        return False
+    if allowed is not None and any(p % 12 not in allowed for p in shape):
+        return False
+    return True
 
 
 def _ensure_passing(chromosome: Chromosome, slot_count: int, voice_count: int) -> None:
@@ -1106,6 +1222,7 @@ def _mutate(
     scale_pcs: Sequence[int] = (),
     slot_bars: Sequence[int] = (),
     settings: Optional[RunSettings] = None,
+    area_scales: Optional[Dict[str, Sequence[int]]] = None,
 ) -> None:
     """Mutate in place: resample individual voices, occasionally whole slots."""
     voice_count = len(table.voices)
@@ -1146,24 +1263,14 @@ def _mutate(
             # mutation, instead of letting voices accumulate.
             for v in range(voice_count):
                 chromosome.passing[slot_index][v] = None
-            eligible = [v for v in passing_rules.voices if v < voice_count]
+            here = _passing_scale(chromosome, table, slot_index, scale_pcs,
+                                  area_scales)
+            eligible = ([] if _passing_forbidden(chromosome, table, slot_index)
+                        else [v for v in passing_rules.voices
+                              if v < voice_count])
             rng.shuffle(eligible)
-            for voice_index in eligible:
-                if rng.random() >= passing_rules.density:
-                    continue
-                start = chromosome.slots[slot_index][voice_index]
-                end = chromosome.slots[slot_index + 1][voice_index]
-                choices_here = passing_candidates(
-                    start, end, scale_pcs, passing_rules.diatonic_only,
-                    passing_rules.max_leg,
-                )
-                if choices_here:
-                    chromosome.passing[slot_index][voice_index] = rng.choice(choices_here)
-                    if slot_index < len(chromosome.passing_share):
-                        chromosome.passing_share[slot_index] = rng.choice(
-                            passing_rules.shares
-                        )
-                    break
+            _place_figure(chromosome, slot_index, eligible, here,
+                          passing_rules, rng, roll=True)
 
         touched = False
         if rng.random() < config.slot_mutation_rate:
@@ -1185,12 +1292,16 @@ def _mutate(
                 table.bass_classes(slot_index, option),
             )
 
-    _prune_stale_passing(chromosome, passing_rules)
+    _prune_stale_passing(chromosome, passing_rules, table, scale_pcs,
+                         area_scales)
 
 
 def _prune_stale_passing(
     chromosome: Chromosome,
     rules: Optional[PassingRules],
+    table: Optional[CandidateTable] = None,
+    scale_pcs: Sequence[int] = (),
+    area_scales: Optional[Dict[str, Sequence[int]]] = None,
 ) -> None:
     """
     Drop ornaments that stopped making sense after the voicing moved.
@@ -1204,20 +1315,55 @@ def _prune_stale_passing(
     """
     if rules is None or not rules.enabled:
         return
+    kept = 0
     for slot_index in range(len(chromosome.passing)):
         if slot_index + 1 >= len(chromosome.slots):
             for voice in range(len(chromosome.passing[slot_index])):
                 chromosome.passing[slot_index][voice] = None
             continue
-        for voice, note in enumerate(chromosome.passing[slot_index]):
-            if note is None:
+        # El acorde de este lugar puede haber cambiado después de que el
+        # adorno se colocó: una dominante aplicada o un préstamo que antes
+        # no estaban lo dejan sin lugar, y una modulación le cambia la
+        # escala debajo de los pies.
+        forbidden = _passing_forbidden(chromosome, table, slot_index)
+        allowed = None
+        if rules.diatonic_only and not forbidden:
+            here = _passing_scale(chromosome, table, slot_index, scale_pcs,
+                                  area_scales)
+            allowed = {pc % 12 for pc in here} if here else None
+        row = chromosome.passing[slot_index]
+        length = 0
+        for voice, entry in enumerate(row):
+            shape = figure(entry)
+            if not shape:
                 continue
             start = chromosome.slots[slot_index][voice]
             end = chromosome.slots[slot_index + 1][voice]
-            if (note == start or note == end
-                    or abs(note - start) > rules.max_leg
-                    or abs(note - end) > rules.max_leg):
-                chromosome.passing[slot_index][voice] = None
+            if forbidden or not _figure_survives(shape, start, end,
+                                                 rules.max_leg, allowed):
+                row[voice] = None
+                continue
+            # Todas las figuras de una transición tienen que durar lo mismo:
+            # la cola del acorde se parte en partes iguales y con largos
+            # distintos no hay forma de repartirla. Manda la primera que
+            # sobrevive.
+            if not length:
+                length = len(shape)
+            elif len(shape) != length:
+                row[voice] = None
+                continue
+            row[voice] = shape
+        if not length:
+            continue
+        # El tope duro, contado en **transiciones adornadas** y no en notas:
+        # una figura de tres notas es un adorno. `crowding` desalienta, no
+        # impide: con la barra de frecuencia arriba la búsqueda compraba el
+        # costo y salían piezas que eran un ejercicio de escalas. Acá se
+        # corta.
+        kept += 1
+        if kept > HARD_MAX_PASSING:
+            for voice in range(len(row)):
+                row[voice] = None
 
 
 def _repair_coverage(
@@ -1347,13 +1493,97 @@ def _restore_locks(chromosome: Chromosome, table: "CandidateTable") -> None:
             ]
 
 
+def _plan_floor(
+    population: Sequence[Chromosome],
+    kept: int,
+) -> Dict[Optional[Tuple[str, int, int]], float]:
+    """
+    El mejor costo alcanzado por cada uno de los mejores planes de viaje.
+
+    Es lo que permite que los torneos comparen **cada plan contra sí mismo**.
+    Sin eso, el plan más barato gana todos los torneos desde la primera
+    generación y los demás no vuelven a cruzarse: no es que salgan peores,
+    es que no se buscan. Medido sobre dieciséis compases, los dos planes
+    perdedores terminaban con el costo exacto del cromosoma con el que se
+    los sembró después de 600 generaciones ---10436 y 11127, sin moverse un
+    punto--- mientras el ganador bajaba de 2312 a 1324. Y no era que fueran
+    peores: dándole a cada destino la búsqueda entera, los tres llegan a la
+    misma altura (V 2983, vi 1165, IV 2708 sobre la misma semilla).
+
+    Sólo entran los ``kept`` mejores. Con todos adentro la búsqueda se
+    repartiría entre los quince o veinte planes que aparecen en el sembrado
+    y ninguno llegaría a ningún lado; los que quedan afuera compiten con su
+    costo pelado, pierden y se apagan solos.
+
+    Devuelve un diccionario vacío cuando no hay nada que separar --- sin
+    modulación, o con un solo plan vivo --- y ahí todo se comporta como
+    siempre.
+    """
+    best: Dict[Optional[Tuple[str, int, int]], float] = {}
+    for chromosome in population:
+        found = best.get(chromosome.mod_plan)
+        if found is None or chromosome.cost < found:
+            best[chromosome.mod_plan] = chromosome.cost
+    if len(best) < 2:
+        return {}
+    return dict(sorted(best.items(), key=lambda pair: pair[1])[:max(2, kept)])
+
+
+def _elites(
+    population: Sequence[Chromosome],
+    elitism: int,
+    floor: Dict[Optional[Tuple[str, int, int]], float],
+) -> List[Chromosome]:
+    """
+    Los que pasan enteros a la generación siguiente.
+
+    Con un solo plan son los mejores, como siempre. Con varios es **el mejor
+    de cada plan**, y ésa es la diferencia entre ofrecer tres modulaciones y
+    ofrecer una tres veces: el relleno de población clona de este plantel
+    ---y se lleva unas dos de cada tres plazas de cada generación--- así que
+    una elite entera del mismo plan inunda la población con ese plan y los
+    demás no llegan a cruzarse nunca.
+
+    ``population`` tiene que venir ordenada por costo.
+    """
+    if not floor:
+        return list(population[:elitism])
+    wanted = max(elitism, len(floor))
+    chosen: List[Chromosome] = []
+    seen = set()
+    for chromosome in population:
+        if chromosome.mod_plan in floor and chromosome.mod_plan not in seen:
+            seen.add(chromosome.mod_plan)
+            chosen.append(chromosome)
+            if len(chosen) >= wanted:
+                return chosen
+    taken = {id(c) for c in chosen}
+    for chromosome in population:
+        if len(chosen) >= wanted:
+            break
+        if id(chromosome) not in taken:
+            chosen.append(chromosome)
+    return chosen or list(population[:elitism])
+
+
 def _tournament(
     population: Sequence[Chromosome],
     size: int,
     rng: random.Random,
+    floor: Optional[Dict[Optional[Tuple[str, int, int]], float]] = None,
 ) -> Chromosome:
+    """
+    Un torneo. Con ``floor``, cada uno compite contra el mejor de su plan.
+
+    El sorteo consume exactamente lo mismo en los dos casos --- es el mismo
+    `rng.sample` --- así que lo único que cambia es a quién se elige de los
+    que salieron, no cuántas veces se tira el dado.
+    """
     contenders = rng.sample(population, min(size, len(population)))
-    return min(contenders, key=lambda c: c.cost)
+    if not floor:
+        return min(contenders, key=lambda c: c.cost)
+    return min(contenders,
+               key=lambda c: c.cost - floor.get(c.mod_plan, 0.0))
 
 
 def run(
@@ -1366,6 +1596,7 @@ def run(
     tonic_pc: Optional[int] = None,
     passing_rules: Optional[PassingRules] = None,
     scale_pcs: Sequence[int] = (),
+    area_scales: Optional[Dict[str, Sequence[int]]] = None,
 ) -> GAResult:
     """
     Run the genetic algorithm and return the best distinct solutions.
@@ -1459,7 +1690,7 @@ def run(
             continue
         if passing_rules is not None:
             _seed_passing(candidate, passing_rules, scale_pcs, rng,
-                          lambda i: slots[i].bar_index)
+                          lambda i: slots[i].bar_index, table, area_scales)
         score(candidate)
         if candidate.cost < INFINITE_COST:
             population.append(candidate)
@@ -1488,7 +1719,7 @@ def run(
     while len(population) < config.population_size:
         clone = rng.choice(population).copy()
         _mutate(clone, table, config, rng, passing_rules, scale_pcs,
-                [slot.bar_index for slot in slots], base_settings)
+                [slot.bar_index for slot in slots], base_settings, area_scales)
         score(clone)
         population.append(clone)
 
@@ -1534,10 +1765,16 @@ def run(
       for generation in range(config.generations):
           generations_run = generation + 1
           population.sort(key=lambda c: c.cost)
-          next_population: List[Chromosome] = [c.copy() for c in population[: config.elitism]]
-          for elite, source in zip(next_population, population[: config.elitism]):
+          # Cada plan de viaje compite contra sí mismo, y el plantel de elite
+          # lleva al mejor de cada uno: ver `_plan_floor` y `_elites`. Sin
+          # modulación las dos cosas devuelven lo de siempre.
+          floor = _plan_floor(population, solutions_wanted)
+          elites = _elites(population, config.elitism, floor)
+          next_population: List[Chromosome] = [c.copy() for c in elites]
+          for elite, source in zip(next_population, elites):
               elite.cost = source.cost
               elite.breakdown = source.breakdown
+          elite_count = len(next_population)
 
           # Los hijos se despachan **a medida que nacen**, no cuando están
           # todos. Criar cuesta más que puntuar --- medido sobre dieciséis
@@ -1563,11 +1800,14 @@ def run(
           guard = config.population_size * 8
           while len(candidates) < config.population_size and guard > 0:
               guard -= 1
-              parent_a = _tournament(population, config.tournament_size, rng)
-              parent_b = _tournament(population, config.tournament_size, rng)
+              parent_a = _tournament(population, config.tournament_size, rng,
+                                     floor)
+              parent_b = _tournament(population, config.tournament_size, rng,
+                                     floor)
               child = _crossover(parent_a, parent_b, rng, config)
               _mutate(child, table, config, rng, passing_rules, scale_pcs,
-                    [slot.bar_index for slot in slots], base_settings)
+                    [slot.bar_index for slot in slots], base_settings,
+                    area_scales)
               candidates.append(child)
               if pool is not None:
                   batch.append((child.slots, child.choices, child.passing))
@@ -1611,7 +1851,7 @@ def run(
           # El sorteo se hace igual que antes para no correr el generador de
           # azar: la corrida tiene que salir idéntica, no parecida.
           while len(next_population) < config.population_size:
-              source = rng.choice(next_population[: max(1, config.elitism)])
+              source = rng.choice(next_population[: max(1, elite_count)])
               clone = source.copy()
               clone.breakdown = source.breakdown
               next_population.append(clone)
@@ -1667,6 +1907,33 @@ def _pick_diverse(
         return []
 
     chosen: List[Chromosome] = [ranked[0]]
+
+    # Primero, **que viajen a lugares distintos**.
+    #
+    # El plan de modulación se hereda entero de uno de los dos padres y no
+    # muta nunca, así que en cuanto un destino resulta más barato que los
+    # otros se come la población: el salón de la fama termina con quince
+    # planes adentro y los quince mejores puestos ocupados por el mismo. Las
+    # tres soluciones salían modulando al mismo tono, en el mismo compás y
+    # durante los mismos compases --- medido, ocho corridas de ocho ---, que
+    # es justamente lo que tener tres soluciones venía a evitar: adónde se
+    # va la pieza es la decisión más audible de todas y ofrecerla una sola
+    # vez es no ofrecerla.
+    #
+    # Va antes que la separación por acordes porque es más gruesa: dos
+    # progresiones que difieren en dos acordes se parecen bastante, y dos que
+    # visitan tonos distintos no se parecen en nada.
+    if any(c.mod_plan is not None for c in ranked):
+        seen_plans = {ranked[0].mod_plan}
+        for candidate in ranked[1:]:
+            if len(chosen) >= wanted:
+                break
+            if candidate.mod_plan in seen_plans:
+                continue
+            seen_plans.add(candidate.mod_plan)
+            chosen.append(candidate)
+        if len(chosen) >= wanted:
+            return chosen[:wanted]
 
     if generative:
         # Two chords apart already reads as a different progression, and

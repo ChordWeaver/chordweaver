@@ -697,6 +697,11 @@ _BLIPS = {
     "bach": (392.0, 0.055, "pluck"),
     "gregory": (208.0, 0.070, "soft"),
     "watcher": (96.0, 0.085, "soft"),
+    # El creador: una onda cuadrada limpia y aguda, que es el sonido de una
+    # máquina hablando y es además exactamente de lo que él viene a hablar
+    # --- sólo los armónicos impares. La única voz del programa que es su
+    # propio tema.
+    "creator": (523.25, 0.040, "square"),
 }
 
 
@@ -1173,6 +1178,171 @@ def _crossroads() -> bytes:
     return _encode(_loudness(buffer, POWER_HIT, LEVEL_HIT))
 
 
+def _rain() -> bytes:
+    """
+    La cama de la tercera visión: lluvia fuerte, sin nada más adentro.
+
+    Un aguacero no es un siseo parejo. Son tres cosas encimadas: la **masa**
+    ---millones de gotas lejanas, que a esa distancia se vuelven ruido de
+    banda ancha---, el **repiqueteo** de las que caen cerca, que tiene un
+    color propio porque cada superficie resuena a lo suyo, y un **rumor
+    grave** de agua corriendo que es lo que dice que llueve fuerte y no que
+    llovizna.
+
+    Lo que la convierte en lluvia y no en estática es que respire: las
+    ráfagas van y vienen cada pocos segundos, y con ellas se mueve el brillo
+    ---una racha acerca las gotas y con eso suben los agudos---. Ese vaivén
+    es todo el movimiento que hay, y a propósito: la escena tiene que poder
+    durar lo que dure sin que el sonido cuente nada.
+    """
+    rng = random.Random(1938)
+    seconds = 10.0
+    buffer = _buffer(seconds)
+
+    def squall(period: float, depth: float, phase: float = 0.0):
+        def shape(position: float) -> float:
+            wave = math.sin(_TWO_PI * (position * period + phase))
+            return max(0.30, 1.0 - depth + depth * (0.5 + 0.5 * wave))
+        return shape
+
+    # La masa: ancho, brillante y constante. Es el noventa por ciento.
+    _noise(buffer, 0.34, 0.62, rng, squall(1.0, 0.30))
+    _noise(buffer, 0.22, 0.20, rng, squall(2.0, 0.35, 0.4))
+    # El repiqueteo de lo que cae cerca: dos bandas altas, con la de arriba
+    # moviéndose con la racha. Sin ellas la lluvia suena a radio mal
+    # sintonizada.
+    _band(buffer, 0.20, 2600.0, 2.2, rng, squall(1.0, 0.45),
+          lambda p: 1.0 + 0.25 * math.sin(_TWO_PI * p))
+    _band(buffer, 0.13, 5200.0, 3.0, rng, squall(3.0, 0.55, 0.2))
+    # Y el agua que ya está en el piso, que es lo que la vuelve pesada.
+    _band(buffer, 0.16, 190.0, 1.6, rng, squall(1.0, 0.25, 0.6))
+    _tone(buffer, 46.0, 0.05, 0.0, seconds,
+          envelope=lambda p: 0.7 + 0.3 * math.sin(_TWO_PI * p * 2.0),
+          harmonics=(1.0, 0.25))
+    _reverb(buffer, mix=0.16, decay=0.78, size=1.6)
+    return _encode(_loudness(_seamless(buffer, 0.9), POWER_SOLO, LEVEL_BED,
+                             tail=0.0))
+
+
+def _thunder() -> bytes:
+    """
+    Un trueno: el latigazo y el rodar largo que viene detrás.
+
+    La diferencia entre un trueno y una explosión es de dónde sale el ruido.
+    Una explosión es un punto; un rayo es un canal de kilómetros, y cada
+    tramo manda su onda desde una distancia distinta. Por eso el trueno no
+    se apaga: **rueda**, y llega en oleadas de un frente que no termina de
+    pasar.
+
+    Acá eso son tres capas. El latigazo, que es lo único agudo y dura lo que
+    dura un chasquido. El cuerpo, que es ruido grave abriéndose. Y el
+    rodar: una banda baja con la amplitud yendo y viniendo en un compás que
+    no es regular ---dos ondas de períodos que no encajan---, con el filtro
+    cerrándose despacio, que es lo que hace la distancia.
+
+    Dura seis segundos y no diez porque suena varias veces en la misma
+    escena: dos truenos encimados suenan a error y no a tormenta.
+    """
+    rng = random.Random(1937)
+    seconds = 6.0
+    buffer = _buffer(seconds)
+
+    # El latigazo. Va primero y arriba de todo: es lo que se oye antes de
+    # entender que fue un trueno.
+    _noise(buffer, 0.85, 0.80, rng,
+           lambda p: math.exp(-55.0 * p * seconds) * min(1.0, p / 0.0006))
+    _band(buffer, 0.50, 1800.0, 2.0, rng,
+          lambda p: math.exp(-26.0 * p * seconds) * min(1.0, p / 0.001))
+    # El cuerpo: la descarga entera, grave y abierta.
+    _noise(buffer, 0.80, 0.055, rng,
+           lambda p: min(1.0, p / 0.012) * math.exp(-2.6 * p * seconds / 4.0))
+    _tone(buffer, 54.0, 0.42, 0.0, 4.6,
+          envelope=lambda p: math.exp(-1.5 * p) * min(1.0, p / 0.008),
+          harmonics=(1.0, 0.38, 0.14), glide=0.42)
+    # El rodar. Dos ondas de períodos que no encajan: un temblor regular se
+    # oye como un motor, y lo que hace falta es que nunca se repita igual.
+    _band(buffer, 0.60, 78.0, 1.1, rng,
+          lambda p: min(1.0, p / 0.08) * math.exp(-1.25 * p)
+          * (0.45 + 0.35 * math.sin(_TWO_PI * p * 2.7)
+             + 0.20 * math.sin(_TWO_PI * p * 4.3 + 1.1)),
+          lambda p: 1.0 - 0.40 * p)
+    _band(buffer, 0.26, 165.0, 1.8, rng,
+          lambda p: min(1.0, p / 0.15) * math.exp(-1.9 * p)
+          * (0.55 + 0.45 * math.sin(_TWO_PI * p * 3.3 + 0.6)),
+          lambda p: 1.0 - 0.55 * p)
+    # Y el agua que el frente levanta al pasar, que es lo que lo ata a la
+    # lluvia en vez de dejarlo colgado encima.
+    _noise(buffer, 0.16, 0.32, rng,
+           lambda p: min(1.0, p / 0.25) * math.exp(-2.2 * p))
+    _saturate(buffer, 1.15)
+    _reverb(buffer, mix=0.40, decay=0.91, size=3.4, damp=0.55)
+    _polish(buffer, 0.85, 0.04)
+    return _encode(_loudness(buffer, POWER_HIT, LEVEL_HIT))
+
+
+def _dread() -> bytes:
+    """
+    Lo que suena cuando la tormenta se abre y se ve lo que hay en el camino.
+
+    No es un trueno más y no es la aparición de la primera visión. Aquéllos
+    llegan; éste **cae**. Es la figura de suspenso más vieja que hay ---algo
+    que crece durante dos segundos y después se desploma--- y funciona por
+    lo mismo de siempre: mientras sube, la única pregunta es cuándo termina.
+
+    La subida son dos graves separados por un semitono. Un semitono batiendo
+    en el registro grave no se oye como dos notas sino como una sola nota
+    que tiembla, y el temblor se acelera solo a medida que suben: eso es
+    todo el nervio del asunto, y no hay que hacer nada para conseguirlo.
+    Encima va una banda que trepa de doscientos a dos mil, que es la que da
+    la sensación de altura.
+
+    La caída es el mismo semitono una octava y media más abajo, entero de
+    una vez, con parciales inarmónicos encima ---metal que nadie golpeó, el
+    mismo recurso del cruce de caminos--- y una cola de reverberación larga
+    para que lo que quede después sea el tamaño del campo vacío.
+    """
+    rng = random.Random(1911)
+    seconds = 7.0
+    buffer = _buffer(seconds)
+    drop = 2.4
+
+    def climb(position: float) -> float:
+        """Sube despacio y se acelera al final, como todo lo que asusta."""
+        share = position * seconds / drop
+        return 0.0 if share >= 1.0 else share ** 2.6
+
+    # La subida: el semitono grave, con el batido acelerando por su cuenta.
+    for frequency, gain in ((58.27, 0.30), (61.74, 0.28)):
+        _tone(buffer, frequency, gain, 0.0, drop, envelope=lambda p: p ** 2.6,
+              harmonics=(1.0, 0.40, 0.18, 0.08), glide=1.32)
+    # Y la banda que trepa, que es la que se oye subir.
+    _band(buffer, 0.34, 200.0, 5.0, rng, climb, lambda p: 1.0 + 9.0 * p)
+    _noise(buffer, 0.22, 0.30, rng, climb)
+
+    def fall(position: float) -> float:
+        return math.exp(-1.15 * position) * min(1.0, position / 0.004)
+
+    # La caída: el mismo semitono, abajo, entero y de golpe.
+    for frequency, gain in ((29.14, 0.34), (30.87, 0.32)):
+        _tone(buffer, frequency, gain, drop, seconds - drop, envelope=fall,
+              harmonics=(1.0, 0.55, 0.30, 0.16, 0.09), vibrato=0.002)
+    _tone(buffer, 87.31, 0.22, drop, 2.6,
+          envelope=lambda p: math.exp(-2.4 * p) * min(1.0, p / 0.004),
+          harmonics=(1.0, 0.30, 0.14))
+    # El impacto, sin el cual el acorde entra sin haber golpeado nada.
+    _noise(buffer, 0.60, 0.50, rng,
+           lambda p: math.exp(-30.0 * max(0.0, p - drop / seconds) * seconds)
+           if p >= drop / seconds else 0.0)
+    # Los parciales inarmónicos: lo que suena después no es una nota.
+    for ratio, gain, delay in ((6.83, 0.050, 0.10), (11.41, 0.034, 0.45),
+                               (16.09, 0.020, 0.95)):
+        _tone(buffer, 29.14 * ratio, gain, drop + delay, 3.2,
+              envelope=lambda p: math.sin(math.pi * p) ** 1.6, vibrato=0.004)
+    _saturate(buffer, 1.25)
+    _reverb(buffer, mix=0.44, decay=0.91, size=3.4, damp=0.42)
+    return _encode(_loudness(buffer, POWER_HIT, LEVEL_HIT))
+
+
 # ---------------------------------------------------------------------------
 # Los huevos de pascua
 # ---------------------------------------------------------------------------
@@ -1436,6 +1606,7 @@ _RECIPES: Dict[str, tuple] = {
     "blip_bach": (lambda: _blip("bach"), False),
     "blip_gregory": (lambda: _blip("gregory"), False),
     "blip_watcher": (lambda: _blip("watcher"), False),
+    "blip_creator": (lambda: _blip("creator"), False),
     "clavier": (_clavier, False),
     "plainchant": (_plainchant, False),
     "toll": (_toll, False),
@@ -1445,6 +1616,9 @@ _RECIPES: Dict[str, tuple] = {
     "train": (_train, False),
     "owls": (_owls, False),
     "blues": (_blues, False),
+    "rain": (_rain, True),
+    "thunder": (_thunder, False),
+    "dread": (_dread, False),
     "zombie": (_zombie, False),
     "fox": (_fox_scream, False),
     "blast": (_blast, False),
@@ -1466,6 +1640,7 @@ _ON_DEMAND = frozenset({"zombie", "fox", "blast",
                         # listos apenas se abre la boca.
                         "clavier", "plainchant", "toll", "hollow",
                         "gale", "crossroads", "train", "owls", "blues",
+                        "rain", "thunder", "dread",
                         # Las estrellas y los huevos. Una sesion cualquiera
                         # no consigue ninguna de las dos cosas, y cuando las
                         # consigue hay un velo a pantalla completa que da de

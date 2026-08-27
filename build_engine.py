@@ -23,9 +23,11 @@ instalado corre `pyinstaller ChordWeaver.spec` y le sale un ejecutable que
 funciona.
 """
 
+import hashlib
 import os
 import shutil
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -40,7 +42,27 @@ MODULES = ["fitness", "style", "theory", "ga", "voicing", "harmony"]
 
 #: Dónde van los `.c` y los objetos intermedios. No son del usuario ni del
 #: repositorio: son basura de compilación.
-BUILD_DIR = os.path.join(HERE, "build", "cython")
+#:
+#: Fuera del proyecto, y por una razón concreta y no por gusto: MSVC arma el
+#: nombre del `.obj` pegando el directorio intermedio, la palabra `Release` y
+#: **la ruta absoluta del `.c`** ---que a su vez ya cuelga del directorio
+#: intermedio---, así que la ruta del proyecto entra dos veces y la del
+#: directorio intermedio otras dos. Con el proyecto en `Documentos\...` eso
+#: pasa los 260 caracteres de Windows y la compilación se cae con
+#: `fatal error C1083: No se puede abrir el archivo generado por el
+#: compilador: ''`, un mensaje que no nombra ni el largo ni la ruta. Con una
+#: raíz corta la misma cuenta da la mitad y compila.
+#:
+#: El nombre lleva un resumen de `HERE` para que dos copias del proyecto no
+#: compartan los intermedios.
+BUILD_DIR = os.path.join(
+    tempfile.gettempdir(),
+    "chordweaver-cython-" + hashlib.sha1(HERE.encode("utf-8")).hexdigest()[:8],
+)
+
+#: Dónde los dejaban las versiones anteriores. Se sigue borrando con
+#: `--clean` para que una copia vieja del proyecto no quede con basura.
+LEGACY_BUILD_DIR = os.path.join(HERE, "build", "cython")
 
 
 def sources():
@@ -69,9 +91,10 @@ def clean():
     for path in compiled():
         os.remove(path)
         print("borrado", os.path.relpath(path, HERE))
-    if os.path.isdir(BUILD_DIR):
-        shutil.rmtree(BUILD_DIR)
-    parent = os.path.dirname(BUILD_DIR)
+    for folder in (BUILD_DIR, LEGACY_BUILD_DIR):
+        if os.path.isdir(folder):
+            shutil.rmtree(folder)
+    parent = os.path.dirname(LEGACY_BUILD_DIR)
     if os.path.isdir(parent) and not os.listdir(parent):
         os.rmdir(parent)
     print("el motor vuelve a correr en Python puro")

@@ -32,7 +32,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from . import history
 from .fitness import GENRE_PROFILES, parallel_interval_violation
-from .harmony import SET_PIECES, is_applied_dominant
+from .harmony import DOMINANT, SET_PIECES, is_applied_dominant
 from .theory import ROLE_FIFTH, ROLE_SEVENTH, ROLE_THIRD, Chord
 
 _FILENAME = "achievements.json"
@@ -42,6 +42,25 @@ TRIUMPH_TITLE = "Triunfador"
 
 #: Cuántas estrellas hay.
 STAR_COUNT = 3
+
+
+#: Con qué se marca lo que va en negrita dentro de una descripción. Es la
+#: misma marca que usa cualquiera al escribir, y el catálogo se sigue
+#: leyendo como texto: quien no la interprete ---un aviso, un cartel---
+#: muestra el texto sin ella y no pierde nada.
+EMPHASIS = "**"
+
+
+def runs(description: str):
+    """Partir una descripción en tramos ``(texto, negrita)``."""
+    pieces = description.split(EMPHASIS)
+    return [(text, bool(order % 2)) for order, text in enumerate(pieces)
+            if text]
+
+
+def plain(description: str) -> str:
+    """La descripción sin las marcas, para donde no se puedan dibujar."""
+    return description.replace(EMPHASIS, "")
 
 
 @dataclass(frozen=True)
@@ -110,6 +129,10 @@ CATALOG: Tuple[Achievement, ...] = (
                 "Completá el tutorial.", 1),
     Achievement("book_read", "Lector comprometido",
                 "Leé el libro de teoría.", 1),
+    Achievement("harmonics_first", "Licenciado en física",
+                "Usá el experimentador de armónicos por primera vez.", 1),
+    Achievement("analyser_first", "El principio del final",
+                "Abrí el analizador por primera vez.", 1),
 
     # -- segunda estrella ---------------------------------------------------
     Achievement("set_piece_vivaldi", "El 1er Blues",
@@ -161,6 +184,27 @@ CATALOG: Tuple[Achievement, ...] = (
     Achievement("supreme_melody", "La melodía suprema",
                 "Utilizá todas las notas de la escala junto a todas las "
                 "duraciones posibles.", 3),
+    # Los tres que entregan las visitas. Se consiguen recibiendo a alguien,
+    # no escribiendo nada en particular, así que la descripción dice qué hay
+    # que hacer para que venga y nunca quién viene: el nombre es la escena.
+    Achievement("visit_bach", "Comienzos",
+                "Escribí cinco partituras barrocas y recibí a quien viene a "
+                "leerlas.", 3),
+    Achievement("visit_chorale", "Cantando juntos",
+                "Escribí tu primer coral y recibí a quien viene a "
+                "escucharlo.", 3),
+    Achievement("visit_gregory", "Me lo contó un pajarito creyente",
+                "Escribí cinco partituras gregorianas y recibí a quien viene "
+                "a escucharlas.", 3),
+    Achievement("visit_creator", "La cuarta pared",
+                "Armá tres sonidos distintos en el experimentador de "
+                "armónicos y recibí a quien viene a mirarlos.", 3),
+    # El único que no se consigue escribiendo nada: se consigue llegando al
+    # final de lo que se cuenta en el camino. La descripción no dice quién
+    # es --- decirlo sería contar el final desde la lista de logros --- y por
+    # eso lo nombra como lo nombra la escena.
+    Achievement("echoes_past", "Ecos del pasado",
+                "Escuchá la historia completa de **aquel hombre**.", 3),
 
     # -- legendarios --------------------------------------------------------
     # Las descripciones no dicen cómo se consiguen: se muestran en itálica y
@@ -204,12 +248,18 @@ class Tracker:
     """
 
     def __init__(self, unlocked: Optional[Dict[str, str]] = None,
-                 stars_seen: int = 0, path: Optional[str] = None):
+                 stars_seen: int = 0, seen: Optional[Iterable[str]] = None,
+                 path: Optional[str] = None):
         #: clave -> marca de tiempo ISO.
         self.unlocked: Dict[str, str] = dict(unlocked or {})
         #: Hasta qué estrella ya se mostró la animación, para no repetirla
         #: cada vez que se abre el programa.
         self.stars_seen = stars_seen
+        #: Los logros que el usuario ya fue a mirar al listado. Lo
+        #: conseguido y no mirado se marca como recién completado, igual que
+        #: una anotación del libro que todavía no se leyó: el aviso dura un
+        #: rato y hay que poder encontrar después cuál era.
+        self.seen: Set[str] = set(seen or ())
         self.path = path
 
     # -- persistencia -------------------------------------------------------
@@ -235,17 +285,28 @@ class Tracker:
         # el archivo puede venir de una versión anterior.
         clean = {k: str(v) for k, v in stored.items() if k in BY_KEY}
         try:
-            seen = int(raw.get("stars_seen", 0))
+            stars = int(raw.get("stars_seen", 0))
         except (TypeError, ValueError):
-            seen = 0
-        return cls(clean, max(0, min(STAR_COUNT, seen)), path=path)
+            stars = 0
+        # Un archivo de una versión anterior no trae la lista, y ahí lo
+        # conseguido **no** es reciente: sin esto, quien ya tenía treinta
+        # logros abría la pantalla y se los encontraba a todos marcados como
+        # recién completados. Una lista vacía guardada sí significa que no se
+        # miró ninguno.
+        noticed = raw.get("seen")
+        if isinstance(noticed, list):
+            fresh = {str(k) for k in noticed if k in BY_KEY}
+        else:
+            fresh = set(clean)
+        return cls(clean, max(0, min(STAR_COUNT, stars)), fresh, path=path)
 
     def save(self) -> None:
         target = self.path or achievements_path()
         try:
             with open(target, "w", encoding="utf-8") as handle:
                 json.dump({"unlocked": self.unlocked,
-                           "stars_seen": self.stars_seen},
+                           "stars_seen": self.stars_seen,
+                           "seen": sorted(self.seen)},
                           handle, indent=2, ensure_ascii=False)
         except OSError:
             pass          # una carpeta de sólo lectura no puede romper la app
@@ -258,6 +319,13 @@ class Tracker:
     def pending(self) -> Set[str]:
         """Las claves que todavía faltan. Es lo que se pasa a los detectores."""
         return {a.key for a in CATALOG if a.key not in self.unlocked}
+
+    def fresh(self) -> Set[str]:
+        """Lo conseguido que el usuario todavía no fue a mirar al listado."""
+        return set(self.unlocked) - self.seen
+
+    def is_fresh(self, key: str) -> bool:
+        return key in self.unlocked and key not in self.seen
 
     def wants(self, *keys: str) -> bool:
         """¿Vale la pena buscar alguno de estos? Falso si ya están todos."""
@@ -316,6 +384,22 @@ class Tracker:
         self.save()
         order = {a.key: i for i, a in enumerate(CATALOG)}
         return [BY_KEY[k] for k in sorted(set(fresh), key=lambda k: order[k])]
+
+    def mark_seen(self, keys: Optional[Iterable[str]] = None) -> bool:
+        """
+        Dar por vistos unos logros --- todo lo conseguido, si no se dice.
+
+        Se llama cuando el listado se pintó de verdad, no al desbloquear:
+        la marca de recién completado existe justamente para el que ganó
+        algo mientras miraba otra cosa.
+        """
+        wanted = set(self.unlocked) if keys is None else {
+            k for k in keys if k in self.unlocked}
+        if wanted <= self.seen:
+            return False
+        self.seen |= wanted
+        self.save()
+        return True
 
     def mark_stars_seen(self, star: int) -> None:
         """Recordar que la animación de esta estrella ya se mostró."""
@@ -789,3 +873,106 @@ def inspect_written_chords(chords: Sequence[Chord],
     if "second_coming" in wanted and is_gospel_octave_rule(chords):
         found.add("second_coming")
     return found
+
+
+# ---------------------------------------------------------------------------
+# Detectores: una partitura analizada
+# ---------------------------------------------------------------------------
+
+#: Cómo se llama en el catálogo cada cita que el analizador reconoce. Los
+#: nombres de las cadencias salen de `harmony.SET_PIECES` --- son las mismas
+#: que el generador escribe --- así que se los busca por su etiqueta y no se
+#: los vuelve a escribir acá.
+_ANALYSIS_SET_PIECES = {"phrygian": "set_piece_phrygian",
+                        "vivaldi": "set_piece_vivaldi",
+                        "chromatic_bass": "set_piece_chromatic"}
+
+#: Las calidades que el analizador llama disminuidas.
+_ANALYSIS_DIMINISHED = frozenset({"dim", "dim7", "m7b5"})
+
+
+def inspect_analysis(result, wanted: Optional[Set[str]] = None) -> Set[str]:
+    """
+    Todo lo que una partitura analizada puede desbloquear por sí sola.
+
+    El analizador lee música en vez de escribirla, pero lo que encuentra son
+    exactamente los mismos hechos que el catálogo premia: una séptima es una
+    séptima la haya puesto el algoritmo o la haya escrito Bach. Lo que no
+    entra son los logros que hablan de *cómo* se hizo la pieza --- el género
+    elegido, los parámetros del algoritmo, los candados del organizador ---
+    porque acá no se eligió nada de eso.
+
+    ``wanted`` son las claves que todavía faltan, igual que en
+    :func:`inspect_outcome`.
+    """
+    found: Set[str] = set()
+    if result is None:
+        return found
+    if wanted is None:
+        wanted = set(BY_KEY)
+    if not wanted:
+        return found
+
+    segments = list(getattr(result, "segments", ()) or ())
+    readings = [s.reading for s in segments]
+
+    # -- las citas que el generador sabe escribir ---------------------------
+    labels = {piece.label.lower(): key for key, piece in SET_PIECES.items()}
+    for cadence in getattr(result, "cadences", ()) or ():
+        kind = (cadence.kind or "").lower()
+        key = _ANALYSIS_SET_PIECES.get(labels.get(kind, ""), "")
+        if key:
+            found.add(key)
+        if kind == "cadencia plagal":
+            found.add("plagal")
+
+    dominant_run = 0
+    for index, (segment, reading) in enumerate(zip(segments, readings)):
+        if reading is None:
+            dominant_run = 0
+            continue
+        if any(role == "seventh" for _pc, role, _size in reading.tones):
+            found.add("seventh_chord")
+        if reading.quality in _ANALYSIS_DIMINISHED:
+            found.add("diminished_chord")
+        if segment.category == "intercambio modal":
+            found.add("modal_interchange")
+
+        # Tres dominantes encadenados: por calidad, igual que en una corrida
+        # del motor. Tres grados "V" seguidos serían el mismo acorde
+        # repetido; la cadena de la que habla el logro es E7 A7 D7.
+        if reading.quality == "7":
+            dominant_run += 1
+            if dominant_run >= 3:
+                found.add("three_dominants")
+        else:
+            dominant_run = 0
+
+        following = readings[index + 1] if index + 1 < len(readings) else None
+        if following is not None:
+            # ii - V: por grado y no por altura, que es lo que lo hace un
+            # ii-V y no dos acordes a distancia de cuarta.
+            if (segment.numeral.startswith("ii")
+                    and segments[index + 1].numeral.startswith("V")
+                    and not segments[index + 1].numeral.startswith("V/")):
+                found.add("two_five")
+            # El cadencial: la tónica en segunda inversión que se apoya
+            # sobre la dominante y le entrega el bajo.
+            if (segment.figure.endswith("6/4")
+                    and segments[index + 1].numeral.startswith("V")
+                    and reading.bass_pc == following.root_pc):
+                found.add("cadential_six_four")
+
+    if segments and segments[-1].function == DOMINANT:
+        found.add("ends_on_dominant")
+
+    # -- quintas paralelas: las que el contrapunto ya encontró --------------
+    if wanted & {"parallel_fifth", "no_parallel_fifths"} and segments:
+        graves = [f for f in getattr(result, "findings", ()) or ()
+                  if f.kind == "quintas_paralelas" and f.severity == "grave"]
+        if graves:
+            found.add("parallel_fifth")
+        else:
+            found.add("no_parallel_fifths")
+
+    return found & wanted

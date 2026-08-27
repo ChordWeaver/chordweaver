@@ -9,13 +9,16 @@ violated by a returned solution.
 
 from __future__ import annotations
 
+import inspect
 import json
 import math
 import os
 import random
+import struct
 import sys
 import tempfile
 import unittest
+import wave
 
 from engine import history as _history
 
@@ -28,8 +31,9 @@ os.environ.setdefault(
     _history.SANDBOX_VARIABLE,
     os.path.join(tempfile.gettempdir(), "chordweaver-tests-data"))
 
-from engine import (achievements, ambience, book, eggs, export, harmony,
-                    history, session, story, visitors)
+from engine import (achievements, ambience, analysis, book, eggs, export,
+                    harmonics, harmonize, harmony, history, importer,
+                    session, story, visitors)
 from engine.fitness import (
     GENRE_PROFILES,
     INFINITE_COST,
@@ -1263,6 +1267,173 @@ class TestPassingTones(unittest.TestCase):
             self.assertFalse(outcome.spec.slots[slot].is_rest)
 
 
+class TestSemitoneClash(unittest.TestCase):
+    """Dos voces vecinas pegadas a un semitono."""
+
+    def _settings(self, genre, melody_voice=None):
+        from engine.style import ChordContext
+        return RunSettings(
+            profile=GENRE_PROFILES[genre],
+            voices=build_voice_parts(["B", "T", "A", "S"]),
+            chord_contexts=[ChordContext.from_chord(parse_chord("Cmaj7"))],
+            melody_voice=melody_voice,
+        )
+
+    def test_a_clash_in_the_middle_of_a_piece_now_costs(self):
+        """Antes sólo se cobraba en los acordes de reposo: en el medio de la
+        pieza el roce salía gratis y la búsqueda lo compraba cada vez que
+        ahorraba un par de semitonos de movimiento."""
+        settings = self._settings("classical")
+        # Cmaj7 escrito 3-5-7-1: el si y el do quedan pegados.
+        rubbing = evaluate([[52, 55, 59, 60]], settings)
+        # El mismo acorde con la séptima arriba de todo.
+        clean = evaluate([[48, 55, 64, 71]], settings)
+        self.assertLess(clean.total, rubbing.total)
+
+    def test_every_style_charges_it(self):
+        from engine.style import adjacent_semitone_clashes
+        for genre in GENRE_PROFILES:
+            self.assertGreater(GENRE_PROFILES[genre].weight_semitone_clash, 0.0,
+                               genre)
+        self.assertEqual(adjacent_semitone_clashes([52, 55, 59, 60]), 1)
+        # Entre vecinas y en intervalo real: una novena menor son las mismas
+        # dos notas a una octava, y ésa es la disposición que arregla el roce.
+        self.assertEqual(adjacent_semitone_clashes([48, 55, 64, 71]), 0)
+        self.assertEqual(adjacent_semitone_clashes([59, 72]), 0)
+
+    def test_it_stays_off_when_there_is_a_given_melody(self):
+        """En el Armonizador el roce contra la línea ya lo cobra
+        `weight_melody_clash`, con su propio peso y su propio factor en los
+        extremos: sumarle éste encima sería cobrar dos veces lo mismo.
+
+        Se mide con la regla de la melodía apagada, que es la única forma de
+        ver si la otra se sumó por debajo.
+        """
+        from dataclasses import replace as _replace
+        settings = self._settings("classical", melody_voice=3)
+        settings.profile = _replace(settings.profile, weight_melody_clash=0.0)
+        quiet = evaluate([[52, 55, 59, 60]], settings)
+        alone = evaluate([[52, 55, 59, 60]], self._settings("classical"))
+        self.assertEqual(quiet.style, alone.style - 80.0)
+
+
+class TestPassingDensityAndPlacement(unittest.TestCase):
+    """Cuántos adornos salen, y sobre qué acordes no salen nunca."""
+
+    def _request(self, density, genre="classical", seed=7, bars=16):
+        from engine import harmony, passing
+        durations = [2.0] * (bars * 2)
+        genre_modulation = harmony.GENRE_MODULATION[genre]
+        modulation = harmony.ModulationSettings(
+            key_enabled=True, modal_enabled=False,
+            targets=genre_modulation.targets,
+            weight=-abs(genre_modulation.weight),
+            switch_cost=genre_modulation.switch_cost,
+            min_bars=genre_modulation.min_bars,
+            min_bars_for_modulation=genre_modulation.min_bars_for_modulation,
+            home_margin_bars=genre_modulation.home_margin_bars,
+            weak_return=genre_modulation.weak_return,
+            max_excursions=genre_modulation.max_excursions,
+        )
+        return session.GenerativeRequest(
+            genre_key=genre, voice_keys=["B", "T", "A", "S"],
+            tonic="C", mode_key="major", borrowed=["iv", "bVII"],
+            slot_count=len(durations), durations=durations,
+            bar_indices=[i // 2 for i in range(len(durations))],
+            ga_config=GAConfig(population_size=70, generations=45,
+                               random_seed=seed),
+            passing_rules=passing.PassingRules(
+                voices=(1, 2, 3), diatonic_only=True, density=density,
+                max_per_piece=passing.max_for_density(density)),
+            modulation=modulation,
+            harmony_weights=harmony.genre_harmony_weights(genre),
+        )
+
+    def test_the_bar_sets_the_ceiling(self):
+        from engine.passing import HARD_MAX_PASSING, max_for_density
+        self.assertEqual(max_for_density(0.0), 1)
+        self.assertEqual(max_for_density(1.0), HARD_MAX_PASSING)
+        values = [max_for_density(d) for d in (0.0, 0.25, 0.5, 0.75, 1.0)]
+        self.assertEqual(values, sorted(values))
+        self.assertTrue(all(1 <= v <= HARD_MAX_PASSING for v in values))
+
+    def test_never_more_than_the_hard_maximum(self):
+        """`crowding` desalienta, no impide: el tope se aplica al cromosoma."""
+        from engine.passing import HARD_MAX_PASSING
+        outcome = session.generate_random(self._request(1.0))
+        self.assertTrue(outcome.succeeded, outcome.errors)
+        for solution in outcome.result.solutions:
+            used = sum(1 for row in solution.passing
+                       for note in row if note is not None)
+            self.assertLessEqual(used, HARD_MAX_PASSING)
+
+    def test_the_bar_at_the_bottom_writes_none(self):
+        outcome = session.generate_random(self._request(0.0))
+        self.assertTrue(outcome.succeeded, outcome.errors)
+        solution = outcome.result.solutions[0]
+        self.assertTrue(all(note is None for row in solution.passing
+                            for note in row))
+
+    def test_no_ornament_over_an_applied_dominant_or_a_borrowed_chord(self):
+        """El acorde ya es el efecto: el adorno tapa lo único que vino a
+        decir, y con notas que contradicen la alteración por la que se lo
+        eligió. Una modulación no cuenta --- ahí el acorde es diatónico de
+        otra tonalidad."""
+        from engine import harmony
+        for genre in ("classical", "jazz"):
+            for seed in (3, 11):
+                outcome = session.generate_random(
+                    self._request(1.0, genre=genre, seed=seed))
+                self.assertTrue(outcome.succeeded, outcome.errors)
+                solution = outcome.result.solutions[0]
+                for index, row in enumerate(solution.passing):
+                    if all(note is None for note in row):
+                        continue
+                    slot = outcome.spec.slots[index]
+                    option = slot.options[min(solution.choices[index],
+                                              len(slot.options) - 1)]
+                    chord = option.harmony
+                    self.assertFalse(harmony.is_applied_dominant(chord),
+                                     f"{genre}/{seed}: adorno sobre {chord.roman}")
+                    self.assertFalse(
+                        chord.is_borrowed and not chord.key_area,
+                        f"{genre}/{seed}: adorno sobre {chord.roman}")
+
+    def test_an_ornament_on_the_road_uses_the_key_it_is_in(self):
+        """Una nota de paso «diatónica» sacada de la tonalidad de origen
+        suena contra el acorde que la sostiene."""
+        from engine import harmony
+        seen_away = False
+        for seed in (3, 7, 11, 23):
+            request = self._request(1.0, seed=seed)
+            outcome = session.generate_random(request)
+            self.assertTrue(outcome.succeeded, outcome.errors)
+            scales = harmony.modulation_scales(0, request.modulation)
+            home = {p % 12 for p in harmony.MODES["major"].pitch_classes(0)}
+            solution = outcome.result.solutions[0]
+            from engine.passing import figure
+            for index, row in enumerate(solution.passing):
+                for entry in row:
+                    if not figure(entry):
+                        continue
+                    slot = outcome.spec.slots[index]
+                    option = slot.options[min(solution.choices[index],
+                                              len(slot.options) - 1)]
+                    area = option.harmony.key_area
+                    if area:
+                        seen_away = True
+                        allowed = {p % 12 for p in scales[area]}
+                    else:
+                        allowed = home
+                    # Cada nota de la figura, no una sola: una corrida
+                    # entera tiene que caer en la escala del área visitada.
+                    for note in figure(entry):
+                        self.assertIn(
+                            note % 12, allowed,
+                            f"semilla {seed}, lugar {index}, área {area!r}")
+        self.assertTrue(seen_away, "ninguna corrida llegó a modular")
+
+
 class TestGeneratorRequest(unittest.TestCase):
     """The generator wired end to end, without a display."""
 
@@ -1277,17 +1448,22 @@ class TestGeneratorRequest(unittest.TestCase):
         outcome = session.generate_random(request)
         self.assertTrue(outcome.succeeded, outcome.errors)
         solution = outcome.result.solutions[0]
+        # Un adorno es una **figura** de una a tres notas, así que lo que
+        # tiene que ser cantable es cada tramo del camino: de la nota que la
+        # voz deja, por cada nota de la figura, hasta la que toma.
+        from engine.passing import figure
         for slot_index, row in enumerate(solution.passing):
-            for voice, note in enumerate(row):
-                if note is None:
+            for voice, entry in enumerate(row):
+                shape = figure(entry)
+                if not shape:
                     continue
                 self.assertIn(voice, (2, 3), "a voice that was not enabled took one")
                 start = solution.slots[slot_index][voice]
                 end = solution.slots[slot_index + 1][voice]
-                self.assertNotEqual(note, start)
-                self.assertNotEqual(note, end)
-                self.assertLessEqual(abs(note - start), 4)
-                self.assertLessEqual(abs(note - end), 4)
+                legs = [abs(b - a) for a, b in
+                        zip((start,) + shape, shape + (end,))]
+                self.assertNotIn(0, legs, "una altura repetida no es un adorno")
+                self.assertLessEqual(max(legs), 4)
 
     def test_modes_change_the_available_chords(self):
         request = session.GenerativeRequest(
@@ -1383,6 +1559,23 @@ class TestSettingsPersistence(unittest.TestCase):
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write("{broken")
             self.assertEqual(history.load_settings(path)["font_scale"], 1.0)
+
+    def test_what_has_been_explained_already_survives_a_restart(self):
+        """
+        `DEFAULT_SETTINGS` es una lista blanca: lo que no figura se guarda y
+        desaparece al recargar. Una guía que se olvidara de anotarse volvería
+        a abrirse en cada arranque, encima de la pantalla que uno vino a
+        usar.
+        """
+        self.assertIn("guides_seen", history.DEFAULT_SETTINGS)
+        self.assertEqual(history.DEFAULT_SETTINGS["guides_seen"], [])
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "settings.json")
+            history.save_settings({"tutorial_seen": True,
+                                   "guides_seen": ["chords", "melody"]}, path)
+            values = history.load_settings(path)
+            self.assertTrue(values["tutorial_seen"])
+            self.assertEqual(values["guides_seen"], ["chords", "melody"])
 
 
 class TestVoicingQuality(unittest.TestCase):
@@ -1811,6 +2004,100 @@ class TestModulation(unittest.TestCase):
         self.assertIn("V", areas)
         self.assertIn("parallel_minor", areas)
 
+    def test_only_the_modal_switch_still_makes_the_piece_travel(self):
+        """Con «de modo» solo, el barroco no se movía de casa.
+
+        El plan de viaje se sortea sobre `targets` antes de elegir un acorde,
+        así que un destino que el usuario no encendió se llevaba el plan y la
+        pieza se quedaba en casa con la modulación pedida.
+        """
+        from engine import harmony
+        for genre, expected in (("classical", "parallel_minor"),
+                                ("chorale", "parallel_minor")):
+            defaults = harmony.GENRE_MODULATION[genre]
+            settings = harmony.ModulationSettings(
+                key_enabled=False, modal_enabled=True,
+                targets=defaults.targets, weight=defaults.weight,
+                switch_cost=defaults.switch_cost, min_bars=defaults.min_bars,
+                home_margin_bars=defaults.home_margin_bars,
+                weak_return=defaults.weak_return)
+            slots = 20
+            request = session.GenerativeRequest(
+                genre_key=genre, voice_keys=["B", "T", "A", "S"], tonic="C",
+                mode_key="major", slot_count=slots, durations=[2.0] * slots,
+                bar_indices=[i // 2 for i in range(slots)],
+                start_roman="I", end_roman="I", endpoints_required=True,
+                modulation=settings,
+                ga_config=GAConfig(population_size=70, generations=30,
+                                   random_seed=17),
+            )
+            outcome = session.generate_random(request)
+            self.assertTrue(outcome.succeeded, outcome.errors)
+            options = [slot.options[min(c, len(slot.options) - 1)].harmony
+                       for slot, c in zip(outcome.spec.slots,
+                                          outcome.result.solutions[0].choices)]
+            areas = {option.key_area for option in options if option.key_area}
+            self.assertEqual(areas, {expected}, f"{genre}: {areas}")
+
+    def test_every_style_offers_a_modal_destination(self):
+        """El tilde «de modo» tiene que tener adónde ir en los cuatro estilos.
+
+        En barroco y coral la lista era sólo de tonalidades, así que el tilde
+        se prendía y no pasaba absolutamente nada.
+        """
+        from engine.harmony import GENRE_MODULATION, MODULATION_TARGETS
+        for genre, settings in GENRE_MODULATION.items():
+            modal = [key for key in settings.targets
+                     if MODULATION_TARGETS[key].is_modal]
+            self.assertTrue(modal, f"{genre} no ofrece ningún cambio de modo")
+
+    def test_a_style_never_offers_the_mode_the_piece_is_already_in(self):
+        """Modular de menor a menor no es ningún viaje."""
+        from engine import harmony
+        for genre, settings in harmony.GENRE_MODULATION.items():
+            full = harmony.ModulationSettings(
+                key_enabled=True, modal_enabled=True, targets=settings.targets)
+            for mode_key in harmony.MODES:
+                for key in harmony.available_targets(full, mode_key):
+                    target = harmony.MODULATION_TARGETS[key]
+                    if not target.is_modal:
+                        continue
+                    self.assertNotEqual(
+                        harmony._modal_colour(target.mode_key),
+                        harmony._modal_colour(mode_key),
+                        f"{genre} en {mode_key} ofrece {key}")
+
+    def test_the_minor_key_is_offered_the_parallel_major(self):
+        """Y la mayor, la paralela menor: el destino sigue al modo."""
+        from engine import harmony
+        settings = harmony.ModulationSettings(
+            key_enabled=False, modal_enabled=True,
+            targets=harmony.GENRE_MODULATION["classical"].targets)
+        self.assertEqual(harmony.available_targets(settings, "major"),
+                         ("parallel_minor",))
+        self.assertEqual(harmony.available_targets(settings, "minor"),
+                         ("parallel_major",))
+        # La menor armónica es la menor con la sensible levantada, no otro
+        # sitio adonde ir.
+        self.assertEqual(harmony.available_targets(settings, "harmonic"),
+                         ("parallel_major",))
+
+    def test_the_pool_follows_the_mode_the_piece_is_in(self):
+        from engine import harmony
+        settings = harmony.ModulationSettings(
+            key_enabled=False, modal_enabled=True,
+            targets=harmony.GENRE_MODULATION["chorale"].targets)
+        for mode_key, expected in (("major", "parallel_minor"),
+                                   ("minor", "parallel_major")):
+            areas = {option.key_area for option
+                     in harmony.modulation_pool(0, settings,
+                                                home_mode_key=mode_key)}
+            self.assertEqual(areas, {expected})
+            self.assertEqual(
+                set(harmony.modulation_scales(0, settings,
+                                              home_mode_key=mode_key)),
+                {expected})
+
     def test_targets_match_what_each_style_does(self):
         """Grounded in the standard account of closely related keys."""
         from engine.harmony import GENRE_MODULATION, MODULATION_TARGETS
@@ -1827,6 +2114,58 @@ class TestModulation(unittest.TestCase):
         for genre in GENRE_MODULATION.values():
             for key in genre.targets:
                 self.assertIn(key, MODULATION_TARGETS)
+
+
+class TestModulationNaming(unittest.TestCase):
+    """Cómo se llama la tonalidad a la que la pieza viajó."""
+
+    def test_the_target_is_named_from_the_home_key(self):
+        from engine.harmony import modulation_key_name
+        self.assertEqual(modulation_key_name("V", 0), "G Mayor (jónico)")
+        self.assertEqual(modulation_key_name("V", 9), "E Mayor (jónico)")
+        self.assertEqual(modulation_key_name("vi", 0), "A Menor natural")
+        self.assertEqual(modulation_key_name("IV", 0), "F Mayor (jónico)")
+
+    def test_a_modal_target_keeps_the_tonic(self):
+        from engine.harmony import modulation_key_name
+        self.assertEqual(modulation_key_name("parallel_dorian", 0), "C Dórico")
+        self.assertEqual(modulation_key_name("parallel_minor", 7),
+                         "G Menor natural")
+
+    def test_a_flat_target_is_spelled_with_a_flat(self):
+        """«Re# Mayor» no es un nombre que se use para esa tonalidad."""
+        from engine.harmony import modulation_key_name
+        self.assertEqual(modulation_key_name("bIII", 0), "Eb Mayor (jónico)")
+
+    def test_an_unknown_area_names_nothing(self):
+        from engine.harmony import modulation_key_name
+        self.assertEqual(modulation_key_name("", 0), "")
+        self.assertEqual(modulation_key_name("bVII", 0), "")
+
+    def test_every_area_the_pool_can_produce_has_a_name(self):
+        """El cartel se dibuja a partir del `key_area` del acorde elegido:
+        un área sin nombre sería un tramo violeta mudo."""
+        from engine import harmony
+        for genre, settings in harmony.GENRE_MODULATION.items():
+            full = harmony.ModulationSettings(
+                key_enabled=True, modal_enabled=True, targets=settings.targets)
+            for option in harmony.modulation_pool(0, full):
+                self.assertTrue(harmony.modulation_key_name(option.key_area, 0),
+                                f"{genre}: {option.key_area}")
+
+    def test_the_scales_cover_every_area_offered(self):
+        from engine import harmony
+        for settings in harmony.GENRE_MODULATION.values():
+            full = harmony.ModulationSettings(
+                key_enabled=True, modal_enabled=True, targets=settings.targets)
+            scales = harmony.modulation_scales(0, full)
+            for option in harmony.modulation_pool(0, full):
+                self.assertIn(option.key_area, scales)
+                self.assertEqual(len(scales[option.key_area]), 7)
+        # Apagada no ofrece ninguna: no hay viaje que vestir.
+        self.assertEqual(harmony.modulation_scales(0, None), {})
+        self.assertEqual(
+            harmony.modulation_scales(0, harmony.ModulationSettings()), {})
 
 
 class TestImport(unittest.TestCase):
@@ -3178,6 +3517,57 @@ class TestHarmonisation(unittest.TestCase):
         # Y sostiene esa nota, no la que le siga: el lugar existe por ella.
         self.assertEqual(placed[(0, 1.0)].note, melody.notes[1])
 
+    def test_turning_a_golden_note_off_takes_its_chord_away(self):
+        """El dorado que puso el programa también se puede discutir.
+
+        Hasta acá se podía pedir un acorde de más y nunca uno de menos: el
+        click sobre una nota que el programa ya iba a armonizar sólo podía
+        agregarle un anillo.
+        """
+        from engine.harmonize import HarmonisationSettings, planned_notes
+        melody = self._melody(["C5", "D5", "E5", "F5", "G5", "F5", "E5", "C5"])
+        rules = HarmonisationSettings(genre_key="chorale")
+        before = planned_notes(melody, rules)
+        target = before[1]
+        self.assertGreater(len(before), 2)
+        target.skip_harmonise = True
+        after = planned_notes(melody, rules)
+        self.assertNotIn((target.bar_index, target.offset_quarters),
+                         [(n.bar_index, n.offset_quarters) for n in after])
+        self.assertEqual(len(after), len(before) - 1)
+
+    def test_turning_a_note_off_keeps_the_bars_adding_up(self):
+        """Lo que ocupaba el lugar que se va se lo queda un vecino del mismo
+        compás: repartirlo fuera lo dejaría sumando de más."""
+        from engine.harmonize import (HarmonisationSettings, drop_skipped_spots,
+                                      harmony_spots, planned_notes)
+        rules = HarmonisationSettings(genre_key="chorale")
+        for position in range(1, 8):
+            melody = self._melody(["C5", "D5", "E5", "F5",
+                                   "G5", "F5", "E5", "C5"])
+            melody.notes[position].skip_harmonise = True
+            spots = drop_skipped_spots(melody, harmony_spots(melody), rules)
+            totals = {}
+            for spot in spots:
+                totals[spot.bar_index] = (totals.get(spot.bar_index, 0.0)
+                                          + spot.duration_quarters)
+            self.assertEqual(set(totals.values()), {4.0},
+                             f"apagando la nota {position}: {totals}")
+            self.assertTrue(spots)
+
+    def test_the_last_chord_of_a_bar_cannot_be_taken_away(self):
+        """Un lugar sin vecino en su compás se queda: sacarlo dejaría el
+        compás corto, y decirlo con el dorado encendido es más honesto que
+        obedecer y romper la partitura."""
+        from engine.harmonize import (HarmonisationSettings, drop_skipped_spots,
+                                      harmony_spots)
+        rules = HarmonisationSettings(genre_key="chorale")
+        melody = self._melody(["C5", "D5", "E5"], bars=3, beats=3, beat_type=4)
+        for note in melody.notes:
+            note.skip_harmonise = True
+        spots = drop_skipped_spots(melody, harmony_spots(melody), rules)
+        self.assertTrue(spots)
+
     def test_marking_a_note_keeps_the_bars_adding_up(self):
         """Un compás que no suma lo rechaza cualquier editor de partituras.
 
@@ -3665,6 +4055,56 @@ class TestAchievementTracker(unittest.TestCase):
                 handle.write("{ nada de esto es json")
             self.assertEqual(achievements.Tracker.load(path).unlocked, {})
 
+    def test_what_was_just_unlocked_is_fresh(self):
+        with tempfile.TemporaryDirectory() as folder:
+            tracker = self._tracker(folder)
+            tracker.unlock(["first_rest"])
+            self.assertEqual(tracker.fresh(), {"first_rest"})
+            self.assertTrue(tracker.is_fresh("first_rest"))
+            # Mirarlo lo apaga, y no vuelve.
+            tracker.mark_seen()
+            self.assertEqual(tracker.fresh(), set())
+            tracker.unlock(["first_export"])
+            self.assertEqual(tracker.fresh(), {"first_export"})
+
+    def test_being_fresh_survives_a_restart(self):
+        """
+        Ganar algo y cerrar el programa sin ir a mirarlo lo deja marcado.
+
+        Es todo el punto de guardarlo: el aviso de la esquina dura unos
+        segundos y se lo puede perder cualquiera.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "a.json")
+            achievements.Tracker(path=path).unlock(["first_rest"])
+            reopened = achievements.Tracker.load(path)
+            self.assertEqual(reopened.fresh(), {"first_rest"})
+            reopened.mark_seen()
+            self.assertEqual(achievements.Tracker.load(path).fresh(), set())
+
+    def test_an_older_file_has_nothing_fresh(self):
+        """
+        Un archivo sin la lista viene de una versión anterior.
+
+        Sin esto, quien ya tenía treinta logros abría la pantalla y se los
+        encontraba a todos marcados como recién completados.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "a.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"unlocked": {"first_rest": "2026-01-01"}}, handle)
+            self.assertEqual(achievements.Tracker.load(path).fresh(), set())
+
+    def test_an_empty_list_is_not_a_missing_list(self):
+        """Guardada vacía significa que no se miró ninguno todavía."""
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "a.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"unlocked": {"first_rest": "2026-01-01"},
+                           "seen": []}, handle)
+            self.assertEqual(achievements.Tracker.load(path).fresh(),
+                             {"first_rest"})
+
     def test_a_key_from_an_older_version_is_dropped(self):
         with tempfile.TemporaryDirectory() as folder:
             path = os.path.join(folder, "a.json")
@@ -4032,6 +4472,25 @@ class TestStoryState(unittest.TestCase):
         state.restart()
         self.assertEqual(state.path_key, "")
         self.assertTrue(state.knows("story_blues_1"))
+
+
+class TestBookChapterLocks(unittest.TestCase):
+    """En qué capítulo cayó lo que todavía no se leyó."""
+
+    def test_a_key_lights_the_chapter_that_holds_its_entry(self):
+        """
+        Tiene que dar lo mismo que recorrer el libro a mano, y en posiciones.
+
+        Es lo único con lo que la interfaz pinta de azul un capítulo del
+        índice, así que una llave que se mude de capítulo tiene que mover el
+        azul con ella sin que nadie toque la pantalla.
+        """
+        self.assertEqual(book.chapters_for_locks([]), set())
+        self.assertEqual(book.chapters_for_locks(["no_existe"]), set())
+        for key in book.LOCK_KEYS:
+            chapter, _entry = book.entry_for_lock(key)
+            self.assertEqual(book.chapters_for_locks([key]),
+                             {book.CHAPTERS.index(chapter)}, key)
 
 
 class TestStoryBook(unittest.TestCase):
@@ -4426,6 +4885,22 @@ class TestVisitors(unittest.TestCase):
             self.assertTrue(visit.speaker, key)
             self.assertEqual(visit.key, key)
 
+    def test_every_visitor_has_a_staging_of_its_own(self):
+        """
+        Nadie puede quedar afuera de `STAGING` sin que se note.
+
+        `staging_for` no falla con un personaje que no esté en la tabla:
+        devuelve la puesta de otro y la escena se dibuja igual. Una visita
+        nueva salía entonces con el cielo, la luna, el humo y el viento del
+        señor del sombrero --- una puesta que dice algo muy concreto de
+        quien la usa --- y no había ningún error en ninguna parte.
+        """
+        import cinematic
+        for key, visit in visitors.VISITS.items():
+            self.assertIn(visit.speaker, cinematic.STAGING, key)
+            self.assertIn(visit.speaker, cinematic.SPEAKERS, key)
+            self.assertIn(visit.speaker, cinematic.POSES, key)
+
     def test_the_watcher_writes_nothing_in_the_book(self):
         """
         No explica nada, así que no anota nada.
@@ -4437,6 +4912,32 @@ class TestVisitors(unittest.TestCase):
         self.assertFalse(visitors.writes(visitors.WATCHER_ALL))
         self.assertIsNone(
             book.entry_for_lock(visitors.book_key(visitors.WATCHER_ALL)))
+
+    def test_every_award_is_a_real_achievement(self):
+        """
+        Las claves de `AWARDS` son cadenas sueltas: nadie las verifica.
+
+        `visitors.py` no importa el catálogo --- es guion y registro, igual
+        que `story.py` ---, así que una clave mal escrita ahí no falla:
+        `_award` la descarta en silencio y la visita entrega nada.
+        """
+        for key, award in visitors.AWARDS.items():
+            # Las visitas están en el catálogo de visitas; la tercera visión
+            # no, porque no es una charla con alguien que llega y se va.
+            self.assertTrue(key in visitors.VISITS or key == visitors.TOMB)
+            self.assertIn(award, achievements.BY_KEY, award)
+            self.assertFalse(achievements.BY_KEY[award].legendary, award)
+
+    def test_the_watcher_hands_out_no_achievement(self):
+        """
+        No puede: aparece al conseguir el cien por ciento.
+
+        Un logro suyo sería uno que nunca se tiene --- lo desbloquearía la
+        escena que exige no tener ninguno pendiente ---, así que la entidad
+        se quedaría esperando un logro que sólo ella entrega.
+        """
+        self.assertEqual(visitors.award_for(visitors.WATCHER_ALL), "")
+        self.assertEqual(visitors.award_for(visitors.VISION), "")
 
     def test_only_the_watcher_leaves_an_object(self):
         """
@@ -4656,6 +5157,762 @@ class TestVisitors(unittest.TestCase):
         self.assertTrue(visitors.vision_forced({visitors.VISION_VAR: "1"}))
         self.assertFalse(visitors.vision_forced({visitors.VISION_VAR: "0"}))
 
+    def test_the_environment_can_force_or_forbid_the_second_vision(self):
+        """Y la pide sin pedir la primera: son dos escenas distintas."""
+        self.assertIsNone(visitors.pact_forced({}))
+        self.assertTrue(visitors.pact_forced({visitors.PACT_VAR: "1"}))
+        self.assertFalse(visitors.pact_forced({visitors.PACT_VAR: "0"}))
+        # Una no contesta por la otra.
+        self.assertIsNone(visitors.pact_forced({visitors.VISION_VAR: "1"}))
+        self.assertIsNone(visitors.vision_forced({visitors.PACT_VAR: "1"}))
+
+    # -- la segunda visión ----------------------------------------------------
+
+    def test_the_second_vision_waits_for_the_first(self):
+        """
+        Es la misma noche un minuto más tarde: sin la primera no se entiende.
+
+        Y encima entrega justo lo que la otra guarda --- con quién estaba
+        hablando ---, así que al revés se contarían el final antes que el
+        principio.
+        """
+        self.assertFalse(visitors.pact_due(False, False, 0.0, True))
+        self.assertTrue(visitors.pact_due(False, True, 0.0, True))
+
+    def test_the_second_vision_happens_once_and_below_the_odds(self):
+        odds = visitors.VISION_ODDS
+        self.assertTrue(visitors.pact_due(False, True, odds / 2, True))
+        self.assertFalse(visitors.pact_due(False, True, odds, True))
+        self.assertFalse(visitors.pact_due(False, True, 0.99, True))
+        # Vista una vez, no vuelve ni con el sorteo a favor.
+        self.assertFalse(visitors.pact_due(True, True, 0.0, True))
+        # Y tampoco antes de terminar el tutorial, igual que la primera.
+        self.assertFalse(visitors.pact_due(False, True, 0.0, False))
+
+    def test_the_second_vision_writes_its_own_entry(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "visitors.json")
+            ledger = visitors.Ledger.load(path)
+            lock = visitors.book_key(visitors.PACT)
+            self.assertFalse(ledger.knows(lock))
+            self.assertTrue(ledger.mark_pact())
+            self.assertFalse(ledger.mark_pact())
+            self.assertTrue(ledger.knows(lock))
+            # Y sobrevive al cierre del programa, como todo lo demás.
+            again = visitors.Ledger.load(path)
+            self.assertTrue(again.knows(lock))
+            # Sin tocar la primera: son dos apariciones y dos anotaciones.
+            self.assertFalse(again.knows(visitors.book_key(visitors.VISION)))
+
+    def test_the_second_vision_entry_is_written_in_gold(self):
+        """Tampoco se consigue trabajando, así que tampoco dice su título."""
+        found = book.entry_for_lock(visitors.book_key(visitors.PACT))
+        self.assertIsNotNone(found)
+        _chapter, entry = found
+        self.assertTrue(entry.legendary)
+        self.assertTrue(book.is_secret(entry))
+
+    def test_the_second_vision_is_not_a_visit(self):
+        """
+        No está en `VISITS`, y no puede estar: no es una escena de diálogo.
+
+        Lo que la dibuja es `cinematic.Vision` --- el camino, el tren y el
+        encuentro ---, no la maquinaria de alguien que llega, habla y se va.
+        Metida en el catálogo, `_open_visit` la abriría como una charla.
+        """
+        self.assertNotIn(visitors.PACT, visitors.VISITS)
+        self.assertEqual(visitors.award_for(visitors.PACT), "")
+
+    def test_nobody_is_on_screen_while_the_second_vision_speaks(self):
+        """
+        Sus líneas no pueden llevar pose, y ésta es la trampa entera.
+
+        La escena que cierra la segunda visión es un cartel de diálogo sobre
+        el negro y nada más (`entrance="unseen"`). El retrato se crea igual
+        --- media `Cutscene` lo da por hecho --- y se esconde, pero
+        `_begin_line` vuelve a llamar a `Portrait.show` en cuanto una línea
+        pide una pose, y `show` deja la imagen **visible**: una sola pose
+        escrita acá pone al personaje en pantalla en medio de una escena que
+        se trata justamente de que no se lo vea.
+        """
+        self.assertTrue(visitors.PACT_LINES)
+        for line in visitors.PACT_LINES:
+            self.assertEqual(line.speaker, story.DEVIL)
+            self.assertFalse(line.pose, line.text)
+
+    def test_the_second_vision_has_both_of_its_cutouts(self):
+        """
+        Las dos poses del encuentro tienen que existir, y con ese nombre.
+
+        `load_pose` cae en ``normal`` cuando el nombre de la pose no está en
+        la tabla, y devuelve ``None`` cuando el archivo falta. Ninguna de
+        las dos cosas falla ni avisa: la primera cambiaría la silueta negra
+        por el recorte con cara --- que es lo único que esa figura no puede
+        tener --- y la segunda dejaría el camino con una sola persona, que
+        es la escena anterior.
+        """
+        import cinematic                             # noqa: PLC0415
+        arte = os.path.join(history.program_directory(), "assets", "story")
+        for speaker, plane in ((visitors.ROBERT, cinematic.Vision.BACK),
+                               (story.DEVIL, cinematic.Vision.FRONT)):
+            pose = plane[1]
+            name = cinematic.POSES[speaker].get(pose)
+            self.assertTrue(name, (speaker, pose))
+            self.assertTrue(os.path.exists(os.path.join(arte, name)), name)
+            # Y con ese nombre y no cayendo en `normal`, que es lo que hace
+            # `load_pose` cuando la pose no está en la tabla.
+            self.assertIn(pose, cinematic.POSES[speaker])
+
+
+    # -- la tercera visión ----------------------------------------------------
+
+    def test_the_third_vision_waits_for_the_second(self):
+        """
+        Las tres son una sola historia en tres pedazos: quién estaba en el
+        camino, con quién hablaba y cómo terminó. Cualquier orden que no sea
+        ése cuenta el final antes que el principio.
+        """
+        self.assertFalse(visitors.tomb_due(False, False, 0.0, True))
+        self.assertTrue(visitors.tomb_due(False, True, 0.0, True))
+
+    def test_the_third_vision_happens_once_and_below_the_odds(self):
+        """Mismo sorteo y mismo criterio que la segunda, corridos un lugar."""
+        odds = visitors.VISION_ODDS
+        self.assertTrue(visitors.tomb_due(False, True, odds / 2, True))
+        self.assertFalse(visitors.tomb_due(False, True, odds, True))
+        self.assertFalse(visitors.tomb_due(False, True, 0.99, True))
+        self.assertFalse(visitors.tomb_due(True, True, 0.0, True))
+        self.assertFalse(visitors.tomb_due(False, True, 0.0, False))
+
+    def test_the_environment_can_force_or_forbid_the_third_vision(self):
+        self.assertIsNone(visitors.tomb_forced({}))
+        self.assertTrue(visitors.tomb_forced({visitors.TOMB_VAR: "1"}))
+        self.assertFalse(visitors.tomb_forced({visitors.TOMB_VAR: "0"}))
+        # Y cada variable pide lo suyo: pedir una no pide las otras dos.
+        self.assertIsNone(visitors.tomb_forced({visitors.PACT_VAR: "1"}))
+        self.assertIsNone(visitors.pact_forced({visitors.TOMB_VAR: "1"}))
+        self.assertIsNone(visitors.vision_forced({visitors.TOMB_VAR: "1"}))
+
+    def test_the_third_vision_writes_its_own_entry(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "visitors.json")
+            ledger = visitors.Ledger.load(path)
+            lock = visitors.book_key(visitors.TOMB)
+            self.assertFalse(ledger.knows(lock))
+            self.assertTrue(ledger.mark_tomb())
+            self.assertFalse(ledger.mark_tomb())
+            self.assertTrue(ledger.knows(lock))
+            again = visitors.Ledger.load(path)
+            self.assertTrue(again.knows(lock))
+            # Sin tocar las otras dos: son tres apariciones y tres anotaciones.
+            self.assertFalse(again.knows(visitors.book_key(visitors.VISION)))
+            self.assertFalse(again.knows(visitors.book_key(visitors.PACT)))
+
+    def test_the_third_vision_entry_is_written_in_gold(self):
+        """Tampoco se consigue trabajando, así que tampoco dice su título."""
+        found = book.entry_for_lock(visitors.book_key(visitors.TOMB))
+        self.assertIsNotNone(found)
+        _chapter, entry = found
+        self.assertTrue(entry.legendary)
+        self.assertTrue(book.is_secret(entry))
+
+    def test_the_third_vision_is_not_a_visit(self):
+        """Tampoco es una escena de alguien que llega, habla y se va."""
+        self.assertNotIn(visitors.TOMB, visitors.VISITS)
+
+    def test_the_third_vision_is_the_only_one_that_gives_a_badge(self):
+        """
+        Y es la excepción a propósito.
+
+        Las dos primeras no entregan nada porque no se pueden provocar: un
+        logro que depende de una tirada de una en cinco no es un logro. La
+        tercera está al final de la única historia que el programa cuenta de
+        punta a punta, y quien la ve es porque vio las tres.
+        """
+        self.assertEqual(visitors.award_for(visitors.VISION), "")
+        self.assertEqual(visitors.award_for(visitors.PACT), "")
+        award = visitors.award_for(visitors.TOMB)
+        self.assertEqual(award, "echoes_past")
+        badge = achievements.BY_KEY[award]
+        self.assertEqual(badge.star, 3)
+        self.assertFalse(badge.legendary)
+
+    def test_a_description_can_carry_a_piece_in_bold(self):
+        """La marca se parte en tramos y sale del texto que se muestra."""
+        pieces = achievements.runs("Escuchá a **aquel hombre**.")
+        self.assertEqual(pieces, [("Escuchá a ", False),
+                                  ("aquel hombre", True),
+                                  (".", False)])
+        self.assertEqual(achievements.plain("uno **dos** tres"),
+                         "uno dos tres")
+        # Una descripción sin marcas es un solo tramo, y así se sigue
+        # dibujando con una sola etiqueta.
+        for badge in achievements.CATALOG:
+            if achievements.EMPHASIS not in badge.description:
+                self.assertEqual(len(achievements.runs(badge.description)), 1)
+
+    def test_nobody_is_on_screen_while_the_third_vision_speaks(self):
+        """La misma trampa que la segunda: una pose acá pondría al
+        personaje en pantalla en medio de una escena que se trata
+        justamente de que no se lo vea."""
+        self.assertTrue(visitors.TOMB_LINES)
+        for line in visitors.TOMB_LINES:
+            self.assertEqual(line.speaker, story.DEVIL)
+            self.assertFalse(line.pose, line.text)
+
+    def test_the_third_vision_has_its_headstone(self):
+        """
+        El recorte de la lápida tiene que existir y con ese nombre.
+
+        `load_prop` devuelve ``None`` cuando el archivo falta, y eso no falla
+        ni avisa: la tormenta se abriría sobre un camino vacío, que es la
+        única cosa que esa escena no puede ser.
+        """
+        import cinematic                             # noqa: PLC0415
+        arte = os.path.join(history.program_directory(), "assets", "story")
+        name = cinematic.PROPS.get("lapida")
+        self.assertTrue(name)
+        self.assertTrue(os.path.exists(os.path.join(arte, name)), name)
+
+    def test_the_three_visions_are_three_separate_records(self):
+        """
+        Cada una lleva su propia fecha en el archivo, y las tres sobreviven
+        a un cierre. Con una sola marca compartida, ver la tercera habría
+        dado las otras dos por vistas.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "visitors.json")
+            ledger = visitors.Ledger.load(path)
+            ledger.mark_vision()
+            ledger.mark_pact()
+            ledger.mark_tomb()
+            again = visitors.Ledger.load(path)
+            for key in (visitors.VISION, visitors.PACT, visitors.TOMB):
+                self.assertTrue(again.knows(visitors.book_key(key)), key)
+            # Tres campos y no uno: cada fecha se guarda por su cuenta.
+            for stamp in (again.vision, again.pact, again.tomb):
+                self.assertTrue(stamp)
+            # Y marcar una no marca las otras.
+            fresh = visitors.Ledger.load(os.path.join(folder, "otro.json"))
+            fresh.mark_tomb()
+            self.assertFalse(fresh.knows(visitors.book_key(visitors.VISION)))
+            self.assertFalse(fresh.knows(visitors.book_key(visitors.PACT)))
+
+
+class TestHarmonicsModel(unittest.TestCase):
+    """
+    El experimentador de armónicos: las recetas, la lista y la síntesis.
+
+    Todo lo de acá es física con números conocidos, así que se puede probar
+    contra ellos y no contra sí mismo. Los tres que importan --- el quinto
+    catorce cents por debajo de la tercera del piano, el séptimo treinta y
+    uno por debajo de la séptima, el tercero dos por encima de la quinta ---
+    son además exactamente lo que el capítulo de física del libro afirma por
+    escrito, así que este test también vigila que el libro no mienta.
+    """
+
+    def test_the_series_is_whole_multiples_of_the_fundamental(self):
+        spectrum = harmonics.build()
+        base = spectrum.fundamental
+        for item in spectrum.partials:
+            self.assertAlmostEqual(item.frequency(base), base * item.number,
+                                   places=6)
+
+    def test_the_recipes_are_the_ones_they_say_they_are(self):
+        """
+        Una forma de onda no es otra manera de vibrar: es qué barra sube.
+
+        Es la idea entera del capítulo de física, así que si una receta
+        dejara de cumplirla el libro pasaría a explicar un dibujo que no
+        está en la pantalla.
+        """
+        sine = harmonics.build("Seno puro")
+        self.assertEqual([p.gain for p in sine.partials][1:],
+                         [0.0] * (harmonics.PARTIAL_COUNT - 1))
+        square = harmonics.build("Cuadrada")
+        for item in square.partials:
+            if item.number % 2 == 0:
+                self.assertEqual(item.gain, 0.0, item.number)
+            else:
+                self.assertAlmostEqual(item.gain, 1.0 / item.number)
+        saw = harmonics.build("Diente de sierra")
+        for item in saw.partials:
+            self.assertAlmostEqual(item.gain, 1.0 / item.number)
+
+    def test_changing_the_recipe_keeps_what_the_user_did(self):
+        """
+        Cambiar de forma de onda es una pregunta sobre el timbre.
+
+        Devolver además lo apagado, lo corrido y lo aislado convertiría al
+        selector en un botón de reiniciar con ocho nombres.
+        """
+        spectrum = harmonics.build("Diente de sierra")
+        spectrum.partials[3].muted = True
+        spectrum.partials[6].shift = -31.0
+        spectrum.solo = 2
+        harmonics.apply_preset(spectrum, "Cuadrada")
+        self.assertTrue(spectrum.partials[3].muted)
+        self.assertEqual(spectrum.partials[6].shift, -31.0)
+        self.assertEqual(spectrum.solo, 2)
+        self.assertEqual(spectrum.partials[1].gain, 0.0)   # el segundo, par
+
+    def test_what_sounds_is_what_is_drawn(self):
+        """
+        El aislado gana, lo apagado no entra y lo que está en cero tampoco.
+
+        `sounding` es la única lista: la dibuja el gráfico y la suma el
+        sintetizador. Con dos recorridos distintos una regla nueva entra en
+        uno solo y el experimento deja de probar lo que muestra.
+        """
+        spectrum = harmonics.build("Diente de sierra")
+        self.assertEqual(len(harmonics.sounding(spectrum)),
+                         harmonics.PARTIAL_COUNT)
+        spectrum.partials[0].muted = True
+        spectrum.partials[1].gain = 0.0
+        self.assertEqual([p.number for p, _f, _g in harmonics.sounding(spectrum)],
+                         list(range(3, harmonics.PARTIAL_COUNT + 1)))
+        spectrum.solo = 5
+        self.assertEqual([p.number for p, _f, _g in harmonics.sounding(spectrum)],
+                         [5])
+        # Y aislar algo apagado no lo enciende: son dos cosas distintas.
+        spectrum.solo = 1
+        self.assertEqual(harmonics.sounding(spectrum), [])
+
+    def test_the_famous_deviations_from_the_piano(self):
+        base = harmonics.midi_to_frequency(45)             # la2, 110 Hz
+        self.assertAlmostEqual(base, 110.0, places=6)
+        expected = {2: 0.0, 3: 2.0, 4: 0.0, 5: -13.7, 7: -31.2, 8: 0.0}
+        for number, cents in expected.items():
+            _midi, off = harmonics.nearest_note(base * number)
+            self.assertAlmostEqual(off, cents, places=1, msg=str(number))
+
+    def test_shifting_a_partial_moves_it_by_the_right_ratio(self):
+        """Corrido justo lo que le falta, el séptimo cae en la tecla."""
+        spectrum = harmonics.build()
+        item = spectrum.partial(7)
+        base = spectrum.fundamental
+        _midi, missing = harmonics.nearest_note(item.frequency(base))
+        self.assertAlmostEqual(missing, -31.2, places=1)
+        item.shift = -missing
+        _midi, off = harmonics.nearest_note(item.frequency(base))
+        self.assertAlmostEqual(off, 0.0, places=1)
+
+    def test_the_interval_of_each_harmonic_is_the_one_it_should_be(self):
+        """
+        Lo que la pantalla escribe al lado de la nota, contra la serie.
+
+        Es la mitad de lo que hace legible el gráfico --- que el segundo
+        armónico sea una octava y el tercero una octava y una quinta no se
+        deduce de «440 Hz» --- y es además de donde sale toda la armonía que
+        el resto del programa escribe.
+        """
+        import spectrum
+        base = 45                                          # la2
+        expected = {1: "unísono", 2: "1 octava", 3: "1 octava + 5ª justa",
+                    4: "2 octavas", 5: "2 octavas + 3ª mayor",
+                    6: "2 octavas + 5ª justa", 7: "2 octavas + 7ª menor",
+                    8: "3 octavas", 9: "3 octavas + 2ª mayor",
+                    12: "3 octavas + 5ª justa"}
+        hertz = harmonics.midi_to_frequency(base)
+        for number, name in expected.items():
+            midi, _cents = harmonics.nearest_note(hertz * number)
+            self.assertEqual(spectrum.interval_label(midi - base), name,
+                             number)
+
+    def test_a_partial_can_no_longer_beat_on_its_own(self):
+        """
+        El latido de un armónico suelto se sacó: lo que oscila es el
+        conjunto, con el vibrato y el trémolo. Un campo que quedara vivo
+        sin nada que lo prenda es un camino muerto adentro del
+        sintetizador.
+        """
+        self.assertFalse(hasattr(harmonics.Partial(1), "modulated"))
+
+    def test_the_undertones_are_the_mirror(self):
+        below = harmonics.undertones(880.0, 8)
+        self.assertEqual(below[0], 880.0)
+        self.assertEqual(below[1], 440.0)
+        self.assertAlmostEqual(below[7], 110.0)
+
+    def test_rendering_gives_sixteen_bit_frames(self):
+        spectrum = harmonics.build("Seno puro")
+        frames = harmonics.render(spectrum, seconds=0.2)
+        self.assertEqual(len(frames), int(0.2 * harmonics.SAMPLE_RATE) * 2)
+        # Y suena: no es un buffer de ceros.
+        self.assertTrue(any(frames))
+
+    def test_a_silent_spectrum_renders_silence_instead_of_crashing(self):
+        """Apagar todo es un experimento válido, no un error."""
+        spectrum = harmonics.build("Seno puro")
+        spectrum.partials[0].muted = True
+        frames = harmonics.render(spectrum, seconds=0.1)
+        self.assertEqual(set(frames), {0})
+
+    def test_the_mix_is_normalised_and_never_clips(self):
+        """
+        Subir un armónico hasta oírlo no puede recortar la mezcla.
+
+        Una mezcla recortada le agrega armónicos que nadie pidió, que es
+        justo lo que el usuario está tratando de mirar.
+        """
+        spectrum = harmonics.build("Diente de sierra")
+        for item in spectrum.partials:
+            item.gain = harmonics.MAX_GAIN
+        frames = harmonics.render(spectrum, seconds=0.2)
+        self.assertLessEqual(self._peak(frames), 32767)
+        self.assertGreater(self._peak(frames), 20000)   # y no quedó inaudible
+
+    def test_isolating_a_faint_harmonic_is_still_audible(self):
+        """
+        El duodécimo de un diente de sierra vale ocho centésimas.
+
+        Sin llevar la mezcla al techo también hacia arriba, aislarlo se
+        parecía a haberlo apagado --- y aislar es lo primero que se hace en
+        esta pantalla.
+        """
+        spectrum = harmonics.build("Diente de sierra")
+        spectrum.solo = harmonics.PARTIAL_COUNT
+        alone = self._peak(harmonics.render(spectrum, seconds=0.2))
+        spectrum.solo = 1
+        loud = self._peak(harmonics.render(spectrum, seconds=0.2))
+        self.assertGreater(alone, 20000)
+        self.assertAlmostEqual(alone, loud, delta=loud * 0.02)
+
+    @staticmethod
+    def _peak(frames: bytes) -> int:
+        return max(abs(int.from_bytes(frames[i:i + 2], "little", signed=True))
+                   for i in range(0, len(frames), 2))
+
+
+class TestPhysicsChapter(unittest.TestCase):
+    """
+    Los gráficos del capítulo de física están a escala de verdad.
+
+    Sus números son literales escritos a mano --- `book.py` no importa nada
+    del proyecto ---, así que nadie los verifica salvo esto. Un dibujo a
+    escala con los números mal es peor que no tener dibujo: enseña otra cosa
+    y parece que la enseña bien.
+    """
+
+    def _plots(self):
+        chapter = next(c for c in book.CHAPTERS
+                       if c.title == "La física en la música")
+        return [(entry, plot) for entry in chapter.entries
+                for plot in entry.plots]
+
+    def test_the_chapter_opens_with_the_experimenter(self):
+        chapter = next(c for c in book.CHAPTERS
+                       if c.title == "La física en la música")
+        for entry in chapter.entries:
+            self.assertEqual(entry.locked_by, "harmonics_first", entry.key)
+        self.assertIn("harmonics_first", achievements.BY_KEY)
+
+    def test_every_bar_fits_inside_its_axis(self):
+        for entry, plot in self._plots():
+            high = plot.high or max(f for f, _a, _l in plot.bars) * 1.06
+            for frequency, amplitude, _mark in plot.bars:
+                self.assertGreaterEqual(frequency, plot.low, entry.key)
+                self.assertLessEqual(frequency, high, entry.key)
+                self.assertGreater(amplitude, 0.0, entry.key)
+            for frequency, _mark in plot.ticks:
+                self.assertGreaterEqual(frequency, plot.low, entry.key)
+                self.assertLessEqual(frequency, high, entry.key)
+
+    def test_the_series_plot_really_is_the_series(self):
+        entry, plot = next((e, p) for e, p in self._plots()
+                           if e.key == "fisica_serie")
+        self.assertEqual(len(plot.bars), harmonics.PARTIAL_COUNT)
+        for number, (frequency, amplitude, mark) in enumerate(plot.bars, 1):
+            self.assertAlmostEqual(frequency, plot.reference * number, places=3)
+            self.assertAlmostEqual(amplitude, 1.0 / number, places=2)
+            self.assertEqual(mark, str(number))
+
+    def test_the_temperament_plot_marks_the_real_piano_notes(self):
+        _entry, plot = next((e, p) for e, p in self._plots()
+                            if e.key == "fisica_temperamento")
+        # Las barras son los armónicos quinto y séptimo de la referencia…
+        self.assertAlmostEqual(plot.bars[0][0], plot.reference * 5, places=3)
+        self.assertAlmostEqual(plot.bars[1][0], plot.reference * 7, places=3)
+        # …y las marcas, la tecla temperada que a cada uno le queda cerca.
+        for frequency, _mark in plot.ticks:
+            _midi, cents = harmonics.nearest_note(frequency)
+            self.assertAlmostEqual(cents, 0.0, places=0)
+
+    def test_the_undertone_plot_really_divides(self):
+        _entry, plot = next((e, p) for e, p in self._plots()
+                            if e.key == "fisica_subarmonica")
+        for divisor, (frequency, _a, mark) in enumerate(plot.bars, 1):
+            self.assertAlmostEqual(frequency, plot.reference / divisor,
+                                   places=0)
+            self.assertEqual(mark, str(divisor))
+
+    def test_the_two_timbres_are_the_same_note(self):
+        """
+        El punto del apartado: la misma serie con otras alturas de barra.
+
+        Si los dos gráficos estuvieran en notas distintas, la comparación no
+        mostraría el timbre sino la altura.
+        """
+        plots = [p for e, p in self._plots() if e.key == "fisica_timbre"]
+        self.assertEqual(len(plots), 2)
+        self.assertEqual(plots[0].reference, plots[1].reference)
+        self.assertEqual([f for f, _a, _m in plots[0].bars],
+                         [f for f, _a, _m in plots[1].bars])
+        # Y la flauta es casi toda fundamental; el clarinete, impares.
+        flute, clarinet = plots
+        self.assertGreater(flute.bars[1][1] * 3, clarinet.bars[1][1])
+        self.assertGreater(clarinet.bars[2][1], clarinet.bars[1][1] * 5)
+
+
+class TestHarmonisingChapter(unittest.TestCase):
+    """
+    El capítulo que explica el Armonizador dice lo que el Armonizador hace.
+
+    El libro afirma un orden de preferencias --- tercera, quinta,
+    fundamental, y la fundamental barata en los reposos --- y ese orden son
+    los pesos de `harmonize.py`. Cambiarlos sin tocar el libro deja un
+    capítulo que explica un programa que ya no existe.
+    """
+
+    def _chapter(self):
+        return next(c for c in book.CHAPTERS
+                    if c.title == "Armonizar una melodía")
+
+    def test_the_chapter_opens_with_the_harmoniser(self):
+        for entry in self._chapter().entries:
+            self.assertEqual(entry.locked_by, "harmoniser_first", entry.key)
+        self.assertIn("harmoniser_first", achievements.BY_KEY)
+
+    def test_the_order_of_preference_is_the_one_the_book_states(self):
+        third = min(harmonize.ROLE_COST[3], harmonize.ROLE_COST[4])
+        fifth = harmonize.ROLE_COST[7]
+        root = harmonize.ROLE_COST[0]
+        self.assertLess(third, fifth)
+        self.assertLess(fifth, root)
+        # Y en un reposo la fundamental se abarata: deja atrás a la quinta y
+        # queda a la par de la tercera, que es lo que el libro dice. **No**
+        # pasa a ser la mejor de todas --- lo decía, y era falso: con los
+        # pesos de hoy queda cuatro por encima de la tercera.
+        at_rest = root + harmonize.ROOT_AT_REST
+        self.assertLess(at_rest, fifth)
+        self.assertLess(abs(at_rest - third), fifth - third)
+        # La nota que no está en el acorde pierde contra todo, por lejos.
+        self.assertGreater(harmonize.NOT_A_CHORD_TONE, root * 10)
+
+    def test_colour_is_offered_behind_the_three_and_in_order(self):
+        cheapest = max(harmonize.ROLE_COST.values())
+        sixth = harmonize.COLOUR_COST[9]
+        seventh = harmonize.COLOUR_COST[10]
+        ninth = harmonize.COLOUR_COST[2]
+        self.assertGreater(sixth, cheapest)
+        self.assertLessEqual(sixth, seventh)
+        self.assertLess(seventh, ninth)
+
+    def test_the_melody_outweighs_the_progression(self):
+        """«Dónde cae la nota importa más que cualquier otra cosa.»"""
+        settings = harmonize.HarmonisationSettings()
+        self.assertGreater(harmonize.melodic_weight(harmonize.ROLE_COST[7]),
+                           settings.repeat)
+
+    def test_the_figures_stay_on_the_staff_the_book_describes(self):
+        """
+        Los pentagramas se describen en grados, y la interfaz los dibuja
+        tal cual. Un grado disparatado saldría dibujado igual, con veinte
+        líneas adicionales.
+        """
+        for entry in self._chapter().entries:
+            for figure in entry.figures:
+                for voice in figure.voices:
+                    for step in voice:
+                        if step is None:
+                            continue
+                        self.assertGreaterEqual(step, -8, entry.key)
+                        self.assertLessEqual(step, 14, entry.key)
+                if figure.marks:
+                    self.assertLessEqual(
+                        len(figure.marks),
+                        max(len(voice) for voice in figure.voices), entry.key)
+
+
+class TestCreatorVisit(unittest.TestCase):
+    """El que aparece a los tres sonidos armados en el experimentador."""
+
+    def _ledger(self, folder):
+        return visitors.Ledger.load(os.path.join(folder, "visitors.json"))
+
+    def test_three_experiments_bring_him(self):
+        with tempfile.TemporaryDirectory() as folder:
+            ledger = self._ledger(folder)
+            for _ in range(visitors.EXPERIMENTS_NEEDED - 1):
+                self.assertEqual(ledger.record_experiment(), [])
+            self.assertEqual(ledger.record_experiment(),
+                             [visitors.CREATOR_SOUND])
+
+    def test_he_does_not_come_twice(self):
+        """Ya vino: seguir contando deja el archivo creciendo por nada."""
+        with tempfile.TemporaryDirectory() as folder:
+            ledger = self._ledger(folder)
+            for _ in range(visitors.EXPERIMENTS_NEEDED):
+                ledger.record_experiment()
+            ledger.mark(visitors.CREATOR_SOUND)
+            before = ledger.experiments
+            self.assertEqual(ledger.record_experiment(), [])
+            self.assertEqual(ledger.experiments, before)
+
+    def test_the_count_survives_a_restart(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "visitors.json")
+            ledger = visitors.Ledger.load(path)
+            ledger.record_experiment()
+            ledger.record_experiment()
+            again = visitors.Ledger.load(path)
+            self.assertEqual(again.experiments, 2)
+            self.assertEqual(again.record_experiment(),
+                             [visitors.CREATOR_SOUND])
+
+    def test_his_key_is_not_the_key_of_the_achievement_he_hands_out(self):
+        """
+        Su llave de libro y su logro se consiguen en el mismo instante.
+
+        Con el mismo nombre para las dos cosas no habría manera de saber
+        cuál falló cuando falle alguna, y `_lore_unlocked` contestaría que
+        el apartado está escrito porque existe el logro.
+        """
+        award = visitors.award_for(visitors.CREATOR_SOUND)
+        self.assertEqual(award, "visit_creator")
+        self.assertNotEqual(visitors.book_key(visitors.CREATOR_SOUND), award)
+        self.assertIsNotNone(
+            book.entry_for_lock(visitors.book_key(visitors.CREATOR_SOUND)))
+
+    def test_he_reveals_his_name_and_says_the_numbers(self):
+        """
+        Habla de la serie armónica, del muestreo y de los bits.
+
+        Los dos números son los que el programa usa de verdad --- están en
+        `engine/audio.py` y en el empaquetado de `_encode` ---, así que si
+        alguno cambiara, la escena pasaría a mentir.
+        """
+        visit = visitors.VISITS[visitors.CREATOR_SOUND]
+        self.assertEqual(visit.name, "El creador")
+        self.assertIn("reveal", [line.cue for line in visit.lines])
+        said = " ".join(line.text for line in visit.lines)
+        self.assertIn("serie armónica", said)
+        self.assertIn("cuarenta y cuatro mil cien", said)
+        self.assertIn("Dieciséis", said)
+        self.assertEqual(harmonics.SAMPLE_RATE, 44100)
+
+    def test_he_is_staged_like_the_other_teachers(self):
+        """
+        Fondo negro, y estar y dejar de estar en un pestañeo.
+
+        `staging_for` no falla cuando un personaje no está en la tabla:
+        devuelve la puesta de otro, y la escena se dibuja igual. Con el
+        creador afuera salía con el valle, la luna, el humo y el viento del
+        señor del sombrero --- una puesta que dice algo muy concreto de
+        quien la usa --- y no había ningún error en ninguna parte.
+        """
+        import cinematic
+        self.assertIn(visitors.CREATOR, cinematic.STAGING)
+        mine = cinematic.staging_for(visitors.CREATOR)
+        bach = cinematic.staging_for(visitors.BACH)
+        self.assertEqual(mine["sky"], bach["sky"])
+        self.assertEqual(mine["entrance"], bach["entrance"])
+        self.assertEqual(mine["departure"], bach["departure"])
+        # Y sin nada sonando: su escena empieza con el ventilador callándose.
+        self.assertEqual(mine["bed"], "")
+        self.assertEqual(mine["enter_sound"], "")
+
+    def test_his_poses_and_his_voice_exist(self):
+        """
+        Un recorte que falte no da error: `load_pose` devuelve ``None`` y el
+        personaje simplemente no aparece, que es la peor manera de fallar.
+        """
+        import cinematic
+        table = cinematic.POSES[visitors.CREATOR]
+        for line in visitors.VISITS[visitors.CREATOR_SOUND].lines:
+            if line.pose:
+                self.assertIn(line.pose, table, line.pose)
+        for name in table.values():
+            self.assertTrue(
+                os.path.exists(os.path.join(cinematic.assets_directory(), name)),
+                name)
+        import cinematic
+        self.assertIn(cinematic.SPEAKERS[visitors.CREATOR]["blip"],
+                      ambience._RECIPES)
+
+
+class TestScreenGuides(unittest.TestCase):
+    """
+    Las guías que se abren solas la primera vez que se llega a una pantalla.
+
+    Lo que se prueba acá es el guion y el cableado, no el dibujo: abrir una
+    ventana es trabajo de `uitest`. Pero una guía mal cableada **no falla**
+    --- simplemente no aparece nunca --- y eso es exactamente lo que no se
+    nota probando a mano.
+    """
+
+    def _app(self):
+        import app
+        return app
+
+    def _source(self) -> str:
+        with open(self._app().__file__, encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_every_guide_exists_and_says_something(self):
+        app = self._app()
+        self.assertEqual(set(app.SCREEN_GUIDES),
+                         {"chords", "melody", "harmony", "parameters"})
+        for key, steps in app.SCREEN_GUIDES.items():
+            self.assertTrue(steps, key)
+            for position, step in enumerate(steps):
+                self.assertTrue(step.get("title"), f"{key}[{position}]")
+                self.assertTrue(step.get("body"), f"{key}[{position}]")
+                target = step.get("target")
+                self.assertTrue(target is None or callable(target),
+                                f"{key}[{position}]")
+
+    def test_a_guide_never_moves_the_carousel(self):
+        """
+        Un paso con ``screen`` navega. Una guía no puede: el usuario está a
+        mitad de un trabajo en la pantalla que la guía viene a explicar, y
+        llevarlo a otra sería pisarle lo que estaba haciendo.
+        """
+        app = self._app()
+        for key, steps in app.SCREEN_GUIDES.items():
+            for position, step in enumerate(steps):
+                self.assertNotIn("screen", step, f"{key}[{position}]")
+        # Y el recorrido de bienvenida sí, en todos sus pasos: es lo que lo
+        # distingue, y de eso sale `Tutorial.navigates`.
+        for position, step in enumerate(app.TUTORIAL_STEPS):
+            self.assertIn("screen", step, position)
+
+    def test_every_guide_is_asked_for_by_some_screen(self):
+        """
+        Que la clave que pide la pantalla sea una que existe.
+
+        `_maybe_guide` se calla cuando la clave no está en el catálogo, así
+        que una letra de más deja la guía escrita y jamás mostrada. Se lee
+        el archivo en vez de importarlo para no tener que instanciar la
+        ventana.
+        """
+        import re
+        app = self._app()
+        source = self._source()
+        asked = set(re.findall(r'_maybe_guide\(\s*"([^"]+)"\s*\)', source))
+        self.assertEqual(asked, set(app.SCREEN_GUIDES))
+
+    def test_resetting_the_tutorial_brings_them_back(self):
+        """
+        Es la única manera de volver a verlas, así que el botón tiene que
+        vaciar la lista **y guardarla**: sin escribir el archivo, volvían
+        sólo hasta el próximo arranque.
+        """
+        source = self._source()
+        body = source.split("def _start_tutorial", 1)[1].split("\n    def ", 1)[0]
+        self.assertIn('self.settings["guides_seen"] = []', body)
+        self.assertIn("save_settings", body)
+
 
 class TestEggRecipes(unittest.TestCase):
     """La lista que la entidad deja al completar los logros."""
@@ -4758,19 +6015,22 @@ class TestSoundWorkshop(unittest.TestCase):
         el error que dejaba al ruido de la aparición tapado por el viento
         teniendo los dos el número correcto.
         """
+        # Las camas de las visiones van aparte: son las únicas que suenan
+        # **sin nadie hablando encima**, así que ocupan el lugar que en las
+        # otras escenas le corresponde a la voz. El viento de las tres, y la
+        # lluvia de la tercera, que reemplaza al viento cuando se larga.
+        alone = ("gale", "rain")
         beds = [name for name, (_m, loops) in ambience._RECIPES.items()
-                if loops and name != "gale"]
+                if loops and name not in alone]
         for name in beds:
             self.assertAlmostEqual(self._power(name), ambience.POWER_BED,
                                    delta=0.02, msg=name)
-        # El viento de la visión es la excepción y por eso está aparte: es la
-        # única cama que suena sin nadie hablando encima, así que ocupa el
-        # lugar que en las otras escenas le corresponde a la voz.
-        self.assertAlmostEqual(self._power("gale"), ambience.POWER_SOLO,
-                               delta=0.02)
+        for name in alone:
+            self.assertAlmostEqual(self._power(name), ambience.POWER_SOLO,
+                                   delta=0.02, msg=name)
         self.assertGreater(ambience.POWER_SOLO, ambience.POWER_BED)
         for name in ("wind", "tritone", "toll", "crossroads", "train",
-                     "blues"):
+                     "blues", "thunder", "dread"):
             self.assertAlmostEqual(self._power(name), ambience.POWER_HIT,
                                    delta=0.04, msg=name)
         for name in ("zombie", "fox", "blast"):
@@ -4859,7 +6119,8 @@ class TestSoundWorkshop(unittest.TestCase):
         existe no falla: no hace nada.
         """
         import app                                   # noqa: PLC0415
-        played = {"gale", "train", "owls", "crossroads", "blues"}
+        # El tritono es de la segunda, que comparte la lista con la primera.
+        played = {"gale", "train", "owls", "crossroads", "blues", "tritone"}
         self.assertTrue(played.issubset(set(app.ChordWeaverApp.VISION_SOUNDS)))
         self.assertTrue(
             set(app.ChordWeaverApp.VISION_FIRST).issubset(
@@ -4937,6 +6198,1097 @@ class TestSoundWorkshop(unittest.TestCase):
         for name in ambience._RECIPES:
             if name.startswith("blip_"):
                 self.assertNotIn(name, ambience._ON_DEMAND, name)
+
+
+# ---------------------------------------------------------------------------
+# El analizador
+# ---------------------------------------------------------------------------
+
+def _line(pitches_and_lengths, name=""):
+    """Una voz, a partir de pares (altura, duración). None es un silencio."""
+    notes, position = [], 0.0
+    for pitch, length in pitches_and_lengths:
+        if pitch is not None:
+            notes.append(analysis.Note(pitch=pitch, onset=position,
+                                       duration=length))
+        position += length
+    return analysis.Part(name=name, notes=notes)
+
+
+def _score(lines, fifths=0, beats=4, beat_type=4, pickup=0.0):
+    """Una partitura de prueba, con las voces de grave a aguda."""
+    names = importer.voice_names(len(lines))
+    return analysis.Score(
+        parts=[_line(line, name) for name, line in zip(names, lines)],
+        fifths=fifths, beats=beats, beat_type=beat_type,
+        pickup_quarters=pickup)
+
+
+def _symbols(result):
+    return [segment.symbol for segment in result.segments]
+
+
+def _romans(result):
+    return [segment.roman for segment in result.segments]
+
+
+def _kinds(result):
+    return {finding.kind for finding in result.findings}
+
+
+#: Los primeros cuatro compases del Preludio en Do mayor, BWV 846, escritos
+#: como MusicXML para poder importarlos.
+#:
+#: Cada compás es la misma figura dos veces: las dos notas de la mano
+#: izquierda tenidas media redonda, y las tres de la derecha arpegiadas dos
+#: veces en semicorcheas. Es Bach literal y sirve de piedra de toque: la
+#: progresión es I - ii - V - I con dos inversiones que un análisis correcto
+#: tiene que nombrar, y el cifrado de esas inversiones (4/2 y 6/5) es el que
+#: figura en cualquier edición comentada.
+_BWV846_BARS = [
+    (48, 52, [67, 72, 76]),      # Do  Mi  | Sol Do  Mi
+    (48, 50, [69, 74, 77]),      # Do  Re  | La  Re  Fa
+    (47, 50, [67, 74, 77]),      # Si  Re  | Sol Re  Fa
+    (48, 52, [67, 72, 76]),      # Do  Mi  | Sol Do  Mi
+]
+
+
+def _xml_note(midi, duration, voice, staff, rest=False):
+    step = "CCDDEFFGGAAB"[midi % 12]
+    octave = midi // 12 - 1
+    body = ("<rest/>" if rest else
+            f"<pitch><step>{step}</step><octave>{octave}</octave></pitch>")
+    return (f"<note>{body}<duration>{duration}</duration>"
+            f"<voice>{voice}</voice><staff>{staff}</staff></note>")
+
+
+def _bwv846_musicxml():
+    measures = []
+    for index, (low, high, upper) in enumerate(_BWV846_BARS, start=1):
+        attributes = ""
+        if index == 1:
+            attributes = ("<attributes><divisions>4</divisions>"
+                          "<key><fifths>0</fifths></key>"
+                          "<time><beats>4</beats><beat-type>4</beat-type>"
+                          "</time><staves>2</staves></attributes>")
+        half = []
+        # La mano izquierda: dos notas tenidas, la segunda desde la segunda
+        # semicorchea. Cada voz vuelve al principio de la mitad de compás.
+        half.append(_xml_note(low, 8, 1, 2))
+        half.append("<backup><duration>8</duration></backup>")
+        half.append(_xml_note(0, 1, 2, 2, rest=True))
+        half.append(_xml_note(high, 7, 2, 2))
+        half.append("<backup><duration>8</duration></backup>")
+        half.append(_xml_note(0, 2, 3, 1, rest=True))
+        for midi in upper + upper:
+            half.append(_xml_note(midi, 1, 3, 1))
+        measures.append(f"<measure number='{index}'>{attributes}"
+                        + "".join(half * 2) + "</measure>")
+    return ("<?xml version='1.0' encoding='UTF-8'?>"
+            "<score-partwise version='3.1'>"
+            "<work><work-title>Preludio BWV 846</work-title></work>"
+            "<part-list><score-part id='P1'><part-name>Clave</part-name>"
+            "</score-part></part-list>"
+            "<part id='P1'>" + "".join(measures) + "</part></score-partwise>")
+
+
+class TestAnalysisOfBach(unittest.TestCase):
+    """El analizador contra música de verdad, importada de un archivo."""
+
+    @classmethod
+    def setUpClass(cls):
+        handle = tempfile.NamedTemporaryFile(suffix=".musicxml", delete=False,
+                                             mode="w", encoding="utf-8")
+        handle.write(_bwv846_musicxml())
+        handle.close()
+        cls.path = handle.name
+        cls.score = importer.read_voices(cls.path)
+        cls.result = analysis.analyse(cls.score)
+
+    @classmethod
+    def tearDownClass(cls):
+        try:
+            os.unlink(cls.path)
+        except OSError:
+            pass
+
+    def test_the_voices_come_back_separately(self):
+        """Cada línea del arpegio es una voz, no un acorde apilado."""
+        self.assertEqual(len(self.score.parts), 3)
+        self.assertEqual([part.name for part in self.score.parts],
+                         ["Bajo", "Alto", "Soprano"])
+        # El bajo lleva ocho notas: dos por compás, de media redonda.
+        self.assertEqual(len(self.score.parts[0].notes), 8)
+        self.assertEqual(self.score.parts[0].notes[0].duration, 2.0)
+        # Y la mano derecha, seis semicorcheas por mitad de compás.
+        self.assertEqual(len(self.score.parts[2].notes), 48)
+
+    def test_the_key_is_c_major(self):
+        self.assertEqual(self.result.key.tonic_pc, 0)
+        self.assertEqual(self.result.key.mode_key, "major")
+        self.assertEqual(self.result.key.label, "Do mayor")
+        self.assertGreater(self.result.key.confidence, 0.5)
+
+    def test_one_chord_per_bar(self):
+        """Cuatro compases, cuatro acordes.
+
+        Es la mitad del problema: un arpegio cambia de vertical cada
+        semicorchea y leer acorde por vertical devolvía dieciséis acordes
+        por compás que nadie escribió.
+        """
+        self.assertEqual(len(self.result.segments), 4)
+        self.assertEqual([s.bar_index for s in self.result.segments],
+                         [1, 2, 3, 4])
+
+    def test_the_progression_is_the_one_bach_wrote(self):
+        self.assertEqual(_symbols(self.result),
+                         ["C", "Dm7/C", "G7/B", "C"])
+
+    def test_the_degrees_and_the_inversions(self):
+        self.assertEqual(_romans(self.result), ["I", "ii4/2", "V6/5", "I"])
+
+    def test_the_figured_bass(self):
+        """El cifrado del bajo continuo, abreviado como se abrevia.
+
+        El acorde en estado fundamental no lleva cifra --- se da por sabida
+        ---, la séptima con su séptima en el bajo lleva 4/2 y con su tercera
+        en el bajo, 6/5.
+        """
+        self.assertEqual([s.figure for s in self.result.segments],
+                         ["", "4/2", "6/5", ""])
+
+    def test_the_functions(self):
+        self.assertEqual([s.function for s in self.result.segments],
+                         [harmony.TONIC, harmony.SUBDOMINANT,
+                          harmony.DOMINANT, harmony.TONIC])
+
+    def test_it_closes_with_an_imperfect_authentic_cadence(self):
+        """Imperfecta porque la dominante está invertida, que es el caso."""
+        kinds = [cadence.kind for cadence in self.result.cadences]
+        self.assertIn("cadencia auténtica imperfecta", kinds)
+
+    def test_nothing_is_read_as_an_ornament(self):
+        """En el Preludio toda nota pertenece a su acorde."""
+        self.assertEqual(self.result.ornaments, [])
+
+    def test_it_can_be_written_back_out(self):
+        target = tempfile.mkdtemp()
+        written = session.export_analysis(self.result, target,
+                                          ("musicxml", "midi"), "bwv846")
+        self.assertEqual(len(written), 2)
+        with open(written[0], encoding="utf-8") as handle:
+            xml = handle.read()
+        self.assertIn("<fifths>0</fifths>", xml)
+        self.assertIn("<sign>G</sign>", xml)
+        self.assertIn("<sign>F</sign>", xml)
+
+
+class TestAnalysisKey(unittest.TestCase):
+    def test_the_resting_note_decides(self):
+        result = analysis.analyse(_score([
+            [(43, 4), (48, 4)], [(59, 4), (55, 4)],
+            [(62, 4), (64, 4)], [(67, 4), (72, 4)]]))
+        self.assertEqual(result.key.label, "Do mayor")
+
+    def test_a_phrase_that_stops_on_the_dominant_is_not_in_that_key(self):
+        """Am - G - F - E es La menor con semicadencia, no Mi de nada.
+
+        Sin esto la frase quedaba analizada en la tonalidad donde para, que
+        es justamente la que una semicadencia no establece.
+        """
+        result = analysis.analyse(_score([
+            [(45, 4), (43, 4), (41, 4), (40, 4)],
+            [(57, 4), (55, 4), (53, 4), (56, 4)],
+            [(60, 4), (59, 4), (57, 4), (59, 4)],
+            [(64, 4), (62, 4), (60, 4), (64, 4)]]))
+        self.assertEqual(result.key.tonic_pc, 9)
+
+    def test_the_signature_narrows_the_candidates(self):
+        result = analysis.analyse(_score([
+            [(43, 4), (38, 4), (43, 4)], [(59, 4), (57, 4), (59, 4)],
+            [(62, 4), (62, 4), (62, 4)], [(67, 4), (66, 4), (67, 4)]],
+            fifths=1))
+        self.assertEqual(result.key.label, "Sol mayor")
+
+
+class TestAnalysisFunctions(unittest.TestCase):
+    def test_a_secondary_dominant_is_named_by_its_target(self):
+        result = analysis.analyse(_score([
+            [(48, 2), (50, 2), (43, 2), (48, 2)],
+            [(55, 2), (54, 2), (55, 2), (55, 2)],
+            [(64, 2), (60, 2), (62, 2), (64, 2)],
+            [(72, 2), (69, 2), (71, 2), (72, 2)]]))
+        applied = result.segments[1]
+        self.assertEqual(applied.category, "dominante aplicada")
+        self.assertEqual(applied.roman, "V7/V")
+        self.assertEqual(applied.function, harmony.DOMINANT)
+        self.assertIn("resuelve", applied.detail)
+
+    def test_a_borrowed_chord_says_which_mode_it_came_from(self):
+        result = analysis.analyse(_score([
+            [(48, 2), (53, 2), (48, 4)],
+            [(55, 2), (56, 2), (55, 4)],
+            [(64, 2), (60, 2), (64, 4)],
+            [(72, 2), (72, 2), (72, 4)]]))
+        borrowed = result.segments[1]
+        self.assertEqual(borrowed.category, "intercambio modal")
+        self.assertEqual(borrowed.roman, "iv")
+        self.assertEqual(borrowed.function, harmony.SUBDOMINANT)
+        self.assertIn("menor natural", borrowed.source_mode)
+
+    def test_a_suspended_fourth_that_resolves_is_said_to_resolve(self):
+        result = analysis.analyse(_score([
+            [(48, 4), (43, 4), (48, 4)],
+            [(55, 4), (50, 4), (55, 4)],
+            [(64, 4), (62, 4), (64, 4)],
+            [(72, 4), (72, 3), (71, 1), (72, 4)]]))
+        suspended = next(s for s in result.segments
+                         if s.category == "suspendido")
+        self.assertEqual(suspended.symbol, "Gsus4")
+        self.assertIn("suspensión resuelta", suspended.sus_note)
+
+    def test_a_chain_of_applied_dominants_is_read_as_a_chain(self):
+        """Dos aplicadas seguidas no son una modulación: son una cadena."""
+        result = analysis.analyse(_score([
+            [(48, 4), (45, 4), (50, 4), (43, 4), (48, 4), (48, 4)],
+            [(55, 4), (57, 4), (57, 4), (59, 4), (55, 4), (55, 4)],
+            [(64, 4), (61, 4), (60, 4), (62, 4), (64, 4), (64, 4)],
+            [(72, 4), (67, 4), (66, 4), (67, 4), (72, 4), (72, 4)]]))
+        self.assertEqual(len(result.groups), 1)
+        self.assertIn("cadena", result.groups[0].label)
+
+    def test_an_alternative_is_offered_when_the_reading_is_doubtful(self):
+        """Do-mi-sol-la es un Do6 y un Lam7, y las dos son ciertas."""
+        readings = analysis.read_chord({0: 1.0, 4: 1.0, 7: 1.0, 9: 1.0},
+                                       bass_pc=9)
+        best, alternative, doubtful = analysis.best_and_alternative(readings)
+        self.assertTrue(doubtful)
+        self.assertIsNotNone(alternative)
+        self.assertNotEqual(best.root_pc, alternative.root_pc)
+
+
+class TestAnalysisCadences(unittest.TestCase):
+    """Las cadencias, incluidas las tres que el generador sabe citar."""
+
+    def _cadences(self, lines):
+        return [c.kind for c in analysis.analyse(_score(lines)).cadences]
+
+    def test_authentic_and_plagal_and_deceptive(self):
+        perfect = self._cadences([
+            [(43, 4), (48, 4)], [(59, 4), (55, 4)],
+            [(62, 4), (64, 4)], [(67, 4), (72, 4)]])
+        self.assertIn("cadencia auténtica perfecta", perfect)
+
+        plagal = self._cadences([
+            [(53, 4), (48, 4)], [(57, 4), (55, 4)],
+            [(60, 4), (64, 4)], [(72, 4), (72, 4)]])
+        self.assertIn("cadencia plagal", plagal)
+
+        # La rota necesita frase: es la dominante que promete la tónica y
+        # entrega el sexto grado, y para que se oiga como promesa rota la
+        # pieza tiene que seguir y terminar donde correspondía.
+        deceptive = self._cadences([
+            [(48, 2), (53, 2), (43, 2), (45, 4), (53, 2), (43, 2), (48, 4)],
+            [(55, 2), (57, 2), (59, 2), (60, 4), (57, 2), (59, 2), (55, 4)],
+            [(64, 2), (60, 2), (62, 2), (64, 4), (60, 2), (62, 2), (64, 4)],
+            [(72, 2), (72, 2), (71, 2), (69, 4), (72, 2), (71, 2), (72, 4)]])
+        self.assertIn("cadencia rota", deceptive)
+        self.assertIn("cadencia auténtica perfecta", deceptive)
+
+    def test_the_phrygian_quotation(self):
+        """La misma que el generador cita: i - bVII - bVI - V."""
+        kinds = self._cadences([
+            [(45, 4), (43, 4), (41, 4), (40, 4)],
+            [(57, 4), (55, 4), (53, 4), (56, 4)],
+            [(60, 4), (59, 4), (57, 4), (59, 4)],
+            [(64, 4), (62, 4), (60, 4), (64, 4)]])
+        self.assertIn(harmony.PHRYGIAN_CADENCE.label.lower(), kinds)
+
+    def test_the_vivaldi_cycle(self):
+        kinds = self._cadences([
+            [(45, 4), (50, 4), (43, 4), (48, 4), (41, 4), (47, 4), (40, 4),
+             (45, 4)],
+            [(57, 4), (54, 4), (59, 4), (52, 4), (57, 4), (51, 4), (56, 4),
+             (57, 4)],
+            [(60, 4), (57, 4), (62, 4), (55, 4), (60, 4), (54, 4), (59, 4),
+             (60, 4)],
+            [(64, 4), (62, 4), (67, 4), (64, 4), (65, 4), (66, 4), (64, 4),
+             (64, 4)]])
+        self.assertIn(harmony.VIVALDI_CADENCE.label.lower(), kinds)
+
+    def test_the_descending_chromatic_bass(self):
+        kinds = self._cadences([
+            [(45, 4), (44, 4), (43, 4), (41, 4), (40, 4), (45, 4)],
+            [(57, 4), (57, 4), (57, 4), (57, 4), (56, 4), (57, 4)],
+            [(60, 4), (60, 4), (60, 4), (60, 4), (59, 4), (60, 4)],
+            [(64, 4), (64, 4), (64, 4), (64, 4), (64, 4), (64, 4)]])
+        self.assertIn(harmony.CHROMATIC_BASS_CADENCE.label.lower(), kinds)
+
+    def test_the_quotations_come_from_the_generator(self):
+        """No hay una segunda copia de estas progresiones.
+
+        Se leen de `harmony.SET_PIECES`, que es de donde las saca el
+        generador para citarlas. Si alguna vez se corrige una nota, el
+        analizador tiene que dejar de reconocer la vieja en el mismo
+        momento.
+        """
+        source = inspect.getsource(analysis.quoted_cadences)
+        self.assertIn("harmony.SET_PIECES", source)
+
+
+class TestAnalysisCounterpoint(unittest.TestCase):
+    def test_parallel_fifths_and_octaves_are_found(self):
+        result = analysis.analyse(_score([
+            [(48, 2), (43, 2)], [(55, 2), (50, 2)],
+            [(64, 2), (67, 2)], [(72, 2), (67, 2)]]))
+        self.assertIn("quintas_paralelas", _kinds(result))
+
+    def test_every_parallel_is_reported_and_not_only_the_first(self):
+        """Cinco quintas seguidas son cinco faltas, no una."""
+        result = analysis.analyse(_score([
+            [(48, 1), (43, 1), (45, 1), (41, 1), (43, 1), (48, 1)],
+            [(55, 1), (50, 1), (52, 1), (48, 1), (50, 1), (55, 1)],
+            [(64, 1), (67, 1), (64, 1), (65, 1), (67, 1), (64, 1)],
+            [(72, 1), (71, 1), (72, 1), (69, 1), (71, 1), (72, 1)]]))
+        fifths = [f for f in result.findings
+                  if f.kind == "quintas_paralelas"]
+        self.assertGreater(len(fifths), 1)
+
+    def test_a_crossing_is_reported_once_and_not_per_slice(self):
+        """La misma nota tenida no es un cruce nuevo en cada vertical."""
+        result = analysis.analyse(_score([
+            [(48, 1), (60, 2), (48, 1)],
+            [(55, 1), (55, 1), (55, 1), (55, 1)],
+            [(64, 4)], [(72, 4)]]))
+        crossings = [f for f in result.findings if f.kind == "cruce"]
+        self.assertEqual(len(crossings), 1)
+
+    def test_a_tritone_leap_is_reported_with_its_voice(self):
+        result = analysis.analyse(_score([
+            [(48, 2), (48, 2)], [(55, 2), (55, 2)],
+            [(64, 2), (64, 2)], [(71, 2), (65, 2)]]))
+        leaps = [f for f in result.findings if f.kind == "salto_tritono"]
+        self.assertEqual(len(leaps), 1)
+        self.assertEqual(leaps[0].voices, (3,))
+
+    def test_the_motions_are_classified(self):
+        self.assertEqual(analysis.motion_between(60, 62, 67, 69),
+                         analysis.MOTION_PARALLEL)
+        self.assertEqual(analysis.motion_between(60, 62, 67, 65),
+                         analysis.MOTION_CONTRARY)
+        self.assertEqual(analysis.motion_between(60, 60, 67, 69),
+                         analysis.MOTION_OBLIQUE)
+        self.assertEqual(analysis.motion_between(60, 60, 67, 67),
+                         analysis.MOTION_STATIC)
+        # Misma dirección con el intervalo cambiando: directo, no paralelo.
+        self.assertEqual(analysis.motion_between(60, 62, 67, 71),
+                         analysis.MOTION_SIMILAR)
+
+    def test_the_rules_come_from_the_evaluator(self):
+        """Las paralelas no se vuelven a definir acá.
+
+        Una segunda copia de la regla se desincroniza de la primera en el
+        primer cambio, y entonces el analizador diría que está bien lo que
+        el generador prohíbe.
+        """
+        source = inspect.getsource(analysis)
+        self.assertIn("from .fitness import", source)
+
+    def _pairs(self, result):
+        """Todos los movimientos de la pieza, uno por uno."""
+        found = []
+        for report in result.motions:
+            found.extend(report.pairs.values())
+        return found
+
+    def test_two_voices_that_move_one_after_the_other_move_together(self):
+        """
+        El movimiento se mide contra la nota anterior **de cada voz**.
+
+        Las dos bajan un tono, pero no en el mismo instante: la de abajo en
+        el segundo tiempo y la de arriba en el tercero. Es lo que hace
+        cualquier textura arpegiada, y mirando la vertical de al lado la que
+        todavía no atacó parece quieta --- un paralelo perfectamente visible
+        en el papel salía cifrado "oblicuo".
+        """
+        result = analysis.analyse(_score([
+            [(48, 1), (46, 3)],
+            [(55, 2), (53, 2)],
+            [(64, 4)]]))
+        self.assertIn(analysis.MOTION_PARALLEL, self._pairs(result))
+
+    def test_parallel_fifths_are_found_even_when_they_are_not_simultaneous(self):
+        """Y por lo mismo se marcan: son dos quintas y una tras otra."""
+        result = analysis.analyse(_score([
+            [(48, 1), (50, 3)],
+            [(55, 2), (57, 2)]]))
+        self.assertIn("quintas_paralelas", _kinds(result))
+        fifths = [f for f in result.findings
+                  if f.kind == "quintas_paralelas"]
+        self.assertEqual(len(fifths), 1)
+
+    def test_a_repeated_note_is_still_standing_still(self):
+        """Volver a atacar la misma nota es quedarse quieto, no moverse."""
+        result = analysis.analyse(_score([
+            [(48, 1), (48, 1), (48, 1), (48, 1)],
+            [(55, 1), (55, 1), (57, 1), (57, 1)]]))
+        values = self._pairs(result)
+        self.assertIn(analysis.MOTION_STATIC, values)
+        self.assertIn(analysis.MOTION_OBLIQUE, values)
+
+    def test_a_pedal_is_oblique_against_everything_above_it(self):
+        """
+        Una nota que viene sonando desde antes no se movió nunca.
+
+        No tiene nota anterior contra la cual medirla, y sin embargo lo que
+        hace mientras la de arriba se mueve tiene nombre: oblicuo. Dándola
+        por perdida, un pedal se quedaba sin un solo movimiento.
+        """
+        result = analysis.analyse(_score([
+            [(36, 8)],
+            [(60, 1), (62, 1), (64, 1), (65, 1), (67, 4)]]))
+        values = self._pairs(result)
+        self.assertTrue(values)
+        self.assertEqual(set(values), {analysis.MOTION_OBLIQUE})
+
+    def test_the_same_step_is_not_counted_twice(self):
+        """
+        Una voz que vuelve a atacar no cambia nada de lo que hay para medir.
+
+        Las dos de abajo hacen un solo paso; la de arriba lo pica en ocho
+        corcheas. Sin la memoria de lo último anotado, ese paso aparecía una
+        vez por cada corchea.
+        """
+        result = analysis.analyse(_score([
+            [(48, 2), (50, 2)],
+            [(55, 2), (57, 2)],
+            [(64, 0.5)] * 8]))
+        low = [report.pairs[(0, 1)] for report in result.motions
+               if (0, 1) in report.pairs]
+        self.assertEqual(len(low), 1)
+
+
+class TestAnalysisOrnaments(unittest.TestCase):
+    def _kinds(self, lines, **kwargs):
+        result = analysis.analyse(_score(lines, **kwargs))
+        return {ornament.kind for ornament in result.ornaments}
+
+    def test_a_passing_note_does_not_become_a_seventh_chord(self):
+        """El si de paso sobre un Do no convierte al Do en Do maj7."""
+        result = analysis.analyse(_score([
+            [(48, 4)], [(55, 4)], [(64, 4)],
+            [(72, 1), (71, 1), (69, 1), (67, 1)]]))
+        self.assertEqual(result.segments[0].symbol, "C")
+        self.assertIn("paso", {o.kind for o in result.ornaments})
+
+    def test_a_neighbour_returns_and_a_passing_note_goes_on(self):
+        neighbour = self._kinds([
+            [(48, 4)], [(55, 4)], [(64, 4)],
+            [(72, 1), (74, 1), (72, 2)]])
+        self.assertIn("bordadura", neighbour)
+
+    def test_a_written_turn(self):
+        turn = self._kinds([
+            [(48, 4), (48, 4)], [(55, 4), (55, 4)], [(64, 4), (64, 4)],
+            [(74, 0.5), (72, 0.5), (71, 0.5), (72, 2.5), (72, 4)]])
+        self.assertIn("grupeto", turn)
+
+    def test_an_anticipation(self):
+        # Corta: una anticipación es la última corchea del acorde que se
+        # adelanta al siguiente. Escrita larga deja de ser un adelanto y pasa
+        # a ser otro acorde.
+        anticipation = self._kinds([
+            [(43, 4), (48, 4)], [(50, 4), (52, 4)], [(55, 4), (55, 4)],
+            [(71, 3.5), (72, 0.5), (72, 4)]])
+        self.assertIn("anticipacion", anticipation)
+
+    def test_a_pickup_bar_is_an_anacrusis(self):
+        found = self._kinds([
+            [(None, 1), (48, 4), (43, 3)],
+            [(None, 1), (55, 4), (55, 3)],
+            [(None, 1), (64, 4), (62, 3)],
+            [(67, 1), (72, 4), (71, 3)]], pickup=1.0)
+        self.assertIn("anacrusa", found)
+
+    def test_every_ornament_the_analyser_names_has_a_definition(self):
+        """Un adorno sin definición es un nombre suelto en la pantalla."""
+        for kind in analysis.ORNAMENT_LABELS:
+            self.assertIn(kind, analysis.ORNAMENT_DEFINITIONS, kind)
+
+
+class TestAnalysisPlumbing(unittest.TestCase):
+    def test_playback_is_voice_by_voice(self):
+        """Una nota tenida suena una vez, no una por vertical."""
+        result = analysis.analyse(_score([
+            [(48, 4)], [(55, 4)], [(64, 4)],
+            [(72, 1), (71, 1), (69, 1), (67, 1)]]))
+        events = result.playback()
+        self.assertEqual(len(events), 7)
+        self.assertIn((48, 0.0, 4), events)
+
+    def test_bars_are_numbered_from_one_and_a_pickup_is_bar_zero(self):
+        score = _score([[(60, 1), (60, 4)]], pickup=1.0)
+        self.assertEqual(analysis.bar_and_offset(score, 0.0)[0], 0)
+        self.assertEqual(analysis.bar_and_offset(score, 1.0), (1, 0.0))
+
+    def test_two_notes_are_not_a_chord(self):
+        """
+        Con menos de tres alturas no hay acorde que nombrar.
+
+        Una nota sola en el pentagrama venía con nombre de acorde, grado y
+        función, todo deducido de esa nota: un acorde es una tríada y dos
+        notas no alcanzan para decidir cuál de las que las contienen suena.
+        """
+        alone = analysis.analyse(_score([[(60, 4)]]))
+        self.assertEqual(alone.segments, [])
+        pair = analysis.analyse(_score([[(48, 4)], [(55, 4)]]))
+        self.assertEqual(pair.segments, [])
+        # Con la tercera voz sí.
+        trio = analysis.analyse(_score([[(48, 4)], [(55, 4)], [(64, 4)]]))
+        self.assertEqual(_symbols(trio), ["C"])
+
+    def test_a_thin_moment_joins_the_chord_it_belongs_to(self):
+        """Una nota sola al final no se convierte en un acorde propio."""
+        result = analysis.analyse(_score([
+            [(48, 4), (48, 1)], [(55, 4)], [(64, 4)]]))
+        self.assertEqual(_symbols(result), ["C"])
+
+    def test_an_empty_score_says_so_instead_of_failing(self):
+        result = analysis.analyse(analysis.Score(parts=[]))
+        self.assertEqual(result.segments, [])
+        self.assertTrue(result.warnings)
+
+    def test_the_engine_does_not_import_the_interface(self):
+        source = inspect.getsource(analysis)
+        for forbidden in ("import app", "import tkinter", "customtkinter"):
+            self.assertNotIn(forbidden, source)
+
+
+class TestAnalysisWriting(unittest.TestCase):
+    """
+    Que lo escrito en el pentagrama sea lo que se analizó.
+
+    El analizador tiene dos entradas ---un archivo y el pentagrama--- y las
+    dos tienen que llegar a la misma pieza. Si escribir una partitura
+    importada y volver a leerla del pentagrama cambia una nota, el análisis
+    que se ve en pantalla es de otra música que la del archivo.
+    """
+
+    def test_a_written_line_keeps_its_rests(self):
+        part = analysis.Part(name="Tenor", notes=[
+            analysis.Note(pitch=60, onset=1.0, duration=1.0),
+            analysis.Note(pitch=62, onset=3.0, duration=1.0)])
+        self.assertEqual(importer.written_line(part),
+                         [(None, 1.0), (60, 1.0), (None, 1.0), (62, 1.0)])
+
+    def test_a_line_that_starts_at_zero_gets_no_leading_rest(self):
+        part = analysis.Part(name="Bajo", notes=[
+            analysis.Note(pitch=48, onset=0.0, duration=2.0)])
+        self.assertEqual(importer.written_line(part), [(48, 2.0)])
+
+    def test_writing_a_pitch_and_reading_it_back_is_exact(self):
+        """
+        El ida y vuelta del pentagrama, en todas las armaduras.
+
+        Se importa `staff` a propósito aunque sea de la interfaz: lo que se
+        prueba son dos funciones de aritmética que no crean ninguna ventana,
+        y son las que deciden si una partitura importada sobrevive al
+        pentagrama. Probarlas desde el arnés de interfaz costaría abrir la
+        aplicación entera para comprobar una cuenta.
+        """
+        import staff
+        for fifths in range(-5, 6):
+            for midi in range(36, 85):
+                index = staff.index_for_pitch(midi, fifths)
+                accidental = staff.accidental_for(midi, index, fifths)
+                self.assertEqual(staff.pitch_at(index, fifths, accidental),
+                                 midi, (fifths, midi))
+
+    def test_the_key_signature_spells_what_it_can(self):
+        """En Sol mayor, un fa sostenido no lleva accidente escrito."""
+        import staff
+        index = staff.index_for_pitch(66, 1)          # fa sostenido
+        self.assertIsNone(staff.accidental_for(66, index, 1))
+        # Y en Do mayor, el mismo sonido sí lo lleva.
+        index = staff.index_for_pitch(66, 0)
+        self.assertEqual(staff.accidental_for(66, index, 0), 1)
+
+
+class TestAnalysisMetres(unittest.TestCase):
+    """
+    Una pieza puede cambiar de compás en el medio.
+
+    No es un detalle de dibujo. El compás decide dónde caen los tiempos
+    fuertes; de los tiempos fuertes salen la unidad con la que se lee un
+    acorde, el peso de cada nota y el nombre de cualquier adorno. Forzar
+    toda la pieza al primer compás corría la grilla desde el cambio hasta el
+    final, y con ella todo lo que se apoya en ella.
+    """
+
+    def _score(self, metres):
+        line = [(60, 1.0)] * 12
+        return analysis.Score(
+            parts=[_line(line, "Soprano")], beats=4, beat_type=4,
+            metres=metres)
+
+    def test_bars_are_counted_with_the_metre_that_rules(self):
+        score = self._score(((1, 4, 4), (3, 3, 4)))
+        # Dos compases de cuatro y después de tres: 0-4, 4-8, 8-11, 11-14.
+        self.assertEqual(analysis.bar_and_offset(score, 0.0), (1, 0.0))
+        self.assertEqual(analysis.bar_and_offset(score, 4.0), (2, 0.0))
+        self.assertEqual(analysis.bar_and_offset(score, 8.0), (3, 0.0))
+        self.assertEqual(analysis.bar_and_offset(score, 11.0), (4, 0.0))
+
+    def test_without_changes_nothing_moves(self):
+        score = self._score(())
+        for moment, expected in ((0.0, (1, 0.0)), (4.0, (2, 0.0)),
+                                 (9.5, (3, 1.5))):
+            self.assertEqual(analysis.bar_and_offset(score, moment), expected)
+
+    def test_the_metre_of_each_bar_is_the_last_one_declared(self):
+        score = self._score(((1, 4, 4), (3, 3, 4), (5, 6, 8)))
+        self.assertEqual(score.metre_at(1), (4, 4))
+        self.assertEqual(score.metre_at(2), (4, 4))
+        self.assertEqual(score.metre_at(4), (3, 4))
+        self.assertEqual(score.metre_at(9), (6, 8))
+
+    def test_a_change_of_metre_moves_the_strong_beats(self):
+        """
+        El mismo material, leído en dos compases distintos.
+
+        Tres acordes de tres negras: en tres por cuatro cada uno cae en el
+        primer tiempo de su compás, y en cuatro por cuatro el segundo cae a
+        contratiempo. La lectura no tiene por qué dar lo mismo, y lo que
+        importa es que la grilla siga a la barra.
+        """
+        lines = [[(48, 3.0), (43, 3.0), (48, 3.0)],
+                 [(52, 3.0), (50, 3.0), (52, 3.0)],
+                 [(55, 3.0), (47, 3.0), (55, 3.0)]]
+        three = analysis.Score(
+            parts=[_line(line, name) for name, line
+                   in zip(("Bajo", "Alto", "Soprano"), lines)],
+            beats=3, beat_type=4)
+        result = analysis.analyse(three)
+        self.assertEqual([s.bar_index for s in result.segments], [1, 2, 3])
+
+    def test_an_imported_change_of_metre_survives(self):
+        """Lo que dice el archivo tiene que llegar al análisis."""
+        import xml.etree.ElementTree as ET      # noqa: F401 - se usa abajo
+        first = ("<attributes><divisions>1</divisions>"
+                 "<key><fifths>0</fifths></key>"
+                 "<time><beats>4</beats><beat-type>4</beat-type></time>"
+                 "</attributes>")
+        change = ("<attributes>"
+                  "<time><beats>3</beats><beat-type>4</beat-type></time>"
+                  "</attributes>")
+        def bar(number, attributes, count):
+            notes = "".join(_xml_note(60, 1, 1, 1) for _ in range(count))
+            return f"<measure number='{number}'>{attributes}{notes}</measure>"
+        xml = ("<?xml version='1.0' encoding='UTF-8'?>"
+               "<score-partwise version='3.1'><part-list><score-part id='P1'>"
+               "<part-name>V</part-name></score-part></part-list>"
+               "<part id='P1'>"
+               + bar(1, first, 4) + bar(2, "", 4) + bar(3, change, 3)
+               + bar(4, "", 3) + "</part></score-partwise>")
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "cambio.musicxml")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(xml)
+            score = importer.read_voices(path)
+        self.assertEqual(score.beats, 4)
+        self.assertIn((3, 3, 4), score.metres)
+        self.assertEqual(score.metre_at(3), (3, 4))
+
+
+class TestAnalysisSpelling(unittest.TestCase):
+    """
+    Cómo se escribe cada nota.
+
+    Una altura no dice cómo se llama: la misma tecla es un la bemol o un sol
+    sostenido según de qué lado del círculo de quintas esté la pieza. Un
+    analizador que se equivoca en esto contesta bien y se lee mal, que para
+    quien está aprendiendo es lo mismo que contestar mal.
+    """
+
+    def test_the_signature_is_deduced_when_the_file_has_none(self):
+        """Las partituras que este programa exporta no traen armadura."""
+        sonorities = analysis.verticalise(
+            _score([[(53, 4.0)], [(58, 4.0)], [(60, 4.0)], [(65, 4.0)]]))
+        self.assertLess(analysis.implied_fifths(sonorities, 0), 0)
+
+    def test_a_written_signature_is_never_second_guessed(self):
+        sonorities = analysis.verticalise(_score([[(53, 4.0)], [(58, 4.0)]]))
+        self.assertEqual(analysis.implied_fifths(sonorities, 3), 3)
+
+    def test_a_borrowed_chord_is_spelled_like_its_degree(self):
+        """Un bVI se escribe con bemol, no con el sostenido de al lado."""
+        result = analysis.analyse(_score([
+            [(48, 2.0), (44, 2.0), (48, 2.0)],
+            [(64, 2.0), (63, 2.0), (64, 2.0)],
+            [(67, 2.0), (68, 2.0), (67, 2.0)],
+            [(72, 2.0), (72, 2.0), (72, 2.0)]]))
+        self.assertEqual(_romans(result)[1], "bVI")
+        self.assertEqual(_symbols(result)[1], "Ab")
+
+    def test_the_bass_is_spelled_by_what_it_is_in_the_chord(self):
+        """La quinta de un Si con séptima es un fa sostenido, no un sol bemol."""
+        reading = analysis.ChordReading(
+            root_pc=11, quality="7", pitch_classes=(2, 5, 9, 11), bass_pc=6,
+            prefer_flats=True,
+            tones=((11, "root", 1), (3, "third", 3), (6, "fifth", 5),
+                   (9, "seventh", 7)))
+        self.assertEqual(reading.bass_name, "F#")
+
+    def test_a_diminished_chord_is_not_a_tonic(self):
+        """
+        Ninguna pieza reposa en un acorde disminuido.
+
+        Es el acorde más inestable que hay: si la música se detiene ahí, se
+        detuvo antes de llegar, no llegó. Sin esta salvedad, una
+        armonización que cerraba en el séptimo grado se analizaba entera en
+        locrio.
+        """
+        result = analysis.analyse(_score([
+            [(48, 2.0), (48, 2.0), (47, 2.0)],
+            [(64, 2.0), (64, 2.0), (62, 2.0)],
+            [(67, 2.0), (67, 2.0), (65, 2.0)],
+            [(72, 2.0), (72, 2.0), (71, 2.0)]]))
+        self.assertNotEqual(result.key.mode_key, "locrian")
+
+
+class TestAnalysisTravel(unittest.TestCase):
+    """
+    Irse de la tonalidad, y volver.
+
+    Son cuatro cosas distintas que se ven parecidas: un acorde prestado de
+    otro modo, una dominante que apunta a un grado, una visita a otra
+    tonalidad y una mudanza definitiva. Confundirlas es el error clásico del
+    análisis apurado, y por eso están las cuatro acá.
+    """
+
+    def _chords(self, chords, fifths=0):
+        lines = [[(chord[voice], 2.0) for chord in chords]
+                 for voice in range(len(chords[0]))]
+        return analysis.analyse(_score(lines, fifths=fifths))
+
+    def test_a_secondary_dominant_says_where_it_points(self):
+        result = self._chords([(48, 64, 67, 72), (50, 66, 69, 74),
+                               (43, 62, 67, 71), (48, 64, 67, 72)])
+        self.assertEqual(_romans(result)[1], "V/V")
+        self.assertEqual(result.segments[1].category, "dominante aplicada")
+        self.assertIn("resuelve", result.segments[1].detail)
+
+    def test_modal_interchange_says_which_mode_it_comes_from(self):
+        result = self._chords([(48, 64, 67, 72), (53, 65, 68, 72),
+                               (48, 64, 67, 72)])
+        self.assertEqual(_romans(result)[1], "iv")
+        self.assertEqual(result.segments[1].category, "intercambio modal")
+        self.assertIn("menor", result.segments[1].detail)
+
+    def test_a_tonicisation_is_read_as_one_visit(self):
+        result = self._chords([(48, 64, 67, 72), (45, 64, 67, 73),
+                               (50, 62, 65, 69), (43, 62, 65, 71),
+                               (48, 64, 67, 72)])
+        self.assertEqual(_romans(result)[1], "V7/ii")
+
+    def test_a_chain_of_dominants_is_not_leaving_the_key(self):
+        """
+        Cada acorde es la dominante del siguiente.
+
+        Es lo contrario de irse: la pieza vuelve por el círculo de quintas
+        hasta su propia dominante. Leído acorde por acorde parecen cuatro
+        tonalidades y no es ninguna.
+        """
+        result = self._chords([(48, 64, 67, 72), (52, 68, 71, 74),
+                               (45, 64, 67, 73), (50, 66, 69, 72),
+                               (43, 65, 67, 71), (48, 64, 67, 72)])
+        labels = " ".join(group.label for group in result.groups)
+        self.assertIn("dominantes", labels)
+
+    def test_a_modulation_is_read_in_the_key_it_lands_on(self):
+        result = self._chords([(48, 64, 67, 72), (43, 62, 67, 71),
+                               (50, 66, 69, 74), (43, 62, 67, 71),
+                               (50, 66, 69, 74), (43, 59, 62, 67)])
+        self.assertEqual(result.key.label, "Sol mayor")
+
+
+class TestAnalysisExample(unittest.TestCase):
+    """
+    La partitura que el programa se trae puesta.
+
+    Está para que el analizador tenga algo que abrir el primer día, y de
+    paso es una prueba de verdad: es Bach literal, la progresión es de
+    manual y cualquier edición comentada dice lo mismo que tiene que decir
+    el programa.
+    """
+
+    PATH = os.path.join("assets", "partituras",
+                        "bach-preludio-bwv846.musicxml")
+
+    def test_the_example_is_where_the_program_looks_for_it(self):
+        self.assertTrue(os.path.isfile(self.PATH), self.PATH)
+
+    def test_the_first_eight_bars_read_as_the_manuals_read_them(self):
+        score = importer.read_voices(self.PATH)
+        result = analysis.analyse(score)
+        self.assertEqual(result.key.label, "Do mayor")
+        self.assertEqual(_symbols(result),
+                         ["C", "Dm7/C", "G7/B", "C", "Am/C", "D7/C", "G/B",
+                          "Cmaj7/B"])
+        self.assertEqual(_romans(result)[:4], ["I", "ii4/2", "V6/5", "I"])
+        # El sexto compás es la dominante de la dominante, con el do en el
+        # bajo: es el momento en el que el preludio se asoma a Sol.
+        self.assertEqual(_romans(result)[5], "V4/2/V")
+
+
+class TestAnalysisReadsWhatWeWrite(unittest.TestCase):
+    """
+    Los tres modos escriben partituras y el cuarto las lee.
+
+    Tienen que entenderse. Una partitura exportada por el organizador y
+    vuelta a abrir en el analizador tiene que llegar con sus cuatro voces y
+    con la misma progresión: son el mismo programa, y si no coinciden acá no
+    coinciden con nadie.
+    """
+
+    def _round_trip(self, request, outcome):
+        self.assertTrue(outcome.succeeded, outcome.errors)
+        with tempfile.TemporaryDirectory() as folder:
+            written = session.export_outcome(
+                request, outcome, directory=folder, formats=("musicxml",),
+                record_history=False)
+            self.assertTrue(written)
+            score = importer.read_voices(written[0])
+        result = analysis.analyse(score)
+        self.assertEqual(len(score.parts), 4)
+        self.assertTrue(result.segments)
+        return result
+
+    def test_the_analyser_reads_the_organiser(self):
+        request = session.JobRequest(
+            genre_key="classical", voice_keys=["B", "T", "A", "S"],
+            entries=[session.ChordEntry(symbol=symbol, duration_quarters=2.0,
+                                        bar_index=index // 2)
+                     for index, symbol in enumerate(["C", "F", "G7", "C"])],
+            ga_config=GAConfig(population_size=60, generations=25,
+                               random_seed=7),
+            solutions_wanted=1, title="Organizador")
+        result = self._round_trip(request, session.generate(request))
+        self.assertEqual(result.key.label, "Do mayor")
+        self.assertEqual(_symbols(result)[0], "C")
+
+    def test_the_analyser_reads_the_generator(self):
+        request = session.GenerativeRequest(
+            genre_key="classical", voice_keys=["B", "T", "A", "S"],
+            tonic="F", mode_key="major", slot_count=6,
+            ga_config=GAConfig(population_size=60, generations=25,
+                               random_seed=7),
+            solutions_wanted=1, title="Generador")
+        result = self._round_trip(request, session.generate_random(request))
+        # Sin armadura escrita, la escritura sale de lo que suena: una pieza
+        # en Fa se nombra con bemoles y no con los sostenidos de al lado.
+        self.assertNotIn("#", " ".join(_symbols(result)))
+
+    def test_the_analyser_reads_the_harmoniser(self):
+        notes = [harmonize.MelodyNote(pitch=pitch, duration_quarters=1.0,
+                                      bar_index=index // 4,
+                                      offset_quarters=(index % 4) * 1.0)
+                 for index, pitch in enumerate([72, 74, 76, 77, 79, 77, 76, 72])]
+        request = session.HarmoniseRequest(
+            genre_key="classical", voice_keys=["B", "T", "A", "S"],
+            melody=harmonize.Melody(
+                notes=notes,
+                bars=[harmonize.MelodyBar(), harmonize.MelodyBar()],
+                melody_voice=3),
+            melody_voice=3,
+            ga_config=GAConfig(population_size=60, generations=25,
+                               random_seed=7),
+            solutions_wanted=1, title="Armonizador")
+        result = self._round_trip(request, session.harmonise_melody(request))
+        self.assertEqual(result.key.label, "Do mayor")
+
+
+class TestStaffWriting(unittest.TestCase):
+    """
+    Las cuentas con las que el pentagrama escribe.
+
+    Se importa `staff` aunque sea de la interfaz, como en
+    `TestAnalysisWriting`: lo que se prueba son funciones de aritmética que
+    no crean ninguna ventana y de las que depende que lo que se escribe sea
+    lo que se analiza.
+    """
+
+    def test_a_gap_is_filled_with_figures_that_can_be_written(self):
+        import staff
+        self.assertEqual(staff.split_duration(2.5), [2.0, 0.5])
+        self.assertEqual(staff.split_duration(4.0), [4.0])
+        self.assertEqual(staff.split_duration(0.75), [0.75])
+        self.assertEqual(sum(staff.split_duration(3.25)), 3.25)
+
+    def test_an_empty_gap_is_filled_with_nothing(self):
+        """
+        Un hueco de cero no se rellena.
+
+        Devolviendo una figura de duración cero, cada nota escrita al
+        principio de una voz vacía dejaba delante un silencio invisible que
+        después aparecía en la lista.
+        """
+        import staff
+        self.assertEqual(staff.split_duration(0.0), [])
+
+
+class TestInstrumentSample(unittest.TestCase):
+    """
+    El timbre del experimentador, guardado como muestra de sampler.
+
+    Un WAV suelto es un sonido que dura lo que dura. Lo que lo convierte en
+    el timbre de un instrumento es el trozo `smpl`: qué nota representa y
+    qué tramo se repite. Y el tramo que se repite tiene que empalmar sin que
+    se oiga, o el instrumento chasquea en cada vuelta.
+    """
+
+    def _written(self, spectrum):
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "timbre.wav")
+            start, end = harmonics.write_instrument(path, spectrum)
+            with open(path, "rb") as handle:
+                data = handle.read()
+        return data, start, end
+
+    def test_the_file_says_which_note_it_is_and_what_repeats(self):
+        spectrum = harmonics.build("Diente de sierra", 57)
+        data, start, end = self._written(spectrum)
+        self.assertTrue(data.startswith(b"RIFF"))
+        self.assertIn(b"smpl", data)
+        chunk = data[data.index(b"smpl") + 8:]
+        unity = struct.unpack_from("<I", chunk, 12)[0]
+        self.assertEqual(unity, 57)
+        loop_start, loop_end = struct.unpack_from("<II", chunk, 36 + 8)
+        self.assertEqual((loop_start, loop_end), (start, end))
+
+    def test_the_loop_joins_without_a_click(self):
+        """
+        La muestra que sigue al final del bucle tiene que ser la del comienzo.
+
+        Es la definición de que el bucle cierre: si no coinciden, el sampler
+        salta y se oye un chasquido cada vuelta. Se prueba con vibrato y
+        trémolo encendidos, que es donde cerraba mal --- una frecuencia que
+        se estira no vuelve a la misma fase.
+        """
+        spectrum = harmonics.build("Diente de sierra", 57)
+        spectrum.vibrato_cents = 22.0
+        spectrum.tremolo_depth = 0.5
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "timbre.wav")
+            start, end = harmonics.write_instrument(path, spectrum)
+            with wave.open(path, "rb") as handle:
+                frames = handle.readframes(handle.getnframes())
+        samples = struct.unpack("<%dh" % (len(frames) // 2), frames)
+        self.assertEqual(samples[start], samples[end + 1])
+
+    def test_a_silent_spectrum_still_writes_a_file(self):
+        spectrum = harmonics.build("Diente de sierra", 57)
+        for partial in spectrum.partials:
+            partial.muted = True
+        data, start, end = self._written(spectrum)
+        self.assertIn(b"data", data)
+        self.assertGreater(end, start)
+
+
+class TestAnalysisChordCoverage(unittest.TestCase):
+    """
+    Que todos los acordes que hay se lean, y sólo cuando hay acordes.
+
+    El piso de tres es lo que impide inventar armonía a partir de una voz o
+    dos. Puesto en el lugar equivocado ---en cada tiempo, o contando alturas
+    en vez de voces--- hace lo contrario de lo que promete: se come acordes
+    que están escritos.
+    """
+
+    def _voices(self, lines):
+        names = ("Bajo", "Tenor", "Alto", "Soprano")
+        return analysis.Score(parts=[_line(line, name)
+                                     for name, line in zip(names, lines)
+                                     if line])
+
+    def test_a_chorale_that_doubles_the_root_still_has_chords(self):
+        """
+        Cuatro voces, la fundamental doblada y la quinta omitida.
+
+        Es la textura más común que hay y en ninguna vertical llegan a sonar
+        tres alturas distintas. Contando alturas en vez de voces, la pieza
+        entera se quedaba sin una sola lectura.
+        """
+        result = analysis.analyse(self._voices([
+            [(48, 1.0), (53, 1.0), (43, 1.0)],
+            [(60, 1.0), (65, 1.0), (55, 1.0)],
+            [(64, 1.0), (69, 1.0), (62, 1.0)],
+            [(72, 1.0), (77, 1.0), (67, 1.0)]]))
+        self.assertEqual(_symbols(result), ["C", "F", "G"])
+
+    def test_every_beat_gets_its_chord_even_if_the_bass_stops(self):
+        """
+        El bajo canta una nota y las otras tres siguen cambiando.
+
+        Cada tiempo tiene su acorde. Aplicando el piso tiempo por tiempo, los
+        tiempos flacos se le sumaban al anterior y el compás entero salía
+        cifrado una sola vez.
+        """
+        result = analysis.analyse(self._voices([
+            [(43, 2.0)],
+            [(59, 1.0), (60, 1.0), (62, 1.0)],
+            [(65, 1.0), (64, 1.0), (65, 1.0)],
+            [(71, 1.0), (72, 1.0), (74, 1.0)]]))
+        self.assertEqual(len(result.segments), 3)
+
+    def test_one_or_two_voices_are_not_named(self):
+        for lines in ([[(48, 1.0), (50, 1.0)]],
+                      [[(48, 1.0), (50, 1.0)], [(60, 1.0), (64, 1.0)]]):
+            result = analysis.analyse(self._voices(lines))
+            self.assertEqual(result.segments, [], lines)
+
+    def test_the_third_and_the_fifth_are_taken_for_granted(self):
+        """
+        Una séptima sin quinta se cifra 7, y una tríada sin quinta, nada.
+
+        El continuista toca la tercera y la quinta sin que nadie se las
+        escriba. Apilando los números que sobreviven salían cifras como
+        "7/3", que no existen.
+
+        `None` es "sin accidente"; un número es la alteración **escrita** de
+        esa nota, y el cero es el becuadro.
+        """
+        self.assertEqual(analysis._abbreviate({3: None, 7: None}), "7")
+        self.assertEqual(analysis._abbreviate({5: None, 7: None}), "7")
+        self.assertEqual(analysis._abbreviate({3: None}), "")
+        self.assertEqual(analysis._abbreviate({3: None, 5: None}), "")
+        self.assertEqual(analysis._abbreviate({3: None, 6: None}), "6")
+
+    def test_a_figure_carries_the_accidental_that_gets_written(self):
+        """
+        Y no la diferencia con la armadura.
+
+        Una nota natural en una armadura de bemoles está subida respecto de
+        la armadura y se escribe con becuadro: cifrarla con sostenido ---que
+        es lo que dice la diferencia--- llena de sostenidos una pieza que no
+        tiene ninguno.
+        """
+        figure = analysis._abbreviate({6: None, 3: 0})
+        self.assertIn(analysis.NATURAL_SIGN, figure)
+        self.assertNotIn(analysis.SHARP_SIGN, figure)
+        self.assertEqual(analysis._sign(1), analysis.SHARP_SIGN)
+        self.assertEqual(analysis._sign(-1), analysis.FLAT_SIGN)
+        self.assertEqual(analysis._sign(0), analysis.NATURAL_SIGN)
+
+    def test_the_four_inversions_are_figured_as_they_are_written(self):
+        """Un coral a cuatro voces, con todas las inversiones."""
+        chords = [(48, 64, 67, 72), (52, 60, 67, 72), (55, 60, 64, 72),
+                  (43, 62, 65, 71), (47, 62, 65, 67), (53, 62, 67, 71),
+                  (48, 64, 67, 72)]
+        result = analysis.analyse(self._voices(
+            [[(chord[voice], 2.0) for chord in chords] for voice in range(4)]))
+        self.assertEqual([segment.figure for segment in result.segments],
+                         ["", "6", "6/4", "7", "6/5", "4/2", ""])
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

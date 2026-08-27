@@ -79,6 +79,73 @@ def parse_pitch_class(text: str) -> int:
     return (LETTER_SEMITONES[letter] + _ACCIDENTAL_VALUES[accidental]) % 12
 
 
+#: En qué orden altera una armadura a las letras.
+SHARP_ORDER = ("F", "C", "G", "D", "A", "E", "B")
+FLAT_ORDER = ("B", "E", "A", "D", "G", "C", "F")
+
+
+def key_alterations(fifths: int) -> Dict[str, int]:
+    """Qué le hace una armadura a cada letra: +1, -1 o nada."""
+    marks = {letter: 0 for letter in LETTER_SEMITONES}
+    if fifths > 0:
+        for letter in SHARP_ORDER[:min(7, fifths)]:
+            marks[letter] = 1
+    elif fifths < 0:
+        for letter in FLAT_ORDER[:min(7, -fifths)]:
+            marks[letter] = -1
+    return marks
+
+
+def spell_in_key(midi: int, fifths: int) -> Tuple[str, int, int]:
+    """
+    Cómo se escribe una altura en una armadura dada.
+
+    Devuelve (letra, alteración, octava), igual que :func:`spell_pitch`, pero
+    decidido por la **armadura** y no por el acorde. Es lo que hace falta
+    cuando lo que se escribe no lo produjo el motor sino que ya venía
+    escrito: una pieza analizada en Fa mayor tiene un si bemol porque la
+    armadura lo dice, y deducirlo del acorde que suene encima la llenaba de
+    sostenidos que nadie tocó.
+
+    Lo que está en la escala se escribe con su letra; lo cromático se
+    escribe alterando la letra más cercana, con el signo hacia el que
+    apunta la armadura --- sostenido en las armaduras de sostenidos, bemol
+    en las de bemoles.
+    """
+    marks = key_alterations(fifths)
+    pc = midi % 12
+    step_letter, alteration = "", 0
+    for letter in "CDEFGAB":
+        if (LETTER_SEMITONES[letter] + marks[letter]) % 12 == pc:
+            step_letter, alteration = letter, marks[letter]
+            break
+    else:
+        towards = 1 if fifths >= 0 else -1
+        best = None
+        for letter in "CDEFGAB":
+            written = (pc - LETTER_SEMITONES[letter] + 6) % 12 - 6
+            if abs(written - marks[letter]) > 2:
+                continue
+            # Primero la letra que menos hay que alterar --- un fa en Sol
+            # mayor se escribe fa becuadro y no mi sostenido --- y entre dos
+            # que cuestan lo mismo, la que se altera hacia donde va la
+            # armadura.
+            cost = (abs(written),
+                    0 if written * towards >= 0 else 1)
+            if best is None or cost < best[0]:
+                best = (cost, letter, written)
+        if best is None:                        # no puede pasar; red de red
+            return spell_pitch(midi, "C", pc, None)
+        _cost, step_letter, alteration = best
+
+    octave = octave_of(midi)
+    if step_letter == "B" and alteration > 0 and pc == 0:
+        octave -= 1
+    elif step_letter == "C" and alteration < 0 and pc == 11:
+        octave += 1
+    return step_letter, alteration, octave
+
+
 def spell_pitch(
     midi: int,
     root_letter: str,

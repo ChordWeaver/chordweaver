@@ -104,6 +104,11 @@ class Line:
     #: la que estuviera puesta, que es lo que corresponde cuando el que habla
     #: es el narrador y el personaje no hizo nada.
     pose: str = ""
+    #: Cuánto más despacio que de costumbre se escribe esta línea. 1 es la
+    #: velocidad del personaje; 2 es la mitad de rápido. Es del renglón y no
+    #: del personaje porque la velocidad es actuación y no timbre: el mismo
+    #: que en una escena habla normal, en otra se toma su tiempo.
+    drag: float = 1.0
 
 
 @dataclass(frozen=True)
