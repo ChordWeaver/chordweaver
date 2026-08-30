@@ -27,10 +27,18 @@ import os as _os
 import tempfile as _tempfile
 
 from engine import history as _history
+from engine import i18n as _i18n
 
 _os.environ.setdefault(
     _history.SANDBOX_VARIABLE,
     _os.path.join(_tempfile.gettempdir(), "chordweaver-uitest-data"))
+
+# Y el idioma queda clavado en el original. Lo que el arnés lee son los
+# rótulos de los widgets ---`labels()` los saca de la ventana viva--- así que
+# una corrida en inglés compararía contra otro texto y fallaría entera sin
+# que nada esté mal. Va acá y no en `Session` porque cualquier script que
+# arme `ChordWeaverApp` a mano importa este módulo primero.
+_i18n.set_language(_i18n.DEFAULT)
 
 import app as A
 from engine import visitors

@@ -35,6 +35,7 @@ from dataclasses import dataclass, field, replace
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from .audio import SAMPLE_RATE, _play_file, midi_to_frequency, write_wav
+from engine.i18n import tr, trf, trs
 
 #: Cuántos armónicos se ofrecen. Doce llega hasta la tercera octava de la
 #: serie, que es donde se termina de ver lo interesante: el séptimo que no

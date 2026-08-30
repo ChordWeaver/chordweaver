@@ -14,6 +14,7 @@ import json
 import math
 import os
 import random
+import re
 import struct
 import sys
 import tempfile
@@ -56,6 +57,8 @@ from engine.theory import (
     spell_pitch,
 )
 from engine.voicing import build_requirement, build_voicing_plan, check_chord_fits
+from engine import i18n, lang
+from engine.lang import audit as lang_audit
 
 
 class TestNoteNames(unittest.TestCase):
@@ -7289,6 +7292,111 @@ class TestAnalysisChordCoverage(unittest.TestCase):
             [[(chord[voice], 2.0) for chord in chords] for voice in range(4)]))
         self.assertEqual([segment.figure for segment in result.segments],
                          ["", "6", "6/4", "7", "6/5", "4/2", ""])
+
+
+class TestLanguages(unittest.TestCase):
+    """
+    Los dos idiomas.
+
+    Lo que se vigila acá no es la calidad de la traducción sino que el
+    mecanismo siga entero: que el catálogo no tenga agujeros, que los huecos
+    con nombre sean los mismos de los dos lados ---un `{compás}` que se
+    pierde en la traducción es un `KeyError` en pantalla--- y que el
+    castellano siga siendo la clave.
+    """
+
+    def setUp(self):
+        self.addCleanup(i18n.set_language, i18n.DEFAULT)
+
+    def test_the_default_language_is_the_one_it_is_written_in(self):
+        i18n.set_language(i18n.DEFAULT)
+        self.assertTrue(i18n.is_default())
+        self.assertEqual(i18n.tr("Aceptar"), "Aceptar")
+
+    def test_an_unknown_language_falls_back_instead_of_failing(self):
+        self.assertEqual(i18n.set_language("klingon"), i18n.DEFAULT)
+        self.assertEqual(i18n.set_language(""), i18n.DEFAULT)
+        self.assertEqual(i18n.set_language(None), i18n.DEFAULT)
+
+    def test_english_translates_and_untranslated_text_passes_through(self):
+        i18n.set_language("en")
+        self.assertEqual(i18n.tr("Aceptar"), "OK")
+        # Lo que no está en el catálogo vuelve tal cual: una pantalla nueva
+        # sale en castellano y no vacía.
+        self.assertEqual(i18n.tr("una cadena que no existe"),
+                         "una cadena que no existe")
+
+    def test_the_catalogue_has_no_holes(self):
+        """
+        Todo lo que el programa dibuja tiene su entrada, y no sobra ninguna.
+
+        Es la misma cuenta que hace `python -m engine.lang.audit`, corrida
+        acá para que agregar una pantalla sin traducirla falle.
+        """
+        missing, orphans, _source = lang_audit.compare("en")
+        self.assertEqual(missing, [], "faltan traducciones")
+        self.assertEqual(orphans, [], "sobran traducciones")
+
+    def test_every_hole_survives_the_translation(self):
+        """
+        Los `{nombre}` de una plantilla son los mismos en los dos idiomas.
+
+        Traducir es reordenar, y reordenando es fácil perder un hueco o
+        inventar uno. Cualquiera de las dos cosas revienta en `format` justo
+        cuando el usuario mira la pantalla.
+        """
+        holes = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)[^}]*\}")
+        for spanish, english in lang.catalog("en").items():
+            self.assertEqual(sorted(set(holes.findall(spanish))),
+                             sorted(set(holes.findall(english))),
+                             "los huecos no coinciden en %r" % spanish)
+
+    def test_a_menu_reads_back_in_spanish(self):
+        """
+        `untr` deshace lo que `trs` hizo.
+
+        Es lo que permite traducir un desplegable sin tocar una sola de las
+        comparaciones del programa, que están escritas contra el castellano.
+        """
+        i18n.set_language("en")
+        for spanish in ("Ignorar", "Obligatorio", "Sólo MIDI",
+                        harmony.MODES["major"].label):
+            self.assertEqual(i18n.untr(i18n.tr(spanish)), spanish)
+
+    def test_note_names_follow_the_language(self):
+        """Solfeo en castellano, letras en inglés."""
+        i18n.set_language(i18n.DEFAULT)
+        self.assertEqual(i18n.note_name(6), "Fa#")
+        self.assertEqual(i18n.note_name(10, prefer_flats=True), "Sib")
+        self.assertEqual(i18n.say_letter("G"), "Sol")
+        i18n.set_language("en")
+        self.assertEqual(i18n.note_name(6), "F#")
+        self.assertEqual(i18n.note_name(10, prefer_flats=True), "Bb")
+        self.assertEqual(i18n.say_letter("G"), "G")
+
+    def test_marking_a_string_does_not_translate_it(self):
+        """`N` es una marca para la herramienta, no una traducción."""
+        i18n.set_language("en")
+        self.assertEqual(i18n.N("Acordes"), "Acordes")
+
+    def test_the_bold_markers_of_the_book_survive(self):
+        """
+        Los tramos entre `**` se conservan.
+
+        `app._split_lead` parte el párrafo por ahí para escribir la
+        entradilla en su propio renglón; una traducción que se coma las
+        marcas deja el párrafo sin título y con dos asteriscos impresos.
+        """
+        for spanish, english in lang.catalog("en").items():
+            self.assertEqual(spanish.count("**"), english.count("**"),
+                             "las negritas no coinciden en %r" % spanish[:60])
+
+    def test_the_language_is_a_stored_preference(self):
+        self.assertIn("language", history.DEFAULT_SETTINGS)
+        # Vacío y no "es": es lo que hace que el cartel de la primera vez
+        # aparezca una sola vez y no cada vez que alguien elige castellano.
+        self.assertEqual(history.DEFAULT_SETTINGS["language"], "")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

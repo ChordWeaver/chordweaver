@@ -26,6 +26,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from .theory import Chord, ChordTone, ROLE_FIFTH, ROLE_ROOT, ROLE_SEVENTH, ROLE_THIRD
 from .theory import FLAT_NAMES, SHARP_NAMES, ChordParseError, parse_chord
+from engine.i18n import tr, trf, trs
 
 # ---------------------------------------------------------------------------
 # Modes

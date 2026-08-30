@@ -45,6 +45,8 @@ from . import harmony
 from .fitness import direct_perfect_violation, parallel_interval_violation
 from .theory import (FLAT_NAMES, LETTER_SEMITONES, LETTER_STEPS,
                      SHARP_NAMES)
+from engine.i18n import tr, trf, trs
+from engine import i18n
 
 OCTAVE = 12
 TRITONE = 6
@@ -1025,11 +1027,10 @@ def _bass_of(sonorities: Sequence[Sonority],
 # Tonalidad
 # ---------------------------------------------------------------------------
 
-#: Nombres de las notas como se dicen en castellano.
-SPANISH_SHARP = ["Do", "Do#", "Re", "Re#", "Mi", "Fa", "Fa#", "Sol", "Sol#",
-                 "La", "La#", "Si"]
-SPANISH_FLAT = ["Do", "Reb", "Re", "Mib", "Mi", "Fa", "Solb", "Sol", "Lab",
-                "La", "Sib", "Si"]
+#: Cómo se nombran las notas, y lo decide el idioma: el castellano las dice
+#: con solfeo ---Do, Re, Mi--- y el inglés con las letras que el motor ya
+#: usa por dentro. La tabla vive en `engine.i18n` porque no es de acá: la
+#: usan también el analizador y el pentagrama.
 
 #: Cómo se nombra cada modo en el rótulo de la tonalidad.
 MODE_NAMES = {
@@ -1051,7 +1052,8 @@ KEY_CANDIDATE_MODES = (
 
 
 def spanish_note(pc: int, prefer_flats: bool = False) -> str:
-    return (SPANISH_FLAT if prefer_flats else SPANISH_SHARP)[pc % 12]
+    """Cómo se dice esa altura en el idioma en curso."""
+    return i18n.note_name(pc, prefer_flats)
 
 
 @dataclass
@@ -1080,7 +1082,7 @@ class KeyReading:
     @property
     def label(self) -> str:
         return (f"{spanish_note(self.tonic_pc, self.prefer_flats)} "
-                f"{MODE_NAMES.get(self.mode_key, self.mode_key)}")
+                f"{tr(MODE_NAMES.get(self.mode_key, self.mode_key))}")
 
 
 #: La escala de la armadura, como conjunto de clases de altura. Se arma
@@ -1221,7 +1223,8 @@ def detect_key(score: Score,
                        and last.quality not in ("dim", "dim7", "m7b5", "aug"))
             if resting:
                 value += 1.8
-                reasons.append(f"el último acorde es {last.symbol}")
+                reasons.append(trf("el último acorde es {symbol}",
+                                   symbol=last.symbol))
                 major_tonic = 4 in [(pc - tonic_pc) % 12 for pc in last.pitch_classes]
                 # La tercera de Picardía existe en la música tonal en modo
                 # menor y no en los modos: un frigio que termina con la
@@ -1435,8 +1438,9 @@ def label_segment(segment: Segment, key: KeyReading,
         if resolves:
             segment.sus_note = ("la cuarta baja a la tercera sobre la misma "
                                 "fundamental: es una suspensión resuelta")
-            segment.detail = (f"{reading.symbol} resuelve en "
-                              f"{following.reading.symbol}")
+            segment.detail = (trf("{symbol} resuelve en {symbol2}",
+                                  symbol=reading.symbol,
+                                  symbol2=following.reading.symbol))
         else:
             segment.sus_note = ("la cuarta ocupa el lugar de la tercera y no "
                                 "se corrige: queda como sonoridad suspendida")
@@ -1454,7 +1458,8 @@ def label_segment(segment: Segment, key: KeyReading,
         degree = scale.index(reading.root_pc) + 1
         segment.category = "diatónico"
         segment.function = harmony.DEGREE_FUNCTION.get(degree, harmony.SUBDOMINANT)
-        segment.detail = f"{degree}º grado de {key.label}"
+        segment.detail = trf("{degree}º grado de {label}",
+                             degree=degree, label=key.label)
         return
 
     # -- dominante aplicada (interdominante) --------------------------------
@@ -1482,8 +1487,9 @@ def label_segment(segment: Segment, key: KeyReading,
             segment.target_degree = degree
             target_name = spanish_note(target_pc, key.prefer_flats)
             segment.detail = (
-                f"interdominante: es la dominante de {target_name} "
-                f"({numeral}), y "
+                trf("interdominante: es la dominante de {target_name} "
+                    "({numeral}), y ",
+                    target_name=target_name, numeral=numeral)
                 + ("resuelve en él" if arrives else "no llega a resolver"))
             return
 
@@ -1506,8 +1512,9 @@ def label_segment(segment: Segment, key: KeyReading,
                 segment.function = harmony.DOMINANT
                 segment.target_degree = degree
                 segment.detail = (
-                    "sensible aplicada: está un semitono debajo de "
-                    f"{spanish_note(target_pc, key.prefer_flats)} y "
+                    trf("sensible aplicada: está un semitono debajo de "
+                        "{spanish_note} y ",
+                        spanish_note=spanish_note(target_pc, key.prefer_flats))
                     + ("resuelve en él" if arrives else "no llega a resolver"))
                 return
 
@@ -1520,10 +1527,10 @@ def label_segment(segment: Segment, key: KeyReading,
             following.reading.root_pc, key)
         segment.numeral = segment.roman
         segment.function = harmony.DOMINANT
-        segment.detail = ("reemplaza a la dominante de "
-                          f"{spanish_note(following.reading.root_pc, key.prefer_flats)}: "
-                          "comparte con ella la tercera y la séptima y "
-                          "resuelve bajando un semitono")
+        segment.detail = (trf("reemplaza a la dominante de {spanish_note}: "
+                              "comparte con ella la tercera y la séptima y "
+                              "resuelve bajando un semitono",
+                              spanish_note=spanish_note(following.reading.root_pc, key.prefer_flats)))
         return
 
     # -- intercambio modal --------------------------------------------------
@@ -1533,9 +1540,11 @@ def label_segment(segment: Segment, key: KeyReading,
         segment.category = "intercambio modal"
         segment.source_mode = mode_label
         segment.function = _borrowed_function(segment.roman, key, reading)
-        segment.detail = (f"préstamo del {mode_label} de "
-                          f"{spanish_note(key.tonic_pc, key.prefer_flats)}: "
-                          f"ahí es el {degree}º grado")
+        segment.detail = (trf("préstamo del {mode_label} de "
+                              "{spanish_note}: ahí es el {degree}º grado",
+                              mode_label=mode_label,
+                              spanish_note=spanish_note(key.tonic_pc, key.prefer_flats),
+                              degree=degree))
         spec = harmony.BORROWED_CHORDS.get(_borrow_key(segment.roman))
         if spec is not None:
             segment.detail += ". " + spec.description
@@ -1813,9 +1822,9 @@ def quoted_cadences(segments: Sequence[Segment],
             home = anchor == key.tonic_pc
             detail = piece.description
             if not home:
-                detail += (" Acá aparece sobre "
-                           f"{spanish_note(anchor, key.prefer_flats)}, que no "
-                           "es la tónica de la pieza.")
+                detail += (trf(" Acá aparece sobre {spanish_note}, que no "
+                               "es la tónica de la pieza.",
+                               spanish_note=spanish_note(anchor, key.prefer_flats)))
             found.append(Cadence(kind=piece.label.lower(),
                                  index=start + length - 1,
                                  bar_index=window[-1].bar_index,
@@ -1923,7 +1932,8 @@ def foreign_groups(segments: Sequence[Segment],
             if _is_dominant_chain(segments, start, end):
                 groups.append(ForeignGroup(
                     start=start, end=end,
-                    label=f"cadena de {end - start + 1} dominantes",
+                    label=trf("cadena de {end} dominantes",
+                              end=end - start + 1),
                     detail="cada acorde es la dominante del que le sigue: la "
                            "pieza no se fue de la tonalidad, viene cayendo por "
                            "quintas hasta volver a ella"))
@@ -1937,7 +1947,8 @@ def foreign_groups(segments: Sequence[Segment],
         tonic_pc, mode_key = home
         if tonic_pc == key.tonic_pc and mode_key == key.mode_key:
             continue
-        name = f"{spanish_note(tonic_pc, key.prefer_flats)} {MODE_NAMES[mode_key]}"
+        name = (f"{spanish_note(tonic_pc, key.prefer_flats)} "
+                f"{tr(MODE_NAMES[mode_key])}")
         short = (end - start + 1) <= TONICISATION_LIMIT
         groups.append(ForeignGroup(
             start=start, end=end,
@@ -2218,17 +2229,20 @@ def counterpoint(score: Score,
             if low > high:
                 findings.append(Finding(
                     kind="cruce", label="Cruce de voces",
-                    detail=(f"{_voice_name(names, voice)} canta por encima de "
-                            f"{_voice_name(names, voice + 1)}"),
+                    detail=(trf("{voice_name} canta por encima de "
+                                "{voice_name2}",
+                                voice_name=_voice_name(names, voice),
+                                voice_name2=_voice_name(names, voice + 1))),
                     severity="grave", index=index,
                     bar_index=sonority.bar_index, offset=sonority.offset,
                     voices=(voice, voice + 1)))
             elif low == high:
                 findings.append(Finding(
                     kind="unisono", label="Unísono entre voces vecinas",
-                    detail=(f"{_voice_name(names, voice)} y "
-                            f"{_voice_name(names, voice + 1)} caen en la misma "
-                            "nota: la textura pierde una voz"),
+                    detail=(trf("{voice_name} y {voice_name2} caen en la "
+                                "misma nota: la textura pierde una voz",
+                                voice_name=_voice_name(names, voice),
+                                voice_name2=_voice_name(names, voice + 1))),
                     severity="nota", index=index,
                     bar_index=sonority.bar_index, offset=sonority.offset,
                     voices=(voice, voice + 1)))
@@ -2248,9 +2262,10 @@ def counterpoint(score: Score,
             if abs(move) == TRITONE:
                 findings.append(Finding(
                     kind="salto_tritono", label="Salto de trítono",
-                    detail=(f"{_voice_name(names, a)} salta un trítono: es el "
-                            "salto más difícil de cantar y la escritura vocal "
-                            "lo evita"),
+                    detail=(trf("{voice_name} salta un trítono: es el "
+                                "salto más difícil de cantar y la "
+                                "escritura vocal lo evita",
+                                voice_name=_voice_name(names, a))),
                     severity="aviso", index=index,
                     bar_index=sonority.bar_index, offset=sonority.offset,
                     voices=(a,)))
@@ -2262,16 +2277,20 @@ def counterpoint(score: Score,
                     if following.pitches[a] > sonority.pitches[b]:
                         findings.append(Finding(
                             kind="solapamiento", label="Solapamiento",
-                            detail=(f"{_voice_name(names, a)} sube por encima "
-                                    f"de donde estaba {_voice_name(names, b)}"),
+                            detail=(trf("{voice_name} sube por encima de "
+                                        "donde estaba {voice_name2}",
+                                        voice_name=_voice_name(names, a),
+                                        voice_name2=_voice_name(names, b))),
                             severity="aviso", index=index,
                             bar_index=sonority.bar_index,
                             offset=sonority.offset, voices=(a, b)))
                     elif following.pitches[b] < sonority.pitches[a]:
                         findings.append(Finding(
                             kind="solapamiento", label="Solapamiento",
-                            detail=(f"{_voice_name(names, b)} baja por debajo "
-                                    f"de donde estaba {_voice_name(names, a)}"),
+                            detail=(trf("{voice_name} baja por debajo de "
+                                        "donde estaba {voice_name2}",
+                                        voice_name=_voice_name(names, b),
+                                        voice_name2=_voice_name(names, a))),
                             severity="aviso", index=index,
                             bar_index=sonority.bar_index,
                             offset=sonority.offset, voices=(a, b)))
@@ -2349,9 +2368,10 @@ def counterpoint(score: Score,
                     kind="quintas_paralelas" if fifth else "octavas_paralelas",
                     label=("Quintas paralelas" if fifth
                            else "Octavas paralelas"),
-                    detail=(f"{_voice_name(names, a)} y "
-                            f"{_voice_name(names, b)} se mueven en la misma "
-                            "dirección conservando "
+                    detail=(trf("{voice_name} y {voice_name2} se mueven en "
+                                "la misma dirección conservando ",
+                                voice_name=_voice_name(names, a),
+                                voice_name2=_voice_name(names, b))
                             + ("la quinta justa" if fifth else "la octava")
                             + ("" if real else ", pero entre notas de "
                                "adorno y no entre acordes")),
@@ -2812,10 +2832,14 @@ def _classify(note: Note, previous: Optional[Note], following: Optional[Note],
     if step_in and step_out and departure == -approach:
         if note.duration <= MORDENT_MAX:
             return "mordente", "golpe a la nota vecina y vuelta inmediata"
+        # Los dos renglones enteros y no pegados de a pedazos: «hacia
+        # arriba» y «hacia abajo» quedan en el medio de la frase, y en otro
+        # idioma el medio de una frase no cae en el mismo lugar.
         return ("bordadura",
-                "se aparta por grado conjunto "
-                + ("hacia arriba" if approach > 0 else "hacia abajo")
-                + " y vuelve a la misma nota")
+                "se aparta por grado conjunto hacia arriba y vuelve a la "
+                "misma nota" if approach > 0 else
+                "se aparta por grado conjunto hacia abajo y vuelve a la "
+                "misma nota")
 
     if abs(approach) >= 3 and step_out and (approach > 0) != (departure > 0):
         if accented:
@@ -2851,8 +2875,9 @@ def _pedal(note: Note, segments: Sequence[Segment], voice: int) -> Optional[str]
                if s.reading is not None and not s.reading.contains(note.pitch)]
     if not foreign:
         return None
-    return (f"se sostiene durante {len(covered)} acordes y no pertenece a "
-            f"{len(foreign)} de ellos")
+    return (trf("se sostiene durante {covered} acordes y no pertenece a "
+                "{foreign} de ellos",
+                covered=len(covered), foreign=len(foreign)))
 
 
 def _turns(part: Part, voice: int, score: Score,
@@ -3041,8 +3066,9 @@ def analyse(score: Score) -> Analysis:
 
     if key.confidence < 0.35:
         warnings.append(
-            "La tonalidad no está clara: "
-            f"{key.label} es la lectura más probable, pero hay otras cerca.")
+            trf("La tonalidad no está clara: {label} es la lectura más "
+                "probable, pero hay otras cerca.",
+                label=key.label))
 
     return Analysis(score=ordered, key=key, sonorities=sonorities,
                     segments=segments, cadences=cadences, groups=groups,

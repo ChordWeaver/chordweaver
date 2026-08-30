@@ -36,6 +36,7 @@ from .voicing import (
     check_chord_fits,
     strip_special_voicings,
 )
+from engine.i18n import tr, trf, trs
 
 #: Durations offered in the UI, expressed in quarter notes.
 DURATION_CHOICES: Dict[str, float] = {
@@ -208,7 +209,8 @@ def build_slots(request: JobRequest) -> Tuple[List[ChordSlot], List[str], List[s
         try:
             chord = entry.to_chord()
         except ChordParseError as exc:
-            errors.append(f"Acorde {position}: {exc}")
+            errors.append(trf("Acorde {position}: {reason}",
+                              position=position, reason=exc))
             continue
 
         if not allow_special:
@@ -217,9 +219,13 @@ def build_slots(request: JobRequest) -> Tuple[List[ChordSlot], List[str], List[s
         advice = check_chord_fits(chord, request.voice_count)
         if not advice.fits:
             if advice.suggested_omissions:
-                warnings.append(f"Acorde {position}: {advice.message}")
+                warnings.append(trf("Acorde {position}: {reason}",
+                                    position=position,
+                                    reason=tr(advice.message)))
             else:
-                errors.append(f"Acorde {position}: {advice.message}")
+                errors.append(trf("Acorde {position}: {reason}",
+                                  position=position,
+                                  reason=tr(advice.message)))
                 continue
 
         requirement = build_requirement(
@@ -236,8 +242,10 @@ def build_slots(request: JobRequest) -> Tuple[List[ChordSlot], List[str], List[s
         locked = entry.locked_pitches
         if locked and len(locked) != request.voice_count:
             warnings.append(
-                f"Acorde {position}: el candado fija {len(locked)} notas "
-                f"pero hay {request.voice_count} voces, así que se ignoró."
+                trf("Acorde {position}: el candado fija {locked} notas "
+                    "pero hay {voice_count} voces, así que se ignoró.",
+                    position=position, locked=len(locked),
+                    voice_count=request.voice_count)
             )
             locked = None
 

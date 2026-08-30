@@ -279,6 +279,12 @@ _SETTINGS_FILENAME = "settings.json"
 
 #: What a fresh installation starts from.
 DEFAULT_SETTINGS: Dict[str, Any] = {
+    #: En qué idioma habla el programa. Vacío quiere decir «todavía no lo
+    #: eligió nadie», que es lo que hace que el cartel de la primera vez
+    #: aparezca una sola vez en la vida de una instalación --- y no cada vez
+    #: que alguien lo deja en castellano, que es lo que pasaría si el valor
+    #: de fábrica fuera "es".
+    "language": "",
     "population_size": 200,
     "generations": 300,
     "elitism": 2,

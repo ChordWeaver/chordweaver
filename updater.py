@@ -37,6 +37,7 @@ import customtkinter as ctk
 
 from engine import __version__ as APP_VERSION
 from engine import updates
+from engine.i18n import tr, trf, trs
 
 #: Cuánto se espera a la consulta antes de abrir la ventana igual. Corre
 #: desde que arrancó el programa, así que casi siempre ya está contestada
@@ -128,7 +129,7 @@ def notice(release: updates.Release, colours: Dict[str, str],
                         border_width=1, border_color=colours["border"])
     caja.pack(fill="both", expand=True, padx=16, pady=16)
 
-    ctk.CTkLabel(caja, text="Hay una versión nueva",
+    ctk.CTkLabel(caja, text=tr("Hay una versión nueva"),
                  font=fuente(("Segoe UI Semibold", 20)),
                  text_color=colours["text"]).pack(anchor="w", padx=26,
                                                   pady=(24, 2))
@@ -146,9 +147,9 @@ def notice(release: updates.Release, colours: Dict[str, str],
                                                       pady=(0, 10))
 
     ctk.CTkLabel(caja,
-                 text="Tu progreso no se pierde: los logros, el libro, el "
-                      "sendero y el historial se copian a la carpeta nueva. "
-                      "La página explica cómo.",
+                 text=tr("Tu progreso no se pierde: los logros, el libro, el "
+                         "sendero y el historial se copian a la carpeta nueva. "
+                         "La página explica cómo."),
                  justify="left", anchor="w", wraplength=WIDTH - 90,
                  font=fuente(("Segoe UI", 12)),
                  text_color=colours["muted"]).pack(anchor="w", padx=26,
@@ -197,13 +198,13 @@ def notice(release: updates.Release, colours: Dict[str, str],
             seguir["valor"] = True
         cerrar()
 
-    ctk.CTkButton(botones, text="Actualizar", width=150, height=38,
+    ctk.CTkButton(botones, text=tr("Actualizar"), width=150, height=38,
                   corner_radius=10, font=fuente(("Segoe UI Semibold", 13)),
                   fg_color=colours["accent"],
                   hover_color=colours["accent_hover"],
                   text_color="#0C1016",
                   command=actualizar).pack(side="left")
-    ctk.CTkButton(botones, text="Ahora no", width=120, height=38,
+    ctk.CTkButton(botones, text=tr("Ahora no"), width=120, height=38,
                   corner_radius=10, font=fuente(("Segoe UI", 13)),
                   fg_color="transparent", border_width=1,
                   border_color=colours["border"],

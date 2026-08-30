@@ -54,6 +54,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from . import history
 from .story import DEVIL, Line, NARRATOR
+from engine.i18n import tr, trf, trs
 
 _FILENAME = "visitors.json"
 

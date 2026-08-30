@@ -59,6 +59,7 @@ from .achievements import BLUES_PACT, first_match, matched_tonics
 from .theory import (ROLE_FIFTH, ROLE_ROOT, ROLE_SEVENTH, SHARP_NAMES,
                      Chord, build_voice_parts, parse_chord)
 from .voicing import build_requirement
+from engine.i18n import tr, trf, trs
 
 _FILENAME = "story.json"
 
@@ -1372,9 +1373,10 @@ def blues_piece(tonic_pc: int) -> Piece:
         melody=melody,
         tops=tuple(tops),
         quarter_seconds=0.34,
-        blurb=f"Blues de doce compases en {SHARP_NAMES[tonic_pc % 12]}, "
-              f"con la nota azul en la melodía. "
-              f"{int(per_bar)} tiempos por compás.",
+        blurb=trf("Blues de doce compases en {SHARP_NAMES}, con la nota "
+                  "azul en la melodía. {per_bar} tiempos por compás.",
+                  SHARP_NAMES=SHARP_NAMES[tonic_pc % 12],
+                  per_bar=int(per_bar)),
     )
 
 

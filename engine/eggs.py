@@ -37,6 +37,7 @@ from datetime import datetime
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from . import history
+from engine.i18n import tr, trf, trs
 
 _FILENAME = "eggs.json"
 

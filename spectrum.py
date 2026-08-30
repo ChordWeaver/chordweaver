@@ -33,6 +33,8 @@ from typing import Callable, Dict, List, Optional, Tuple
 import customtkinter as ctk
 
 from engine import harmonics
+from engine.i18n import N, tr, trf, trs
+from engine import i18n
 from engine.theory import SHARP_NAMES
 
 #: Medidas del gráfico. El alto es lo único que no se estira: una barra
@@ -89,10 +91,14 @@ SOLFEGE = {"C": "do", "C#": "do♯", "D": "re", "D#": "re♯", "E": "mi",
 
 
 def note_label(midi: int) -> str:
-    """``la3``, en castellano y con su octava."""
+    """``la3`` o ``A3``, según el idioma, y con su octava."""
     if midi <= 0:
         return ""
     name = SHARP_NAMES[midi % 12]
+    # En inglés la letra ya es el nombre; en castellano se dice con solfeo
+    # y en minúscula, que es como se nombra una altura concreta.
+    if i18n.language() == "en":
+        return f"{name}{midi // 12 - 1}"
     return f"{SOLFEGE.get(name, name)}{midi // 12 - 1}"
 
 
@@ -105,21 +111,28 @@ def hz_label(frequency: float) -> str:
     decimal puesta del otro lado.
     """
     if frequency >= 1000.0:
-        return f"{frequency:.0f} Hz"
-    return f"{frequency:.1f}".replace(".", ",") + " Hz"
+        return trf("{frequency:.0f} Hz", frequency=frequency)
+    # La coma decimal es del castellano; en inglés el separador es el punto.
+    written = f"{frequency:.1f}"
+    if i18n.language() != "en":
+        written = written.replace(".", ",")
+    return written + " Hz"
 
 
 def cents_label(cents: float) -> str:
     """``+2¢``, ``−14¢``, o vacío cuando la nota cae justo."""
     if abs(cents) < 0.5:
-        return "justo"
+        return tr("justo")
     return f"{'+' if cents > 0 else '−'}{abs(cents):.0f}¢"
 
 
-#: Cómo se llama cada distancia dentro de una octava, en semitonos.
-INTERVALS = ("unísono", "2ª menor", "2ª mayor", "3ª menor", "3ª mayor",
-             "4ª justa", "tritono", "5ª justa", "6ª menor", "6ª mayor",
-             "7ª menor", "7ª mayor")
+#: Cómo se llama cada distancia dentro de una octava, en semitonos. Van
+#: marcadas con `N` porque las traduce `interval_label` al dibujarlas, lejos
+#: de acá: sin la marca, la herramienta que junta las claves no las ve.
+INTERVALS = (
+    N("unísono"), N("2ª menor"), N("2ª mayor"), N("3ª menor"), N("3ª mayor"),
+    N("4ª justa"), N("tritono"), N("5ª justa"), N("6ª menor"), N("6ª mayor"),
+    N("7ª menor"), N("7ª mayor"))
 
 
 def interval_label(semitones: int) -> str:
@@ -134,12 +147,13 @@ def interval_label(semitones: int) -> str:
     dice corrido --- que es exactamente lo que uno quiere ver al correrlo.
     """
     if semitones <= 0:
-        return INTERVALS[0]
+        return tr(INTERVALS[0])
     octaves, rest = divmod(int(semitones), 12)
-    name = INTERVALS[rest]
+    name = tr(INTERVALS[rest])
     if not octaves:
         return name
-    span = "1 octava" if octaves == 1 else f"{octaves} octavas"
+    span = tr("1 octava") if octaves == 1 else trf("{octaves} octavas",
+                                                   octaves=octaves)
     return span if rest == 0 else f"{span} + {name}"
 
 
@@ -206,11 +220,11 @@ class Experimenter(ctk.CTkFrame):
         colours = self.colours
         head = ctk.CTkFrame(self, fg_color="transparent")
         head.pack(fill="x", padx=18, pady=(14, 0))
-        ctk.CTkLabel(head, text="Una nota, desarmada",
+        ctk.CTkLabel(head, text=tr("Una nota, desarmada"),
                      font=self._font(("Segoe UI Semibold", 17))
                      ).pack(side="left")
         self.play_button = ctk.CTkButton(
-            head, text="▶  Escuchar", width=128, height=34, corner_radius=9,
+            head, text=tr("▶  Escuchar"), width=128, height=34, corner_radius=9,
             font=self._font(("Segoe UI", 13)), fg_color=colours["accent"],
             hover_color=colours["accent_hover"], command=self.play)
         self.play_button.pack(side="right")
@@ -218,7 +232,7 @@ class Experimenter(ctk.CTkFrame):
         # «Escuchar» porque es la misma acción mirada de lejos: una es oírlo
         # acá y la otra es oírlo en otro lado.
         self.save_button = ctk.CTkButton(
-            head, text="Guardar timbre…", width=140, height=34,
+            head, text=tr("Guardar timbre…"), width=140, height=34,
             corner_radius=9, font=self._font(("Segoe UI", 12)),
             fg_color="transparent", border_width=1,
             border_color=colours["border"], text_color=colours["muted"],
@@ -231,17 +245,17 @@ class Experimenter(ctk.CTkFrame):
         # para sus entradillas.
         intro = ctk.CTkLabel(
             self,
-            text="Ninguna cosa que suena da una frecuencia sola: da la suya y "
-                 "además sus múltiplos enteros. Cada barra es uno de esos "
-                 "múltiplos.",
+            text=tr("Ninguna cosa que suena da una frecuencia sola: da la suya y "
+                    "además sus múltiplos enteros. Cada barra es uno de esos "
+                    "múltiplos."),
             font=self._font(("Segoe UI", 11)), text_color=colours["muted"],
             justify="left", anchor="w")
         intro.pack(fill="x", padx=18, pady=(4, 1))
         self._wrapping(intro)
         how = ctk.CTkLabel(
             self,
-            text="Arrastrala para arriba y la amplificás; para el costado, "
-                 "la corrés de su lugar exacto y la desafinás.",
+            text=tr("Arrastrala para arriba y la amplificás; para el costado, "
+                    "la corrés de su lugar exacto y la desafinás."),
             font=self._font(("Segoe UI Semibold", 11)),
             text_color=colours["text"], justify="left", anchor="w")
         how.pack(fill="x", padx=18, pady=(0, 8))
@@ -286,16 +300,16 @@ class Experimenter(ctk.CTkFrame):
         self._caption(mandos, "Todos a la vez")
         recipe = ctk.CTkFrame(mandos, fg_color="transparent")
         recipe.pack(fill="x", pady=(0, 4))
-        ctk.CTkLabel(recipe, text="Forma de onda",
+        ctk.CTkLabel(recipe, text=tr("Forma de onda"),
                      font=self._font(("Segoe UI", 11)), width=76, anchor="w",
                      text_color=colours["muted"]).pack(side="left")
         self.preset_menu = ctk.CTkOptionMenu(
-            recipe, values=list(harmonics.PRESET_NAMES), width=176, height=28,
+            recipe, values=trs(harmonics.PRESET_NAMES), width=176, height=28,
             font=self._font(("Segoe UI", 11)), corner_radius=8,
             fg_color=colours["surface"], button_color=colours["surface"],
             button_hover_color=colours["accent"],
             command=self._chose_preset)
-        self.preset_menu.set(self.preset_name)
+        self.preset_menu.set(tr(self.preset_name))
         self.preset_menu.pack(side="left")
 
         self.vibrato = self._slider(mandos, "Vibrato", "la afinación oscila",
@@ -321,7 +335,7 @@ class Experimenter(ctk.CTkFrame):
             text_color=colours["muted"])
         self.fundamental_label.pack(side="left")
         ctk.CTkButton(
-            foot, text="Reiniciar", width=90, height=28, corner_radius=8,
+            foot, text=tr("Reiniciar"), width=90, height=28, corner_radius=8,
             font=self._font(("Segoe UI", 11)), fg_color="transparent",
             border_width=1, border_color=colours["border"],
             text_color=colours["muted"], hover_color=colours["surface"],
@@ -329,7 +343,7 @@ class Experimenter(ctk.CTkFrame):
 
     def _caption(self, master, text: str) -> None:
         """El rotulito que encabeza un grupo de mandos."""
-        ctk.CTkLabel(master, text=text.upper(),
+        ctk.CTkLabel(master, text=tr(text).upper(),
                      font=self._font(("Segoe UI Semibold", 9)),
                      text_color=self.colours["faint"], anchor="w"
                      ).pack(anchor="w", pady=(0, 5))
@@ -376,7 +390,7 @@ class Experimenter(ctk.CTkFrame):
 
     def _chip(self, master, text: str, command) -> ctk.CTkButton:
         button = ctk.CTkButton(
-            master, text=text, width=88, height=26, corner_radius=8,
+            master, text=tr(text), width=88, height=26, corner_radius=8,
             font=self._font(("Segoe UI", 11)), fg_color="transparent",
             border_width=1, border_color=self.colours["border"],
             text_color=self.colours["muted"],
@@ -388,7 +402,7 @@ class Experimenter(ctk.CTkFrame):
                 command) -> ctk.CTkSlider:
         row = ctk.CTkFrame(master, fg_color="transparent")
         row.pack(fill="x", pady=(6, 0))
-        ctk.CTkLabel(row, text=title, font=self._font(("Segoe UI", 11)),
+        ctk.CTkLabel(row, text=tr(title), font=self._font(("Segoe UI", 11)),
                      text_color=self.colours["muted"], width=76, anchor="w"
                      ).pack(side="left")
         slider = ctk.CTkSlider(row, from_=low, to=high, width=176, height=14,
@@ -397,7 +411,7 @@ class Experimenter(ctk.CTkFrame):
                                progress_color=self.colours["accent"])
         slider.set(low)
         slider.pack(side="left")
-        ctk.CTkLabel(row, text=hint, font=self._font(("Segoe UI", 10)),
+        ctk.CTkLabel(row, text=tr(hint), font=self._font(("Segoe UI", 10)),
                      text_color=self.colours["faint"]
                      ).pack(side="left", padx=(12, 0))
         return slider
@@ -440,15 +454,15 @@ class Experimenter(ctk.CTkFrame):
         canvas.create_line(left, floor_y, right, floor_y,
                            fill=colours["muted"])
         canvas.create_line(left, floor_y, left, top, fill=colours["muted"])
-        canvas.create_text(left - 11, (floor_y + top) / 2, text="amplitud",
+        canvas.create_text(left - 11, (floor_y + top) / 2, text=tr("amplitud"),
                            anchor="center", fill=colours["muted"],
                            font=self._font(("Segoe UI", 9)), angle=90)
-        canvas.create_text(right, floor_y + 28, text="frecuencia →",
+        canvas.create_text(right, floor_y + 28, text=tr("frecuencia →"),
                            anchor="e", fill=colours["faint"],
                            font=self._font(("Segoe UI", 9)))
         canvas.create_text(left, floor_y + 28,
-                           text=hz_label(self.spectrum.fundamental)
-                           + "  y sus múltiplos",
+                           text=tr(hz_label(self.spectrum.fundamental)
+                              + "  y sus múltiplos"),
                            anchor="w", fill=colours["faint"],
                            font=self._font(("Segoe UI", 9)))
 
@@ -511,7 +525,7 @@ class Experimenter(ctk.CTkFrame):
                 y = floor_y - max(height, 3.0)
                 canvas.create_oval(x - 5, y - 5, x + 5, y + 5,
                                    outline=colours["text"], width=1)
-            canvas.create_text(x, floor_y + 7, text=str(item.number),
+            canvas.create_text(x, floor_y + 7, text=tr(str(item.number)),
                                anchor="n",
                                fill=(colours["text"] if chosen
                                      else colours["muted"]),
@@ -617,6 +631,9 @@ class Experimenter(ctk.CTkFrame):
         self._refresh_controls()
 
     def _chose_preset(self, name: str) -> None:
+        # El desplegable devuelve el renglón que se ve; lo que se guarda y
+        # con lo que se busca la receta es el nombre castellano.
+        name = i18n.untr(name)
         self.preset_name = name
         harmonics.apply_preset(self.spectrum, name)
         self._redraw()
@@ -704,23 +721,27 @@ class Experimenter(ctk.CTkFrame):
         midi, cents = harmonics.nearest_note(frequency)
         ratio = f"{item.number}:1" if item.number > 1 else "la fundamental"
         self.reading.configure(
-            text=(f"Armónico {item.number:>2}   {hz_label(frequency):>10}"
-                  f"   ≈ {note_label(midi)} {cents_label(cents)}"
-                  f"   ·   {interval_label(midi - self.spectrum.midi)}"))
-        self.gloss.configure(text=self._gloss_for(item, ratio, cents))
+            text=(trf("Armónico {number:>2}   {hz_label:>10}   ≈ "
+                      "{note_label} {cents_label}   ·   {interval_label}",
+                      number=item.number, hz_label=hz_label(frequency),
+                      note_label=note_label(midi),
+                      cents_label=cents_label(cents),
+                      interval_label=interval_label(midi - self.spectrum.midi))))
+        self.gloss.configure(text=tr(self._gloss_for(item, ratio, cents)))
         self.fundamental_label.configure(
-            text=f"Fundamental: {note_label(self.spectrum.midi)} · "
-                 f"{hz_label(base)}")
+            text=trf("Fundamental: {note_label} · {hz_label}",
+                     note_label=note_label(self.spectrum.midi),
+                     hz_label=hz_label(base)))
 
         chosen = self.colours["gold"]
         idle = self.colours["muted"]
         soloed = self.spectrum.solo == item.number
         self.solo_button.configure(
-            text="Aislado" if soloed else "Aislar",
+            text=tr("Aislado" if soloed else "Aislar"),
             text_color=chosen if soloed else idle,
             border_color=chosen if soloed else self.colours["border"])
         self.mute_button.configure(
-            text="Silenciado" if item.muted else "Silenciar",
+            text=tr("Silenciado" if item.muted else "Silenciar"),
             text_color=chosen if item.muted else idle,
             border_color=chosen if item.muted else self.colours["border"])
 
@@ -735,9 +756,11 @@ class Experimenter(ctk.CTkFrame):
         una--- la trampa: el séptimo y el undécimo no existen en el piano.
         """
         if abs(item.shift) > 0.4:
-            return (f"Corrido {cents_label(item.shift)} de su múltiplo "
-                    f"exacto. Contra los demás produce pulsaciones: dos "
-                    f"frecuencias casi iguales se suman y se restan por turno.")
+            return (trf("Corrido {cents_label} de su múltiplo exacto. "
+                        "Contra los demás produce pulsaciones: dos "
+                        "frecuencias casi iguales se suman y se restan por "
+                        "turno.",
+                        cents_label=cents_label(item.shift)))
         meanings = {
             1: "La nota que creés estar oyendo. Casi nunca es la más fuerte.",
             2: "Una octava justa arriba. Duplicar la frecuencia es la única "
@@ -790,40 +813,42 @@ class Experimenter(ctk.CTkFrame):
         path = filedialog.asksaveasfilename(
             title="Guardar el timbre como muestra",
             defaultextension=".wav",
-            initialfile=f"ChordWeaver {self.preset_name} {name}.wav",
+            initialfile=trf("ChordWeaver {preset_name} {name}.wav",
+                            preset_name=self.preset_name, name=name),
             filetypes=[("Muestra de sampler", "*.wav")])
         if not path:
             return
-        self.save_button.configure(text="Guardando…", state="disabled")
+        self.save_button.configure(text=tr("Guardando…"), state="disabled")
         self.update_idletasks()
         try:
             start, end = harmonics.write_instrument(path, self.spectrum)
         except Exception as exc:                            # noqa: BLE001
-            messagebox.showerror("No se pudo guardar", str(exc))
+            messagebox.showerror(tr("No se pudo guardar"), str(exc))
             return
         finally:
             try:
-                self.save_button.configure(text="Guardar timbre…",
+                self.save_button.configure(text=tr("Guardar timbre…"),
                                            state="normal")
             except tk.TclError:
                 pass
         seconds = (end - start + 1) / harmonics.SAMPLE_RATE
         messagebox.showinfo(
-            "Timbre guardado",
-            f"Se guardó {os.path.basename(path)}.\n\n"
-            f"El archivo dice adentro que la muestra es un {name} y que el "
-            f"tramo que se repite dura {seconds:.1f} s, así que cualquier "
-            "sampler que lea WAV —TX16Wx, Kontakt, el AudioFileProcessor de "
-            "LMMS, el Simpler de Live, Polyphone para armar un SoundFont— "
-            "lo toma afinado en todo el teclado y lo sostiene mientras la "
-            "tecla siga apretada.")
+            tr("Timbre guardado"),
+            trf("Se guardó {basename}.\n\nEl archivo dice adentro que la "
+                "muestra es un {name} y que el tramo que se repite dura "
+                "{seconds:.1f} s, así que cualquier sampler que lea WAV "
+                "—TX16Wx, Kontakt, el AudioFileProcessor de LMMS, el "
+                "Simpler de Live, Polyphone para armar un SoundFont— lo "
+                "toma afinado en todo el teclado y lo sostiene mientras la "
+                "tecla siga apretada.",
+                basename=os.path.basename(path), name=name, seconds=seconds))
 
     def play(self) -> None:
         """Tocar lo que se está viendo."""
         if self._sound is not None and self._sound.is_alive():
             return          # de a uno, igual que el resto del programa
         try:
-            self.play_button.configure(text="♪  Sonando", state="disabled")
+            self.play_button.configure(text=tr("♪  Sonando"), state="disabled")
         except tk.TclError:
             pass
         signature = self._signature()
@@ -850,6 +875,6 @@ class Experimenter(ctk.CTkFrame):
             if self._sound is not None and self._sound.is_alive():
                 self.after(period, self._watch_sound)
                 return
-            self.play_button.configure(text="▶  Escuchar", state="normal")
+            self.play_button.configure(text=tr("▶  Escuchar"), state="normal")
         except tk.TclError:
             return

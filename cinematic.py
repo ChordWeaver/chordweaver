@@ -42,6 +42,8 @@ import tkinter as tk
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from engine import ambience, history, story, visitors
+from engine.i18n import tr, trf, trs
+from engine import i18n
 
 # ---------------------------------------------------------------------------
 # Paleta
@@ -629,7 +631,7 @@ class Cutscene(SoundCues):
                                          fill=BLACK, outline="")
             if self.title:
                 self.canvas.create_text(
-                    self.width / 2, 40, text=self.title, fill=GOLD_DEEP,
+                    self.width / 2, 40, text=tr(self.title), fill=GOLD_DEEP,
                     font=self._font(("Georgia", 12)))
             return
         if self.sky == "void":
@@ -667,7 +669,7 @@ class Cutscene(SoundCues):
             self._draw_valley_mist(bands, horizon)
         if self.title:
             self.canvas.create_text(
-                self.width / 2, 40, text=self.title, fill=GOLD_DEEP,
+                self.width / 2, 40, text=tr(self.title), fill=GOLD_DEEP,
                 font=self._font(("Georgia", 12)))
 
     def _draw_void(self) -> None:
@@ -707,7 +709,7 @@ class Cutscene(SoundCues):
                                      fill=BLACK, outline="", stipple="gray75")
         if self.title:
             self.canvas.create_text(
-                self.width / 2, 40, text=self.title, fill=GOLD_DEEP,
+                self.width / 2, 40, text=tr(self.title), fill=GOLD_DEEP,
                 font=self._font(("Georgia", 12)))
 
     # -- el valle -----------------------------------------------------------
@@ -939,7 +941,7 @@ class Cutscene(SoundCues):
         # El texto del sueño va por encima de los párpados: es lo único que
         # se ve mientras están cerrados.
         self.dream_text = self.canvas.create_text(
-            self.width / 2, self.height * 0.46, text=self.dream, fill=BLACK,
+            self.width / 2, self.height * 0.46, text=tr(self.dream), fill=BLACK,
             font=self._font(("Georgia", 23, "italic")),
             width=self.width * 0.66, justify="center", state="hidden")
         self._eyelids(1.0)
@@ -1307,7 +1309,7 @@ class Cutscene(SoundCues):
         pace = style["speed"] / max(0.25, getattr(line, "drag", 1.0) or 1.0)
         self.revealed = min(len(line.text), self.revealed + pace)
         shown = int(self.revealed)
-        self.canvas.itemconfigure(self.body_text, text=line.text[:shown])
+        self.canvas.itemconfigure(self.body_text, text=tr(line.text[:shown]))
         if shown >= len(line.text):
             self._finish_line()
             return
@@ -1326,7 +1328,7 @@ class Cutscene(SoundCues):
         line = self.lines[self.index]
         style = SPEAKERS.get(line.speaker, SPEAKERS[story.NARRATOR])
         name = self.names.get(line.speaker, style["name"])
-        self.canvas.itemconfigure(self.name_text, text=name,
+        self.canvas.itemconfigure(self.name_text, text=tr(name),
                                   fill=style["colour"])
         self.canvas.itemconfigure(self.name_plate,
                                   state="normal" if name else "hidden")
@@ -1361,7 +1363,7 @@ class Cutscene(SoundCues):
             self._flash()
         elif cue == "reveal" and self.reveal_name:
             self.names[self.lines[self.index].speaker] = self.reveal_name
-            self.canvas.itemconfigure(self.name_text, text=self.reveal_name)
+            self.canvas.itemconfigure(self.name_text, text=tr(self.reveal_name))
             self._fit_plate()
         elif cue == "item":
             self._show_keepsake()
@@ -1378,7 +1380,7 @@ class Cutscene(SoundCues):
         last = self.index >= len(self.lines) - 1
         text = "Terminar  ▸" if last else "Siguiente  ▸"
         visible = (self.tick // 16) % 2 == 0
-        self.canvas.itemconfigure(self.prompt, text=text if visible else "",
+        self.canvas.itemconfigure(self.prompt, text=tr(text if visible else ""),
                                   fill=GOLD if visible else MUTED)
 
     def _poke_key(self, _event=None) -> None:
@@ -1391,7 +1393,7 @@ class Cutscene(SoundCues):
         if self.typing:
             line = self.lines[self.index]
             self.revealed = len(line.text)
-            self.canvas.itemconfigure(self.body_text, text=line.text)
+            self.canvas.itemconfigure(self.body_text, text=tr(line.text))
             self._finish_line()
             return
         if self.index >= len(self.lines) - 1:
@@ -1467,10 +1469,10 @@ class Cutscene(SoundCues):
             cx - 162, cy, text=icon or "★", fill=GOLD,
             font=self._font(("Segoe UI Symbol", 26)))
         label = self.canvas.create_text(
-            cx - 122, cy - 12, anchor="w", text="Has recibido", fill=MUTED,
+            cx - 122, cy - 12, anchor="w", text=tr("Has recibido"), fill=MUTED,
             font=self._font(("Segoe UI", 10)))
         title = self.canvas.create_text(
-            cx - 122, cy + 10, anchor="w", text=name, fill=GOLD,
+            cx - 122, cy + 10, anchor="w", text=tr(name), fill=GOLD,
             font=self._font(("Georgia", 15, "bold")))
         ambience.play("chime")
         for item in (card, glyph, label, title):

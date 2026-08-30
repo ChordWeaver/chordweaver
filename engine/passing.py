@@ -26,6 +26,7 @@ import functools
 import random
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
+from engine.i18n import tr, trf, trs
 
 #: Widest step either leg of the ornament may take. A passing note does not
 #: have to sit *between* the two chord tones: rising a tone and falling two

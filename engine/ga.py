@@ -55,6 +55,7 @@ from .style import (
 )
 from .theory import VoicePart
 from .voicing import ChordRequirement, VoicingPlan
+from engine.i18n import tr, trf, trs
 
 
 @dataclass
@@ -319,8 +320,10 @@ class CandidateTable:
         for slot_index, voice_index in self.empty_cells:
             voice = self.voices[voice_index]
             parts.append(
-                f"{voice.name} no llega a ninguna nota de {slots[slot_index].symbol} "
-                f"(acorde {slot_index + 1}) dentro de su registro"
+                trf("{name} no llega a ninguna nota de {symbol} (acorde "
+                    "{slot_index}) dentro de su registro",
+                    name=voice.name, symbol=slots[slot_index].symbol,
+                    slot_index=slot_index + 1)
             )
         return "; ".join(parts)
 
@@ -566,8 +569,10 @@ def _chord_list(indices: Sequence[int]) -> str:
     if len(numbers) == 1:
         return f"acorde {numbers[0]}"
     if len(numbers) == 2:
-        return f"acordes {numbers[0]} y {numbers[1]}"
-    return f"acordes {', '.join(numbers[:-1])} y {numbers[-1]}"
+        return trf("acordes {numbers} y {numbers2}",
+                   numbers=numbers[0], numbers2=numbers[1])
+    return trf("acordes {value} y {numbers}",
+               value=', '.join(numbers[:-1]), numbers=numbers[-1])
 
 
 def _requirement_dead_end(
@@ -644,7 +649,7 @@ def _slot_dead_end(
         pitches = slot.locked_pitches or []
         if profile.cadence_consonance_required and is_repose:
             if bass_consonance_violations(pitches):
-                return (f"el acorde fijado {slot.symbol}",
+                return (trf("el acorde fijado {symbol}", symbol=slot.symbol),
                         "{subject} tiene una disonancia sobre su propio bajo, "
                         "y está en un punto de reposo donde se exige "
                         "consonancia. Cambiá el orden de las voces fijadas, o "
@@ -653,10 +658,10 @@ def _slot_dead_end(
             if position >= len(settings.voices):
                 break
             if not settings.voices[position].contains(pitch):
-                return (f"el acorde fijado {slot.symbol}",
-                        "{subject} deja a "
-                        f"{settings.voices[position].name} fuera de su "
-                        "registro.")
+                return (trf("el acorde fijado {symbol}", symbol=slot.symbol),
+                        trf("{{subject}} deja a {name} fuera de su "
+                            "registro.",
+                            name=settings.voices[position].name))
         return None
 
     options = list(slot.options) or []
@@ -669,8 +674,9 @@ def _slot_dead_end(
         reasons.append(reason)
 
     if len(requirements) > 1:
-        return (f"ninguno de los {len(requirements)} acordes que el generador "
-                f"puede poner acá", reasons[0])
+        return (trf("ninguno de los {requirements} acordes que el "
+                    "generador puede poner acá",
+                    requirements=len(requirements)), reasons[0])
     return (slot.symbol, reasons[0])
 
 

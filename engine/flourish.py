@@ -29,6 +29,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from .harmony import DOMINANT, SUBDOMINANT, TONIC, function_of
 from .style import ChordContext, cadential_six_four
+from engine.i18n import tr, trf, trs
 
 #: Chance that the winning chromosome gets the sixth treatment at all.
 #: High on purpose: the gesture is one of the things the baroque

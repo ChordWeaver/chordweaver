@@ -26,11 +26,14 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import customtkinter as ctk
 
 import analyzer
+import chooser
 import cinematic
 import spectrum
 import updater
 from engine import __version__ as APP_VERSION
 from engine import history, session
+from engine.i18n import N, tr, trf, trs
+from engine import i18n
 from engine.export import TimeSignature
 from engine import (achievements, ambience, audio, book, eggs, harmonize,
                     harmony, importer, passing, story, updates, visitors,
@@ -451,7 +454,7 @@ class PianoSelector(ctk.CTkFrame):
             bg=SURFACE_LIGHT, highlightthickness=0,
         )
         self.canvas.pack(padx=10, pady=(10, 4))
-        self.label = ctk.CTkLabel(self, text="Ninguna nota seleccionada",
+        self.label = ctk.CTkLabel(self, text=tr("Ninguna nota seleccionada"),
                                   font=FONT_SMALL, text_color=TEXT_MUTED)
         self.label.pack(pady=(0, 10))
         self._draw_keys()
@@ -525,9 +528,11 @@ class PianoSelector(ctk.CTkFrame):
 
         if self.selected:
             names = ", ".join(note_name(m) for m in sorted(self.selected))
-            self.label.configure(text=f"{len(self.selected)} notas: {names}")
+            self.label.configure(text=trf("{selected} notas: {names}",
+                                          selected=len(self.selected),
+                                          names=names))
         else:
-            self.label.configure(text="Ninguna nota seleccionada")
+            self.label.configure(text=tr("Ninguna nota seleccionada"))
 
     def get_pitch_classes(self) -> List[int]:
         return [m % 12 for m in sorted(self.selected)]
@@ -592,7 +597,7 @@ class Tooltip:
         frame = tk.Frame(self.window, background="#15161A",
                          highlightbackground=ACCENT, highlightthickness=1)
         frame.pack()
-        tk.Label(frame, text=self.text, background="#15161A", foreground="#E4E6EA",
+        tk.Label(frame, text=tr(self.text), background="#15161A", foreground="#E4E6EA",
                  font=scaled(("Segoe UI", 10)), wraplength=330, justify="left",
                  padx=10, pady=8).pack()
 
@@ -622,10 +627,10 @@ class LabelledSlider(ctk.CTkFrame):
                                     button_hover_color=ACCENT_HOVER)
         self.slider.set(value)
         self.slider.grid(row=0, column=0, columnspan=2, sticky="ew")
-        ctk.CTkLabel(self, text=low_text, font=FONT_SMALL,
+        ctk.CTkLabel(self, text=tr(low_text), font=FONT_SMALL,
                      text_color=TEXT_MUTED, anchor="w"
                      ).grid(row=1, column=0, sticky="w", pady=(2, 0))
-        ctk.CTkLabel(self, text=high_text, font=FONT_SMALL,
+        ctk.CTkLabel(self, text=tr(high_text), font=FONT_SMALL,
                      text_color=TEXT_MUTED, anchor="e"
                      ).grid(row=1, column=1, sticky="e", pady=(2, 0))
 
@@ -665,7 +670,7 @@ class FlatButton(tk.Label):
         # tenía con `CTkButton(height=26)`. Un `tk.Label` mide su alto en
         # líneas de texto, no en píxeles, así que la única manera de igualarlo
         # es no agregarle relleno vertical.
-        super().__init__(master, text=text, font=font or FONT_SMALL,
+        super().__init__(master, text=tr(text), font=font or FONT_SMALL,
                          fg=TEXT_NORMAL, bg=background, width=width,
                          pady=0, highlightthickness=1,
                          highlightbackground=border, highlightcolor=border,
@@ -743,7 +748,7 @@ class FlatLabel(tk.Label):
                  text_color: str = TEXT_NORMAL,
                  background: str = SURFACE_LIGHT, width: int = 0,
                  anchor: str = "w"):
-        super().__init__(master, text=text, font=font or FONT_SMALL,
+        super().__init__(master, text=tr(text), font=font or FONT_SMALL,
                          fg=text_color, bg=background, width=width,
                          anchor=anchor, padx=0, pady=0)
 
@@ -793,7 +798,7 @@ class DurationPicker(tk.Label):
         self._values = list(values)
         self._command = command
         self._value = values[0] if values else ""
-        super().__init__(master, text=self._value + self.CARET,
+        super().__init__(master, text=tr(self._value) + self.CARET,
                          font=FONT_SMALL, fg=TEXT_NORMAL, bg=background,
                          width=width, anchor="w", padx=8, pady=0,
                          highlightthickness=1, highlightbackground=background,
@@ -808,7 +813,7 @@ class DurationPicker(tk.Label):
     def set(self, value: str) -> None:
         """Elegir sin avisar. Como en ``CTkOptionMenu``, no dispara nada."""
         self._value = value
-        self.configure(text=value + self.CARET)
+        self.configure(text=tr(value) + self.CARET)
 
     # -- el desplegable --------------------------------------------------------
 
@@ -831,7 +836,9 @@ class DurationPicker(tk.Label):
         # y encima sólo se paga cuando alguien lo abre.
         menu.delete(0, "end")
         for value in self._values:
-            menu.add_command(label=value,
+            # El rótulo va traducido y el comando lleva el valor de
+            # siempre: lo que viaja es el castellano.
+            menu.add_command(label=tr(value),
                              command=lambda v=value: self._chose(v))
         try:
             menu.tk_popup(self.winfo_rootx(),
@@ -971,7 +978,7 @@ class Card(ctk.CTkFrame, Hoverable):
         titles = ctk.CTkFrame(names, fg_color="transparent")
         titles.pack(anchor="w", fill="x")
         self.title_label = ctk.CTkLabel(
-            titles, text=title, font=scaled(("Segoe UI Semibold", 19)),
+            titles, text=tr(title), font=scaled(("Segoe UI Semibold", 19)),
             anchor="w", justify="left")
         self.title_label.pack(side="left")
         # El aviso de que algo todavía se está haciendo. Va pegado al
@@ -979,7 +986,7 @@ class Card(ctk.CTkFrame, Hoverable):
         # pantalla siguiente, en una nota al pie--- se lee después de haber
         # elegido, que es justo cuando ya no sirve de aviso.
         if flag:
-            ctk.CTkLabel(titles, text=flag, font=scaled(("Segoe UI", 10)),
+            ctk.CTkLabel(titles, text=tr(flag), font=scaled(("Segoe UI", 10)),
                          text_color=accent,
                          fg_color=mix(SURFACE_LIGHT, accent, 0.22),
                          corner_radius=6, width=46, height=18
@@ -987,11 +994,11 @@ class Card(ctk.CTkFrame, Hoverable):
         self.subtitle_label = None
         if subtitle:
             self.subtitle_label = ctk.CTkLabel(
-                names, text=subtitle, font=FONT_SMALL, text_color=accent,
+                names, text=tr(subtitle), font=FONT_SMALL, text_color=accent,
                 anchor="w", justify="left")
             self.subtitle_label.pack(anchor="w", pady=(1, 0))
 
-        self.body_label = ctk.CTkLabel(self, text=body,
+        self.body_label = ctk.CTkLabel(self, text=tr(body),
                                        font=scaled(("Segoe UI", 13)),
                                        text_color=TEXT_MUTED,
                                        wraplength=wraplength,
@@ -1011,14 +1018,14 @@ class Card(ctk.CTkFrame, Hoverable):
             ctk.CTkLabel(line, text=marker, width=16, anchor="w",
                          text_color=accent,
                          font=scaled(("Segoe UI Semibold", 11))).pack(side="left")
-            ctk.CTkLabel(line, text=text, font=scaled(("Segoe UI", 11)),
+            ctk.CTkLabel(line, text=tr(text), font=scaled(("Segoe UI", 11)),
                          text_color=TEXT_MUTED, anchor="w", justify="left",
                          wraplength=max(120, wraplength - 26)).pack(side="left")
 
         self.tag_label = None
         if tagline:
             self.tag_label = ctk.CTkLabel(
-                self, text=tagline, font=scaled(("Segoe UI", 10)),
+                self, text=tr(tagline), font=scaled(("Segoe UI", 10)),
                 text_color=mix(TEXT_MUTED, accent, 0.5), wraplength=wraplength,
                 justify="left", anchor="w")
             self.tag_label.pack(anchor="w", fill="x", padx=20, pady=(0, 18))
@@ -1245,7 +1252,7 @@ def handwritten_line(host, text: str, bg: str, wrap: int = 0):
     line = tk.Frame(host, bg=bg)
     tk.Label(line, text="🖋", font=scaled(("Segoe UI Symbol", 13)),
              bg=bg, fg=GOLD).pack(side="left", padx=(0, 8))
-    label = tk.Label(line, text=text, font=scaled(FONT_HAND + ("italic",)),
+    label = tk.Label(line, text=tr(text), font=scaled(FONT_HAND + ("italic",)),
                      bg=bg, fg=GOLD, justify="left", anchor="w")
     if wrap:
         label.configure(wraplength=wrap)
@@ -1286,15 +1293,16 @@ class AchievementBanner(ctk.CTkFrame, Hoverable):
 
         left = ctk.CTkFrame(self, fg_color="transparent")
         left.pack(side="left", padx=(26, 10), pady=18)
-        title = ctk.CTkLabel(left, text="Logros",
+        title = ctk.CTkLabel(left, text=tr("Logros"),
                              font=scaled(("Segoe UI Semibold", 21)),
                              anchor="w")
         title.pack(anchor="w")
         titles = tracker.titles()
         subtitle = ctk.CTkLabel(
             left,
-            text=(" · ".join(titles) if titles
-                  else f"{done} de {total} conseguidos"),
+            text=(" · ".join(trs(titles)) if titles
+                  else trf("{done} de {total} conseguidos",
+                           done=done, total=total)),
             font=scaled(("Segoe UI", 13)),
             text_color=GOLD if titles else TEXT_MUTED, anchor="w")
         subtitle.pack(anchor="w", pady=(4, 0))
@@ -1313,8 +1321,9 @@ class AchievementBanner(ctk.CTkFrame, Hoverable):
                          ).pack(side="left", padx=3)
         progress = ctk.CTkLabel(
             stars,
-            text=(f"{done} de {total} conseguidos" if tracker.titles()
-                  else "Mirá qué te falta"),
+            text=(trf("{done} de {total} conseguidos",
+                      done=done, total=total) if tracker.titles()
+                  else tr("Mirá qué te falta")),
             font=FONT_SMALL, text_color=TEXT_MUTED)
         progress.pack(anchor="e", pady=(4, 0))
 
@@ -1362,7 +1371,7 @@ class BookBanner(ctk.CTkFrame, Hoverable):
 
         left = ctk.CTkFrame(self, fg_color="transparent")
         left.pack(side="left", padx=(26, 10), pady=18)
-        ctk.CTkLabel(left, text="Libro de teoría",
+        ctk.CTkLabel(left, text=tr("Libro de teoría"),
                      font=scaled(("Georgia", 20)), text_color=INK,
                      anchor="w").pack(anchor="w")
         # Corto: la tarjeta pasó a medir media fila y el texto largo se
@@ -1370,7 +1379,7 @@ class BookBanner(ctk.CTkFrame, Hoverable):
         # y desfasaba la fila entera.
         ctk.CTkLabel(
             left,
-            text="Armonía y contrapunto, desde cero.",
+            text=tr("Armonía y contrapunto, desde cero."),
             font=scaled(("Georgia", 12)), text_color=INK_MUTED, anchor="w",
             justify="left").pack(anchor="w", pady=(4, 0))
 
@@ -1380,11 +1389,13 @@ class BookBanner(ctk.CTkFrame, Hoverable):
             # La pluma sólo aparece cuando hay algo nuevo escrito: si
             # estuviera siempre, dejaría de querer decir nada.
             ctk.CTkLabel(right,
-                         text=f"🖋  {fresh} anotación nueva" if fresh == 1
-                         else f"🖋  {fresh} anotaciones nuevas",
+                         text=trf("🖋  {fresh} anotación nueva", fresh=fresh) if fresh == 1
+                         else trf("🖋  {fresh} anotaciones nuevas", fresh=fresh),
                          font=scaled(("Segoe UI Semibold", 13)),
                          text_color=GOLD).pack(anchor="e")
-        ctk.CTkLabel(right, text=f"{written} de {total} apartados escritos",
+        ctk.CTkLabel(right, text=trf("{written} de {total} apartados "
+                                     "escritos",
+                                     written=written, total=total),
                      font=FONT_SMALL, text_color=INK_FAINT
                      ).pack(anchor="e", pady=(4, 0))
 
@@ -1441,15 +1452,15 @@ class Toast(ctk.CTkFrame):
         self._closed = False
 
         heading = ctk.CTkLabel(
-            self, text=heading_text or ("¡Logro completado!" if not gold
-                                        else "¡Logro legendario!"),
+            self, text=tr(heading_text) or (tr("¡Logro completado!") if not gold
+                                            else tr("¡Logro legendario!")),
             font=scaled(("Segoe UI Semibold", 13)),
             text_color=GOLD if gold else ACCENT, anchor="w")
         heading.pack(anchor="w", padx=14, pady=(10, 2))
         if gold:
             start_shimmer(heading)
 
-        name = ctk.CTkLabel(self, text=achievement.name,
+        name = ctk.CTkLabel(self, text=tr(achievement.name),
                             font=scaled(("Segoe UI Semibold", 15)),
                             anchor="w", justify="left",
                             wraplength=self.WIDTH - 34)
@@ -1458,12 +1469,12 @@ class Toast(ctk.CTkFrame):
         # verdad. El modo historia reusa este cartel para sus avisos, y ahí
         # un renglón que dijera "Legendario" mentiría.
         if achievement.key:
-            ctk.CTkLabel(self, text=achievement.star_label, font=FONT_SMALL,
+            ctk.CTkLabel(self, text=tr(achievement.star_label), font=FONT_SMALL,
                          text_color=GOLD if gold else TEXT_MUTED, anchor="w"
                          ).pack(anchor="w", padx=14, pady=(2, 0))
         # La descripción de un legendario va en itálica y no explica nada:
         # es parte del logro que no se sepa cómo se consiguió.
-        ctk.CTkLabel(self, text=achievements.plain(achievement.description),
+        ctk.CTkLabel(self, text=tr(achievements.plain(achievement.description)),
                      font=scaled(("Segoe UI", 11, "italic")) if gold
                      else FONT_SMALL,
                      text_color=TEXT_MUTED, wraplength=self.WIDTH - 34,
@@ -2056,13 +2067,17 @@ class Tutorial:
 
         head = ctk.CTkFrame(card, fg_color="transparent")
         head.pack(fill="x", padx=20, pady=(16, 0))
-        ctk.CTkLabel(head, text=step["title"],
+        # Los pasos son constantes de módulo ---`TUTORIAL_STEPS`,
+        # `SCREEN_GUIDES`---, así que el castellano es lo que traen y la
+        # traducción va acá, al dibujarse.
+        ctk.CTkLabel(head, text=tr(step["title"]),
                      font=scaled(("Segoe UI Semibold", 17)),
                      text_color=accent, anchor="w", justify="left",
                      wraplength=self.CARD - 130).pack(side="left")
-        ctk.CTkLabel(head, text=f"{self.index + 1} de {len(self.steps)}",
+        ctk.CTkLabel(head, text=trf("{n} de {total}", n=self.index + 1,
+                                    total=len(self.steps)),
                      font=FONT_SMALL, text_color=TEXT_MUTED).pack(side="right")
-        ctk.CTkLabel(card, text=step["body"], font=scaled(("Segoe UI", 12)),
+        ctk.CTkLabel(card, text=tr(step["body"]), font=scaled(("Segoe UI", 12)),
                      text_color=TEXT_NORMAL, wraplength=self.CARD - 40,
                      justify="left", anchor="w"
                      ).pack(anchor="w", padx=20, pady=(10, 14))
@@ -2070,13 +2085,14 @@ class Tutorial:
         row = ctk.CTkFrame(card, fg_color="transparent")
         row.pack(fill="x", padx=20, pady=(0, 16))
         last = self.index == len(self.steps) - 1
-        ctk.CTkButton(row, text="Omitir", width=130, height=34,
+        ctk.CTkButton(row, text=tr("Omitir"), width=130, height=34,
                       corner_radius=9, font=FONT_SMALL,
                       fg_color="transparent", border_width=1,
                       border_color=BORDER_SOFT, text_color=TEXT_MUTED,
                       hover_color=SURFACE, command=self.skip
                       ).pack(side="left")
-        ctk.CTkButton(row, text=self.last_label if last else "Siguiente  →",
+        ctk.CTkButton(row, text=tr(self.last_label) if last
+                      else tr("Siguiente  →"),
                       width=150, height=34, corner_radius=9,
                       font=scaled(("Segoe UI Semibold", 12)),
                       fg_color=accent,
@@ -2178,6 +2194,12 @@ class ChordWeaverApp(ctk.CTk):
         #: que decide qué anotaciones le figuran como nuevas.
         self.settings_path = None
         self.settings = history.load_settings()
+        #: El idioma que quedó elegido. `main()` ya lo puso ---lo necesitan
+        #: el cartel de la primera vez y el de versión nueva, que se dibujan
+        #: antes que esta ventana--- pero se vuelve a poner acá para que
+        #: armar `ChordWeaverApp` a mano ---un script, el arnés de pruebas---
+        #: hable el mismo idioma que el programa abierto normalmente.
+        i18n.set_language(str(self.settings.get("language", "") or i18n.DEFAULT))
         # Los logros viven al lado del programa, igual que el historial.
         self.achievements = achievements.Tracker.load()
         # Y los huevos de pascua en su propio archivo, por la misma razón por
@@ -2390,28 +2412,31 @@ class ChordWeaverApp(ctk.CTk):
         Keeping a single carousel means genre, voices, metre, parameters and
         results have exactly one implementation each.
         """
+        # Los títulos van marcados con `N` y **no** traducidos: el castellano
+        # es la clave con la que `_commit_screen` encuentra qué pantalla hay
+        # que cerrar, y quien lo traduce es el `tr()` del rótulo del paso.
         shared_head = [
-            (self._screen_mode, "Modo"),
-            (self._screen_genre, "Género"),
+            (self._screen_mode, N("Modo")),
+            (self._screen_genre, N("Género")),
         ]
         # Harmonising fixes the texture by style: four parts for jazz, so a
         # seventh has somewhere to go, three for everything else. Asking the
         # user would only let them pick a texture the mode cannot use.
         if self.mode != "harmonise":
-            shared_head.append((self._screen_voices, "Voces"))
+            shared_head.append((self._screen_voices, N("Voces")))
         # The harmonise mode takes its metre from the melody itself, so the
         # bars screen would be asking a question that is already answered.
         if self.mode != "harmonise":
-            shared_head.append((self._screen_metre, "Compases"))
+            shared_head.append((self._screen_metre, N("Compases")))
         if self.mode == "manual":
-            middle = [(self._screen_chords, "Acordes")]
+            middle = [(self._screen_chords, N("Acordes"))]
         elif self.mode == "harmonise":
-            middle = [(self._screen_melody, "Melodía")]
+            middle = [(self._screen_melody, N("Melodía"))]
         else:
-            middle = [(self._screen_harmony, "Tonalidad")]
+            middle = [(self._screen_harmony, N("Tonalidad"))]
         shared_tail = [
-            (self._screen_parameters, "Parámetros"),
-            (self._screen_results, "Resultado"),
+            (self._screen_parameters, N("Parámetros")),
+            (self._screen_results, N("Resultado")),
         ]
         pages = shared_head + middle + shared_tail
         self.screens = [page for page, _title in pages]
@@ -2429,9 +2454,9 @@ class ChordWeaverApp(ctk.CTk):
         # cada modo con su propio texto, y lo que se gana en alto es lo que
         # necesita el cartel del sendero para entrar sin empujar nada afuera.
         self._heading(
-            "¿Quién elige los acordes?",
-            "Las tres terminan en lo mismo: una progresión escrita a varias "
-            "voces. Cambia cuánto ponés vos.")
+            tr("¿Quién elige los acordes?"),
+            tr("Las tres terminan en lo mismo: una progresión escrita a varias "
+               "voces. Cambia cuánto ponés vos."))
 
         grid = ctk.CTkFrame(self.body, fg_color="transparent")
         grid.pack(fill="both", expand=True, pady=(0, 6))
@@ -2534,11 +2559,11 @@ class ChordWeaverApp(ctk.CTk):
         márgenes apenas distintos, y esas diferencias de dos píxeles eran
         buena parte de lo que hacía que el programa se viera desprolijo.
         """
-        ctk.CTkLabel(self.body, text=title,
+        ctk.CTkLabel(self.body, text=tr(title),
                      font=scaled(("Segoe UI Semibold", 20)),
                      anchor="w", justify="left").pack(anchor="w")
         if blurb:
-            ctk.CTkLabel(self.body, text=blurb, font=scaled(("Segoe UI", 12)),
+            ctk.CTkLabel(self.body, text=tr(blurb), font=scaled(("Segoe UI", 12)),
                          text_color=TEXT_MUTED, wraplength=880,
                          justify="left", anchor="w").pack(anchor="w",
                                                           pady=(4, 16))
@@ -2571,21 +2596,21 @@ class ChordWeaverApp(ctk.CTk):
         # abajo, en el lugar donde la vista arranca.
         wordmark = ctk.CTkFrame(header, fg_color="transparent", cursor="hand2")
         wordmark.pack(side="left")
-        chord = ctk.CTkLabel(wordmark, text="Chord", font=FONT_TITLE,
+        chord = ctk.CTkLabel(wordmark, text=tr("Chord"), font=FONT_TITLE,
                              cursor="hand2")
         chord.pack(side="left")
-        self.wordmark_tail = ctk.CTkLabel(wordmark, text="Weaver", font=FONT_TITLE,
+        self.wordmark_tail = ctk.CTkLabel(wordmark, text=tr("Weaver"), font=FONT_TITLE,
                                           text_color=ACCENT, cursor="hand2")
         self.wordmark_tail.pack(side="left")
         bind_deeply(descendants(wordmark), "<Button-1>",
                     lambda _e: self._go_home())
-        Tooltip(chord, "Volver al principio")
-        Tooltip(self.wordmark_tail, "Volver al principio")
+        Tooltip(chord, tr("Volver al principio"))
+        Tooltip(self.wordmark_tail, tr("Volver al principio"))
 
         self.step_label = ctk.CTkLabel(header, text="", font=FONT_SMALL,
                                        text_color=TEXT_MUTED)
         self.step_label.pack(side="left", padx=16)
-        ctk.CTkButton(header, text="Historial", width=92, height=32,
+        ctk.CTkButton(header, text=tr("Historial"), width=92, height=32,
                       corner_radius=9, font=FONT_SMALL,
                       fg_color="transparent",
                       border_width=1, border_color=BORDER_SOFT,
@@ -2594,7 +2619,7 @@ class ChordWeaverApp(ctk.CTk):
                       ).pack(side="right")
         # Los logros también se alcanzan desde la tarjeta de la pantalla
         # inicial; acá están para no tener que volver al principio.
-        ctk.CTkButton(header, text="Logros", width=92, height=32,
+        ctk.CTkButton(header, text=tr("Logros"), width=92, height=32,
                       corner_radius=9, font=FONT_SMALL,
                       fg_color="transparent",
                       border_width=1, border_color=BORDER_SOFT,
@@ -2615,7 +2640,7 @@ class ChordWeaverApp(ctk.CTk):
             hover_color=PAPER_EDGE,
             command=lambda: self._open_detour("book", replace=True))
         self.book_button.pack(side="right", padx=(0, 8))
-        Tooltip(self.book_button, "Libro de teoría")
+        Tooltip(self.book_button, tr("Libro de teoría"))
 
         # El riel de progreso. Reemplaza a contar "paso 3 de 7" con la vista:
         # cuánto falta se ve, no se lee. Se pinta del color del modo, así que
@@ -2650,14 +2675,14 @@ class ChordWeaverApp(ctk.CTk):
                              hover_color=SURFACE_LIGHT,
                              command=self._open_config)
         gear.pack(side="left", padx=(0, 10))
-        Tooltip(gear, "Configuración y accesibilidad")
+        Tooltip(gear, tr("Configuración y accesibilidad"))
 
         # Al lado del engranaje, y dorado: es lo único del pie que pide algo
         # en vez de hacer algo, así que tiene que verse ---si no, no está---
         # pero no puede competir con «Siguiente», que es lo que el usuario
         # vino a apretar. El borde dorado alcanza; con relleno sólido quedaba
         # más llamativo que el botón que hace avanzar el programa.
-        donate = ctk.CTkButton(footer, text="♥  Donar", width=104, height=42,
+        donate = ctk.CTkButton(footer, text=tr("♥  Donar"), width=104, height=42,
                                corner_radius=11,
                                font=scaled(("Segoe UI", 13)),
                                fg_color="transparent", border_width=1,
@@ -2665,10 +2690,10 @@ class ChordWeaverApp(ctk.CTk):
                                hover_color=SURFACE_LIGHT,
                                command=self._open_donate)
         donate.pack(side="left", padx=(0, 10))
-        Tooltip(donate, "El programa es gratis. Si querés bancarlo, acá está "
-                        "cómo.")
+        Tooltip(donate, tr("El programa es gratis. Si querés bancarlo, acá está "
+                           "cómo."))
 
-        self.back_button = ctk.CTkButton(footer, text="←  Atrás", width=140,
+        self.back_button = ctk.CTkButton(footer, text=tr("←  Atrás"), width=140,
                                          height=42, corner_radius=11,
                                          font=scaled(("Segoe UI", 13)),
                                          fg_color="transparent", border_width=1,
@@ -2682,7 +2707,7 @@ class ChordWeaverApp(ctk.CTk):
         # lo saca `_render_screen`, y siempre con `before=` el botón de
         # «Siguiente» --- volver a empacar algo manda al final del orden, y
         # el cartel del pie puede haberse metido en el medio mientras tanto.
-        self.reset_button = ctk.CTkButton(footer, text="⟳  Resetear", width=140,
+        self.reset_button = ctk.CTkButton(footer, text=tr("⟳  Resetear"), width=140,
                                           height=42, corner_radius=11,
                                           font=scaled(("Segoe UI", 13)),
                                           fg_color="transparent", border_width=1,
@@ -2691,9 +2716,9 @@ class ChordWeaverApp(ctk.CTk):
                                           hover_color=SURFACE_LIGHT,
                                           command=self._reset_harmony)
         Tooltip(self.reset_button,
-                "Vuelve esta pantalla a la configuración con la que arranca "
-                "el estilo elegido.")
-        self.next_button = ctk.CTkButton(footer, text="Siguiente", width=180,
+                tr("Vuelve esta pantalla a la configuración con la que arranca "
+                   "el estilo elegido."))
+        self.next_button = ctk.CTkButton(footer, text=tr("Siguiente"), width=180,
                                          height=42, corner_radius=11,
                                          font=scaled(("Segoe UI Semibold", 13)),
                                          fg_color=ACCENT, hover_color=ACCENT_HOVER,
@@ -2733,6 +2758,12 @@ class ChordWeaverApp(ctk.CTk):
         self.body = ctk.CTkFrame(self, fg_color="transparent")
         self.body.pack(fill="both", expand=True, padx=28, pady=8)
         self.body.pack_propagate(False)
+        #: Los cuatro marcos que cuelgan de la ventana, anotados para poder
+        #: desarmarlos: cambiar de idioma tiene que rehacer también la
+        #: cabecera y el pie, que se arman una sola vez y no pasan por
+        #: `_render`. Es la lista de lo que hay que destruir, no un dato de
+        #: la interfaz --- ver `_switch_language`.
+        self._chrome = (header, rail, footer, self.body)
 
     # -- la anotación a mano del pie -----------------------------------------
 
@@ -2944,8 +2975,8 @@ class ChordWeaverApp(ctk.CTk):
             # Los logros y el historial son una pantalla más, no una ventana
             # aparte: el paso siguiente no significa nada acá, así que el
             # botón se esconde y "Atrás" pasa a ser la única salida.
-            self.step_label.configure(text=self.DETOUR_TITLES.get(name, ""))
-            self.back_button.configure(text="←  Volver", state="normal",
+            self.step_label.configure(text=tr(self.DETOUR_TITLES.get(name, "")))
+            self.back_button.configure(text=tr("←  Volver"), state="normal",
                                        command=self._close_detour)
             self.reset_button.pack_forget()
             if not self._next_button_hidden:
@@ -2966,10 +2997,14 @@ class ChordWeaverApp(ctk.CTk):
             self.next_button.pack(side="right", pady=6,
                                   before=self.status_label)
             self._next_button_hidden = False
-        self.back_button.configure(text="←  Atrás", command=self._go_back)
+        self.back_button.configure(text=tr("←  Atrás"), command=self._go_back)
         self.step_label.configure(
-            text=f"Paso {self.index + 1} de {len(self.screens)} · "
-                 f"{self.screen_titles[self.index]}"
+            # El título se traduce acá y no en `_apply_mode`: ahí el
+            # castellano es la clave con la que `_commit_screen` encuentra
+            # qué pantalla hay que cerrar.
+            text=trf("Paso {index} de {screens} · {screen_titles}",
+                     index=self.index + 1, screens=len(self.screens),
+                     screen_titles=tr(self.screen_titles[self.index]))
         )
         self.back_button.configure(state="normal" if self.index > 0 else "disabled")
         # Los métodos ligados se comparan por igualdad, no por identidad:
@@ -2980,11 +3015,11 @@ class ChordWeaverApp(ctk.CTk):
         else:
             self.reset_button.pack_forget()
         self.next_button.configure(
-            text="Generar" if self.index == len(self.screens) - 2
-            else "Siguiente  →", state="normal"
+            text=tr("Generar" if self.index == len(self.screens) - 2
+               else "Siguiente  →"), state="normal"
         )
         if self.index == len(self.screens) - 1:
-            self.next_button.configure(text="Nuevo")
+            self.next_button.configure(text=tr("Nuevo"))
         self._update_rail((self.index + 1) / len(self.screens))
         self.screens[self.index]()
         # Recién acá, con la pantalla ya armada: `_screen_results` puede
@@ -3183,7 +3218,8 @@ class ChordWeaverApp(ctk.CTk):
         # empaquetada ANTES que la fila de botones y también anclada abajo:
         # el que se empaqueta primero se queda con el borde, así que este
         # orden es el que la deja al pie de todo y a los botones encima.
-        ctk.CTkLabel(panel, text=f"ChordWeaver {APP_VERSION}",
+        ctk.CTkLabel(panel, text=trf("ChordWeaver {APP_VERSION}",
+                                     APP_VERSION=APP_VERSION),
                      font=scaled(("Segoe UI", 10)), text_color=TEXT_MUTED
                      ).pack(side="bottom", pady=(0, 8))
         buttons = ctk.CTkFrame(panel, fg_color="transparent", height=56)
@@ -3194,19 +3230,48 @@ class ChordWeaverApp(ctk.CTk):
         window = ctk.CTkScrollableFrame(panel, fg_color="transparent")
         window.pack(side="top", fill="both", expand=True, padx=4, pady=(4, 0))
 
-        ctk.CTkLabel(window, text="Algoritmo genético",
+        # -- el idioma, arriba de todo ---------------------------------------
+        #
+        # Primero porque es lo único de este panel que cambia lo que el
+        # usuario *lee*: quien lo abre buscándolo lo encuentra sin recorrer
+        # siete campos del algoritmo, y quien lo abre por otra cosa entiende
+        # de entrada en qué idioma está parado.
+        #
+        # Los rótulos van cada uno en su propio idioma y **sin traducir**:
+        # así el que dejó el programa en un idioma que no entiende puede
+        # volver. Por eso no pasan por `tr()`.
+        ctk.CTkLabel(window, text=tr("Idioma"),
+                     font=scaled(("Segoe UI Semibold", 16))
+                     ).pack(anchor="w", padx=22, pady=(20, 2))
+        ctk.CTkLabel(window,
+                     text=tr("Se aplica al momento. Lo que ya generaste no "
+                             "cambia: los acordes se llaman igual en los dos "
+                             "idiomas."),
+                     font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=460,
+                     justify="left").pack(anchor="w", padx=22, pady=(0, 8))
+        language_row = ctk.CTkSegmentedButton(
+            window, values=[label for _code, label in i18n.languages()],
+            font=FONT_SMALL, selected_color=ACCENT,
+            selected_hover_color=ACCENT_HOVER,
+            unselected_color=SURFACE, unselected_hover_color=SURFACE_RAISED,
+            command=lambda label: self._switch_language(
+                {name: code for code, name in i18n.languages()}[label]))
+        language_row.set(i18n.label_of(i18n.language()))
+        language_row.pack(anchor="w", padx=22, pady=(0, 4))
+
+        ctk.CTkLabel(window, text=tr("Algoritmo genético"),
                      font=scaled(("Segoe UI Semibold", 16))).pack(anchor="w", padx=22,
                                                           pady=(20, 2))
         ctk.CTkLabel(window,
-                     text="Los valores por defecto andan bien para casi todo. "
-                          "Pasá el mouse por cada uno para ver qué hace.",
+                     text=tr("Los valores por defecto andan bien para casi todo. "
+                             "Pasá el mouse por cada uno para ver qué hace."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=460,
                      justify="left").pack(anchor="w", padx=22, pady=(0, 12))
 
         for key, label, default, explanation in self.GA_FIELDS:
             line = ctk.CTkFrame(window, fg_color="transparent")
             line.pack(fill="x", padx=22, pady=5)
-            caption = ctk.CTkLabel(line, text=label, font=FONT_SMALL, width=170,
+            caption = ctk.CTkLabel(line, text=tr(label), font=FONT_SMALL, width=170,
                                    anchor="w")
             caption.pack(side="left")
             if key not in self.ga_vars:
@@ -3222,9 +3287,11 @@ class ChordWeaverApp(ctk.CTk):
 
         workers = resolve_worker_count(None, 200 * 12)
         ctk.CTkLabel(window,
-                     text=f"Esta máquina tiene {os.cpu_count()} núcleos; la "
-                          f"búsqueda va a usar {workers} proceso(s) y deja uno "
-                          f"libre para que la ventana siga respondiendo.",
+                     text=trf("Esta máquina tiene {cpu_count} núcleos; la "
+                              "búsqueda va a usar {workers} proceso(s) y "
+                              "deja uno libre para que la ventana siga "
+                              "respondiendo.",
+                              cpu_count=os.cpu_count(), workers=workers),
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=460,
                      justify="left").pack(anchor="w", padx=22, pady=(14, 6))
 
@@ -3243,12 +3310,12 @@ class ChordWeaverApp(ctk.CTk):
             for key, value in self.LOW_RESOURCE_PRESET.items():
                 self.ga_vars[key].set(value)
             message.configure(
-                text="Listo: la búsqueda va a tardar alrededor de la mitad. "
-                     "A cambio afina menos, así que vas a oír algo más de "
-                     "movimiento entre acordes.")
+                text=tr("Listo: la búsqueda va a tardar alrededor de la mitad. "
+                        "A cambio afina menos, así que vas a oír algo más de "
+                        "movimiento entre acordes."))
 
         modest = ctk.CTkButton(
-            window, text="Equipo modesto", height=32, width=150,
+            window, text=tr("Equipo modesto"), height=32, width=150,
             corner_radius=10, font=FONT_SMALL, fg_color="transparent",
             border_width=1, border_color=BORDER_SOFT, text_color=TEXT_NORMAL,
             hover_color=SURFACE, command=modest_machine)
@@ -3258,13 +3325,13 @@ class ChordWeaverApp(ctk.CTk):
                                wraplength=460, justify="left")
         message.pack(anchor="w", padx=22)
         Tooltip(modest,
-                "Recorta la búsqueda para una máquina que sufre: la mitad de "
-                "generaciones, la mitad de tiempo. Los resultados siguen "
-                "siendo válidos —ninguna regla dura se afloja— pero el "
-                "programa tiene menos vueltas para pulir la conducción de "
-                "voces. La población no se toca: es de donde sale el arranque "
-                "válido de la búsqueda, y bajándola las piezas largas dejan "
-                "de generarse del todo.")
+                tr("Recorta la búsqueda para una máquina que sufre: la mitad de "
+                   "generaciones, la mitad de tiempo. Los resultados siguen "
+                   "siendo válidos —ninguna regla dura se afloja— pero el "
+                   "programa tiene menos vueltas para pulir la conducción de "
+                   "voces. La población no se toca: es de donde sale el arranque "
+                   "válido de la búsqueda, y bajándola las piezas largas dejan "
+                   "de generarse del todo."))
 
         def apply_and_close() -> None:
             # Antes de validar: la combinación del zorro no es configuración
@@ -3293,21 +3360,21 @@ class ChordWeaverApp(ctk.CTk):
         self.raise_odds_var = tk.BooleanVar(
             value=bool(self.settings.get("raise_cadence_odds", False)))
         odds = ctk.CTkCheckBox(
-            window, text="Elevar probabilidad de cadencias especiales",
+            window, text=tr("Elevar probabilidad de cadencias especiales"),
             variable=self.raise_odds_var, font=FONT_SMALL,
             fg_color=ACCENT, hover_color=ACCENT_HOVER)
         odds.pack(anchor="w", padx=22, pady=(14, 2))
         Tooltip(odds,
-                "Las cadencias completas — la frigia, el ciclo de Vivaldi y "
-                "el bajo cromático — aparecen del 10% al 20% de las veces "
-                "cuando se dan las condiciones.")
+                tr("Las cadencias completas — la frigia, el ciclo de Vivaldi y "
+                   "el bajo cromático — aparecen del 10% al 20% de las veces "
+                   "cuando se dan las condiciones."))
 
-        ctk.CTkLabel(window, text="Accesibilidad",
+        ctk.CTkLabel(window, text=tr("Accesibilidad"),
                      font=scaled(("Segoe UI Semibold", 14))).pack(anchor="w", padx=22,
                                                           pady=(16, 4))
         line = ctk.CTkFrame(window, fg_color="transparent")
         line.pack(fill="x", padx=22, pady=4)
-        ctk.CTkLabel(line, text="Tamaño de letra", font=FONT_SMALL,
+        ctk.CTkLabel(line, text=tr("Tamaño de letra"), font=FONT_SMALL,
                      width=150, anchor="w").pack(side="left")
         self.font_scale_slider = ctk.CTkSlider(line, from_=0.8,
                                                to=self.FONT_SCALE_MAX, width=180,
@@ -3348,8 +3415,8 @@ class ChordWeaverApp(ctk.CTk):
                                     lambda _e: preview_scale(
                                         self.font_scale_slider.get()))
         ctk.CTkLabel(window,
-                     text="Se aplica al reabrir el programa. La configuración "
-                          "queda guardada junto al ejecutable.",
+                     text=tr("Se aplica al reabrir el programa. La configuración "
+                             "queda guardada junto al ejecutable."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=440,
                      justify="left").pack(anchor="w", padx=22, pady=(2, 0))
 
@@ -3379,16 +3446,16 @@ class ChordWeaverApp(ctk.CTk):
             if self.visits.knows(visitors.book_key(key))
         ]
         if seen_scenes:
-            ctk.CTkLabel(window, text="Volver a ver",
+            ctk.CTkLabel(window, text=tr("Volver a ver"),
                          font=scaled(("Segoe UI Semibold", 14))
                          ).pack(anchor="w", padx=22, pady=(16, 2))
             ctk.CTkLabel(window,
-                         text="Las apariciones que ya te ocurrieron. Se juegan "
-                              "enteras, igual que la primera vez.",
+                         text=tr("Las apariciones que ya te ocurrieron. Se juegan "
+                                 "enteras, igual que la primera vez."),
                          font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=440,
                          justify="left").pack(anchor="w", padx=22, pady=(0, 6))
             for label, key in seen_scenes:
-                ctk.CTkButton(window, text=label, height=32, corner_radius=10,
+                ctk.CTkButton(window, text=tr(label), height=32, corner_radius=10,
                               font=FONT_SMALL, fg_color="transparent",
                               border_width=1, border_color=GOLD_DIM,
                               text_color=GOLD_DIM, hover_color=SURFACE,
@@ -3396,10 +3463,10 @@ class ChordWeaverApp(ctk.CTk):
                               command=lambda k=key: self._preview_scene(k)
                               ).pack(anchor="w", fill="x", padx=22, pady=2)
 
-        ctk.CTkLabel(window, text="Ayuda",
+        ctk.CTkLabel(window, text=tr("Ayuda"),
                      font=scaled(("Segoe UI Semibold", 14))
                      ).pack(anchor="w", padx=22, pady=(16, 4))
-        ctk.CTkButton(window, text="Ver el tutorial otra vez", height=34,
+        ctk.CTkButton(window, text=tr("Ver el tutorial otra vez"), height=34,
                       corner_radius=10, font=FONT_SMALL,
                       fg_color="transparent", border_width=1,
                       border_color=BORDER_SOFT, text_color=TEXT_NORMAL,
@@ -3408,11 +3475,11 @@ class ChordWeaverApp(ctk.CTk):
                                        self._start_tutorial())
                       ).pack(anchor="w", padx=22, pady=(0, 4))
         ctk.CTkLabel(window,
-                     text="Vuelve a correr el recorrido de bienvenida y "
-                          "devuelve las explicaciones de cada pantalla: la de "
-                          "los acordes, la del pentagrama y la de las reglas "
-                          "se abren de nuevo la próxima vez que pases por "
-                          "ellas.",
+                     text=tr("Vuelve a correr el recorrido de bienvenida y "
+                             "devuelve las explicaciones de cada pantalla: la de "
+                             "los acordes, la del pentagrama y la de las reglas "
+                             "se abren de nuevo la próxima vez que pases por "
+                             "ellas."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=440,
                      justify="left").pack(anchor="w", padx=22, pady=(0, 14))
 
@@ -3433,21 +3500,62 @@ class ChordWeaverApp(ctk.CTk):
             # tocara widgets después de esto estaría tocando widgets muertos.
             preview_scale(1.0)
 
-        ctk.CTkButton(buttons, text="Restaurar valores por defecto",
+        ctk.CTkButton(buttons, text=tr("Restaurar valores por defecto"),
                       height=38, corner_radius=10, font=scaled(FONT_BODY),
                       fg_color="transparent", border_width=1,
                       border_color=BORDER_SOFT, text_color=TEXT_NORMAL,
                       hover_color=SURFACE, command=restore_defaults
                       ).pack(side="left", padx=(22, 6))
-        ctk.CTkButton(buttons, text="Aceptar", height=38, corner_radius=10,
+        ctk.CTkButton(buttons, text=tr("Aceptar"), height=38, corner_radius=10,
                       font=scaled(("Segoe UI Semibold", 12)), fg_color=ACCENT, hover_color=ACCENT_HOVER,
                       command=apply_and_close).pack(side="right", padx=(6, 22))
-        ctk.CTkButton(buttons, text="Cerrar", height=38, corner_radius=10,
+        ctk.CTkButton(buttons, text=tr("Cerrar"), height=38, corner_radius=10,
                       font=scaled(FONT_BODY),
                       fg_color="transparent", border_width=1,
                       border_color=BORDER_SOFT, text_color=TEXT_NORMAL,
                       hover_color=SURFACE, command=self._close_config
                       ).pack(side="right", padx=6)
+
+    def _switch_language(self, code: str) -> None:
+        """
+        Cambiar de idioma sin reabrir el programa.
+
+        Se puede porque la traducción ocurre al dibujar y no al importar:
+        las tablas de prosa siguen guardando el castellano y quien lo
+        convierte es el `tr()` del lugar donde el texto entra a un widget.
+        O sea que alcanza con volver a dibujar.
+
+        Volver a dibujar es más que `_render()`: la cabecera y el pie se
+        arman una sola vez en `_build_chrome` y no pasan por ahí, así que
+        cambiando sólo el cuerpo quedaban «Historial», «Logros» y «Atrás» en
+        el idioma viejo. Por eso se destruyen los cuatro marcos y se los
+        vuelve a armar.
+
+        El panel de configuración se cierra y se reabre para que se lea en
+        el idioma nuevo --- y porque es hijo de la ventana, no del cuerpo, y
+        sobreviviría al rearmado.
+        """
+        if code == i18n.language():
+            return
+        self.settings["language"] = code
+        history.save_settings(self.settings, self.settings_path)
+        i18n.set_language(code)
+        self._close_config()
+        # La guía abierta señala widgets que están por desaparecer, y sus
+        # velos están puestos sobre la ventana: sin esto sobreviven al
+        # rearmado y quedan tapando la pantalla nueva.
+        self._close_guide()
+        for widget in getattr(self, "_chrome", ()):
+            try:
+                widget.destroy()
+            except tk.TclError:
+                pass
+        self._build_chrome()
+        # El riel y el rótulo del paso salen de acá, y `_build_chrome` los
+        # dejó recién nacidos y vacíos.
+        self._apply_mode()
+        self._render()
+        self._open_config()
 
     def _close_config(self) -> None:
         """Dismiss the settings panel if it is showing."""
@@ -3509,12 +3617,12 @@ class ChordWeaverApp(ctk.CTk):
         head.pack(fill="x", padx=24, pady=(20, 2))
         ctk.CTkLabel(head, text="♥", font=scaled(("Segoe UI", 24)),
                      text_color=GOLD).pack(side="left")
-        ctk.CTkLabel(head, text="Donar",
+        ctk.CTkLabel(head, text=tr("Donar"),
                      font=scaled(("Segoe UI Semibold", 21))
                      ).pack(side="left", padx=(12, 0))
         ctk.CTkLabel(window,
-                     text="El programa es gratis. Esto es por si querés "
-                          "bancarlo igual.",
+                     text=tr("El programa es gratis. Esto es por si querés "
+                             "bancarlo igual."),
                      font=FONT_SMALL, text_color=TEXT_MUTED
                      ).pack(anchor="w", padx=24, pady=(0, 12))
         # Un filete dorado debajo del encabezado: separa lo que se explica de
@@ -3535,7 +3643,7 @@ class ChordWeaverApp(ctk.CTk):
             "No hace falta, y no cambia nada: el programa es exactamente el "
             "mismo con donación y sin ella. No hay nada cerrado detrás de esto.",
         ):
-            ctk.CTkLabel(window, text=paragraph, font=scaled(FONT_BODY),
+            ctk.CTkLabel(window, text=tr(paragraph), font=scaled(FONT_BODY),
                          text_color=TEXT_NORMAL, wraplength=560,
                          justify="left").pack(anchor="w", padx=24, pady=(0, 10))
 
@@ -3548,16 +3656,16 @@ class ChordWeaverApp(ctk.CTk):
             open_link=True)
 
         ctk.CTkLabel(window,
-                     text="El alias se copia mientras el programa esté "
-                          "abierto: en Windows el portapapeles lo sostiene la "
-                          "aplicación que copió.",
+                     text=tr("El alias se copia mientras el programa esté "
+                             "abierto: en Windows el portapapeles lo sostiene la "
+                             "aplicación que copió."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=560,
                      justify="left").pack(anchor="w", padx=24, pady=(4, 12))
-        ctk.CTkLabel(window, text="Gracias por usarlo.",
+        ctk.CTkLabel(window, text=tr("Gracias por usarlo."),
                      font=scaled(("Segoe UI", 13)), text_color=GOLD
                      ).pack(anchor="w", padx=24, pady=(0, 10))
 
-        ctk.CTkButton(buttons, text="Cerrar", height=38, corner_radius=10,
+        ctk.CTkButton(buttons, text=tr("Cerrar"), height=38, corner_radius=10,
                       font=scaled(FONT_BODY),
                       fg_color="transparent", border_width=1,
                       border_color=BORDER_SOFT, text_color=TEXT_NORMAL,
@@ -3576,19 +3684,19 @@ class ChordWeaverApp(ctk.CTk):
         box = ctk.CTkFrame(master, fg_color=SURFACE, corner_radius=12,
                            border_width=1, border_color=GOLD_DIM)
         box.pack(fill="x", padx=24, pady=(0, 10))
-        ctk.CTkLabel(box, text=title,
+        ctk.CTkLabel(box, text=tr(title),
                      font=scaled(("Segoe UI Semibold", 13)), text_color=GOLD
                      ).pack(anchor="w", padx=16, pady=(12, 0))
-        ctk.CTkLabel(box, text=subtitle, font=FONT_SMALL,
+        ctk.CTkLabel(box, text=tr(subtitle), font=FONT_SMALL,
                      text_color=TEXT_MUTED).pack(anchor="w", padx=16)
-        ctk.CTkLabel(box, text=value, font=scaled(font),
+        ctk.CTkLabel(box, text=tr(value), font=scaled(font),
                      text_color=TEXT_NORMAL, wraplength=520, justify="left",
                      anchor="w").pack(anchor="w", fill="x", padx=16,
                                       pady=(8, 0))
 
         row = ctk.CTkFrame(box, fg_color="transparent")
         row.pack(fill="x", padx=16, pady=(8, 12))
-        copy = ctk.CTkButton(row, text=copy_label, width=142, height=30,
+        copy = ctk.CTkButton(row, text=tr(copy_label), width=142, height=30,
                              corner_radius=9, font=FONT_SMALL,
                              fg_color="transparent", border_width=1,
                              border_color=GOLD_DIM, text_color=GOLD,
@@ -3606,11 +3714,11 @@ class ChordWeaverApp(ctk.CTk):
                 self.clipboard_append(value)
             except tk.TclError:
                 return
-            copy.configure(text="Copiado ✓")
+            copy.configure(text=tr("Copiado ✓"))
 
             def restore() -> None:
                 try:
-                    copy.configure(text=copy_label)
+                    copy.configure(text=tr(copy_label))
                 except tk.TclError:
                     pass
             self.after(1600, restore)
@@ -3618,7 +3726,7 @@ class ChordWeaverApp(ctk.CTk):
         copy.configure(command=copy_value)
         copy.pack(side="left")
         if open_link:
-            ctk.CTkButton(row, text="Abrir en el navegador", width=180,
+            ctk.CTkButton(row, text=tr("Abrir en el navegador"), width=180,
                           height=30, corner_radius=9, font=FONT_SMALL,
                           fg_color=GOLD_DIM, text_color=SURFACE,
                           hover_color=GOLD,
@@ -3658,25 +3766,25 @@ class ChordWeaverApp(ctk.CTk):
             )
         except (ValueError, KeyError):
             if message_label is not None:
-                message_label.configure(text="Algún valor no es un número válido.")
+                message_label.configure(text=tr("Algún valor no es un número válido."))
             return False
         if config.population_size < 10 or config.generations < 1:
             if message_label is not None:
                 message_label.configure(
-                    text="La población tiene que ser al menos 10 y las "
-                         "generaciones al menos 1."
+                    text=tr("La población tiene que ser al menos 10 y las "
+                            "generaciones al menos 1.")
                 )
             return False
         if config.elitism < 0:
             if message_label is not None:
                 message_label.configure(
-                    text="El elitismo no puede ser negativo."
+                    text=tr("El elitismo no puede ser negativo.")
                 )
             return False
         if config.elitism >= config.population_size:
             if message_label is not None:
                 message_label.configure(
-                    text="El elitismo tiene que ser menor que la población."
+                    text=tr("El elitismo tiene que ser menor que la población.")
                 )
             return False
         # El torneo tiene que poder elegir a alguien. Con cero o menos, el
@@ -3686,8 +3794,8 @@ class ChordWeaverApp(ctk.CTk):
         if config.tournament_size < 2:
             if message_label is not None:
                 message_label.configure(
-                    text="El torneo tiene que ser de al menos 2: con menos no "
-                         "hay a quién comparar."
+                    text=tr("El torneo tiene que ser de al menos 2: con menos no "
+                            "hay a quién comparar.")
                 )
             return False
         # Las tres tasas son probabilidades. Fuera de 0–1 el motor no falla,
@@ -3700,7 +3808,8 @@ class ChordWeaverApp(ctk.CTk):
             if not 0.0 <= value <= 1.0:
                 if message_label is not None:
                     message_label.configure(
-                        text=f"{label} tiene que estar entre 0 y 1."
+                        text=trf("{label} tiene que estar entre 0 y 1.",
+                                 label=label)
                     )
                 return False
         self.ga_config = config
@@ -3738,11 +3847,11 @@ class ChordWeaverApp(ctk.CTk):
         # cinco pantallas era pedir justo lo que el botón anula.
         self._story_golden_button(self.body)
         self._heading(
-            "¿Con qué reglas se escribe?",
-            "El estilo no toca los acordes: decide cómo se conducen las voces "
-            "de uno al siguiente — qué se prohíbe, qué se premia y con cuánta "
-            "fuerza. En la pantalla de reglas podés prender y apagar cada una "
-            "por separado; acá elegís de dónde parte todo.")
+            tr("¿Con qué reglas se escribe?"),
+            tr("El estilo no toca los acordes: decide cómo se conducen las voces "
+               "de uno al siguiente — qué se prohíbe, qué se premia y con cuánta "
+               "fuerza. En la pantalla de reglas podés prender y apagar cada una "
+               "por separado; acá elegís de dónde parte todo."))
 
         # Sin `expand`: las tarjetas miden lo que mide la más alta y la franja
         # de resumen queda pegada abajo de ellas en vez de irse al pie de la
@@ -3790,8 +3899,9 @@ class ChordWeaverApp(ctk.CTk):
         mode = harmony.MODES[defaults["mode"]].label.lower()
         sevenths = ("acordes de séptima por defecto" if defaults["sevenths"]
                     else "tríadas por defecto")
-        return (f"Arranca con {voices} · {mode} · {sevenths}. "
-                f"Todo esto se puede cambiar en las pantallas siguientes.")
+        return (trf("Arranca con {voices} · {mode} · {sevenths}. Todo esto "
+                    "se puede cambiar en las pantallas siguientes.",
+                    voices=voices, mode=mode, sevenths=sevenths))
 
     def _apply_genre_defaults(self) -> None:
         """Set the voices, mode and colour this style normally uses."""
@@ -3836,7 +3946,7 @@ class ChordWeaverApp(ctk.CTk):
         if note is not None:
             try:
                 accent = GENRE_THEMES.get(key, (ACCENT, ""))[0]
-                note.configure(text=self._genre_note_text(key),
+                note.configure(text=tr(self._genre_note_text(key)),
                                text_color=mix(TEXT_MUTED, accent, 0.35))
                 self.genre_note_frame.configure(
                     fg_color=mix(SURFACE_LIGHT, accent, 0.09))
@@ -3848,11 +3958,11 @@ class ChordWeaverApp(ctk.CTk):
     def _screen_voices(self) -> None:
         self._forget_genre_settings()
         self._heading(
-            "¿Quién canta?",
-            "Entre 3 y 6 voces. Los rangos que ves son los estándar de cada "
-            "cuerda y son una regla dura: ninguna solución va a poner una "
-            "nota fuera de ellos. Si tu grupo llega a más o a menos, "
-            "cambialos acá.")
+            tr("¿Quién canta?"),
+            tr("Entre 3 y 6 voces. Los rangos que ves son los estándar de cada "
+               "cuerda y son una regla dura: ninguna solución va a poner una "
+               "nota fuera de ellos. Si tu grupo llega a más o a menos, "
+               "cambialos acá."))
 
         container = ctk.CTkFrame(self.body, fg_color="transparent")
         container.pack(fill="both", expand=True)
@@ -3868,11 +3978,11 @@ class ChordWeaverApp(ctk.CTk):
         if organum:
             ctk.CTkLabel(
                 self.body,
-                text="Organum: marcá la voz que lleva el canto (vox principalis). "
-                     "La voz inmediata inferior será la vox organalis y buscará "
-                     "moverse en paralelo con ella, a la cuarta, la quinta o la "
-                     "octava. No puede ser la voz más grave: necesita una voz "
-                     "debajo para acompañarla.",
+                text=tr("Organum: marcá la voz que lleva el canto (vox principalis). "
+                        "La voz inmediata inferior será la vox organalis y buscará "
+                        "moverse en paralelo con ella, a la cuarta, la quinta o la "
+                        "octava. No puede ser la voz más grave: necesita una voz "
+                        "debajo para acompañarla."),
                 font=FONT_SMALL, text_color=ACCENT, wraplength=760,
                 justify="left").pack(anchor="w", pady=(0, 10))
             self.principalis_var = tk.StringVar(value=self._default_principalis())
@@ -3887,7 +3997,7 @@ class ChordWeaverApp(ctk.CTk):
 
             var = tk.BooleanVar(value=key in self.voice_keys)
             self.voice_check_vars[key] = var
-            ctk.CTkCheckBox(frame, text=voice.label, variable=var, width=170,
+            ctk.CTkCheckBox(frame, text=tr(voice.label), variable=var, width=170,
                             font=FONT_BODY, fg_color=ACCENT,
                             hover_color=ACCENT_HOVER).pack(side="left", padx=14, pady=10)
 
@@ -3896,16 +4006,17 @@ class ChordWeaverApp(ctk.CTk):
                 # vox principalis, and sharing a single variable is what makes
                 # ticking one untick the rest without any bookkeeping.
                 principalis = ctk.CTkRadioButton(
-                    frame, text="vox principalis", value=key,
+                    frame, text=tr("vox principalis"), value=key,
                     variable=self.principalis_var, width=140,
                     font=FONT_SMALL, fg_color=ACCENT,
                     hover_color=ACCENT_HOVER)
                 principalis.pack(side="left", padx=(0, 10))
                 Tooltip(principalis,
-                        f"{voice.label} lleva el canto. La voz que quede "
-                        f"inmediatamente debajo lo dobla en paralelo.")
+                        trf("{label} lleva el canto. La voz que quede "
+                            "inmediatamente debajo lo dobla en paralelo.",
+                            label=voice.label))
 
-            ctk.CTkLabel(frame, text="rango", font=FONT_SMALL,
+            ctk.CTkLabel(frame, text=tr("rango"), font=FONT_SMALL,
                          text_color=TEXT_MUTED).pack(side="left", padx=(10, 6))
             low = ctk.CTkEntry(frame, width=64, font=FONT_SMALL)
             low.insert(0, note_name(voice.low))
@@ -3943,7 +4054,9 @@ class ChordWeaverApp(ctk.CTk):
         chosen = [k for k, v in self.voice_check_vars.items() if v.get()]
         if not 3 <= len(chosen) <= 6:
             self.voice_hint.configure(
-                text=f"Elegiste {len(chosen)} voces. Tienen que ser entre 3 y 6."
+                text=trf("Elegiste {chosen} voces. Tienen que ser entre 3 "
+                         "y 6.",
+                         chosen=len(chosen))
             )
             return False
 
@@ -3956,14 +4069,16 @@ class ChordWeaverApp(ctk.CTk):
                 high = parse_note_name(high_entry.get())
             except ValueError:
                 self.voice_hint.configure(
-                    text=f"El rango de {VOICE_CATALOG[key].label} no se entiende. "
-                         f"Usá nombres tipo C4, Bb3, F#5."
+                    text=trf("El rango de {label} no se entiende. Usá "
+                             "nombres tipo C4, Bb3, F#5.",
+                             label=VOICE_CATALOG[key].label)
                 )
                 return False
             if low >= high:
                 self.voice_hint.configure(
-                    text=f"En {VOICE_CATALOG[key].label} la nota grave tiene que "
-                         f"ser menor que la aguda."
+                    text=trf("En {label} la nota grave tiene que ser menor "
+                             "que la aguda.",
+                             label=VOICE_CATALOG[key].label)
                 )
                 return False
             overrides[position] = (low, high)
@@ -3972,15 +4087,17 @@ class ChordWeaverApp(ctk.CTk):
             chosen_principalis = self.principalis_var.get()
             if chosen_principalis not in ordered:
                 self.voice_hint.configure(
-                    text=f"Marcaste {VOICE_CATALOG[chosen_principalis].label} como "
-                         f"vox principalis, pero esa voz no está en el conjunto."
+                    text=trf("Marcaste {label} como vox principalis, pero "
+                             "esa voz no está en el conjunto.",
+                             label=VOICE_CATALOG[chosen_principalis].label)
                 )
                 return False
             if ordered.index(chosen_principalis) == 0:
                 self.voice_hint.configure(
-                    text=f"{VOICE_CATALOG[chosen_principalis].label} es la voz más "
-                         f"grave del conjunto, así que no queda ninguna debajo para "
-                         f"hacer de vox organalis. Elegí una voz más aguda."
+                    text=trf("{label} es la voz más grave del conjunto, "
+                             "así que no queda ninguna debajo para hacer "
+                             "de vox organalis. Elegí una voz más aguda.",
+                             label=VOICE_CATALOG[chosen_principalis].label)
                 )
                 return False
 
@@ -4004,16 +4121,16 @@ class ChordWeaverApp(ctk.CTk):
 
     def _screen_metre(self) -> None:
         self._heading(
-            "¿Cuánto dura y en qué compás?",
-            "Elegí la métrica base y cuántos compases. Cada compás puede "
-            "después llevar la suya propia: el cambio de métrica en el medio "
-            "de la pieza es legítimo y el programa lo escribe en la "
-            "partitura.")
+            tr("¿Cuánto dura y en qué compás?"),
+            tr("Elegí la métrica base y cuántos compases. Cada compás puede "
+               "después llevar la suya propia: el cambio de métrica en el medio "
+               "de la pieza es legítimo y el programa lo escribe en la "
+               "partitura."))
 
         top = ctk.CTkFrame(self.body, fg_color=SURFACE_LIGHT, corner_radius=11)
         top.pack(fill="x", pady=(0, 12))
 
-        ctk.CTkLabel(top, text="Métrica base", font=FONT_BODY).pack(side="left",
+        ctk.CTkLabel(top, text=tr("Métrica base"), font=FONT_BODY).pack(side="left",
                                                                    padx=(14, 8), pady=12)
         self.signature_menu = ctk.CTkOptionMenu(
             top, values=TIME_SIGNATURES, width=90, fg_color=ACCENT,
@@ -4023,16 +4140,16 @@ class ChordWeaverApp(ctk.CTk):
         self.signature_menu.set(self.base_time_signature)
         self.signature_menu.pack(side="left")
 
-        ctk.CTkLabel(top, text="Compases", font=FONT_BODY).pack(side="left",
+        ctk.CTkLabel(top, text=tr("Compases"), font=FONT_BODY).pack(side="left",
                                                                 padx=(26, 8))
         self.bar_count_entry = ctk.CTkEntry(top, width=60)
         self.bar_count_entry.insert(0, str(min(self.bar_count, MAX_BARS)))
         self.bar_count_entry.pack(side="left")
         # El tope dicho de antemano, al lado de donde se teclea. El aviso de
         # `metre_hint` llega cuando el número ya se recortó, que es tarde.
-        ctk.CTkLabel(top, text=f"máx. {MAX_BARS}", font=FONT_SMALL,
+        ctk.CTkLabel(top, text=trf("máx. {MAX_BARS}", MAX_BARS=MAX_BARS), font=FONT_SMALL,
                      text_color=TEXT_MUTED).pack(side="left", padx=(8, 0))
-        ctk.CTkButton(top, text="Aplicar", width=80, fg_color="transparent",
+        ctk.CTkButton(top, text=tr("Aplicar"), width=80, fg_color="transparent",
                       border_width=1, border_color=TEXT_MUTED,
                       hover_color=SURFACE, command=self._rebuild_bar_rows
                       ).pack(side="left", padx=12)
@@ -4063,7 +4180,9 @@ class ChordWeaverApp(ctk.CTk):
         hint = getattr(self, "metre_hint", None)
         if hint is not None:
             hint.configure(
-                text=(f"Pediste {asked}: el máximo son {MAX_BARS} compases."
+                text=(trf("Pediste {asked}: el máximo son {MAX_BARS} "
+                          "compases.",
+                          asked=asked, MAX_BARS=MAX_BARS)
                       if asked > MAX_BARS else ""))
         self.base_time_signature = self.signature_menu.get()
 
@@ -4113,7 +4232,7 @@ class ChordWeaverApp(ctk.CTk):
         frame = ctk.CTkFrame(self.bars_frame, fg_color=SURFACE_LIGHT,
                              corner_radius=11)
         frame.pack(fill="x", pady=3)
-        tk.Label(frame, text=f"Compás {index + 1}", font=FONT_BODY,
+        tk.Label(frame, text=trf("Compás {index}", index=index + 1), font=FONT_BODY,
                  fg=TEXT_NORMAL, bg=SURFACE_LIGHT, width=13, anchor="w",
                  pady=0).pack(side="left", padx=14, pady=8)
         menu = DurationPicker(frame, TIME_SIGNATURES, width=8)
@@ -4129,24 +4248,24 @@ class ChordWeaverApp(ctk.CTk):
 
     def _screen_chords(self) -> None:
         self._heading(
-            "Escribí la progresión",
-            "Cifrado americano: Cmaj7, F#m7b5, Bb13, C/G. Cada compás tiene "
-            "que llenarse exacto con las duraciones elegidas. El candado fija "
-            "el orden de las voces de un acorde, y el piano sirve para armar "
-            "a mano uno que el cifrado no sepa nombrar.")
+            tr("Escribí la progresión"),
+            tr("Cifrado americano: Cmaj7, F#m7b5, Bb13, C/G. Cada compás tiene "
+               "que llenarse exacto con las duraciones elegidas. El candado fija "
+               "el orden de las voces de un acorde, y el piano sirve para armar "
+               "a mano uno que el cifrado no sepa nombrar."))
 
         toolbar = ctk.CTkFrame(self.body, fg_color="transparent")
         toolbar.pack(fill="x", pady=(0, 8))
         import_button = ctk.CTkButton(
-            toolbar, text="Importar partitura…", width=170,
+            toolbar, text=tr("Importar partitura…"), width=170,
             fg_color="transparent", border_width=1, border_color=TEXT_MUTED,
             hover_color=SURFACE_LIGHT, command=self._import_score)
         import_button.pack(side="left")
         Tooltip(import_button,
-                "Lee un archivo MusicXML y carga sus acordes con su ritmo. "
-                "El orden de las voces queda como punto de partida: el "
-                "programa puede reacomodarlo, salvo en los acordes que fijes "
-                "con el candado.")
+                tr("Lee un archivo MusicXML y carga sus acordes con su ritmo. "
+                   "El orden de las voces queda como punto de partida: el "
+                   "programa puede reacomodarlo, salvo en los acordes que fijes "
+                   "con el candado."))
 
         # Sin adornos en el Organizador. Acá la progresión la escribe el
         # usuario acorde por acorde, y el adorno metía notas que nadie pidió
@@ -4217,15 +4336,17 @@ class ChordWeaverApp(ctk.CTk):
         try:
             score = importer.read_musicxml(path)
         except importer.ImportError_ as exc:
-            messagebox.showerror("No se pudo importar", str(exc))
+            messagebox.showerror(tr("No se pudo importar"), str(exc))
             return
 
         if score.voice_count != len(self.voice_keys):
             if not messagebox.askyesno(
-                "Cantidad de voces distinta",
-                f"La partitura tiene {score.voice_count} voces y vos elegiste "
-                f"{len(self.voice_keys)}. Se van a cargar los acordes igual, "
-                f"repartidos entre las voces que elegiste. ¿Seguimos?",
+                tr("Cantidad de voces distinta"),
+                trf("La partitura tiene {voice_count} voces y vos elegiste "
+                    "{voice_keys}. Se van a cargar los acordes igual, "
+                    "repartidos entre las voces que elegiste. ¿Seguimos?",
+                    voice_count=score.voice_count,
+                    voice_keys=len(self.voice_keys)),
             ):
                 return
 
@@ -4255,7 +4376,8 @@ class ChordWeaverApp(ctk.CTk):
         self._render()
         self._award({"import_score"})
 
-        message = f"Se cargaron {len(score.chords)} acordes."
+        message = trf("Se cargaron {chords} acordes.",
+                      chords=len(score.chords))
         # Una partitura trae notas, no cifrados: el nombre de cada acorde se
         # deduce de lo que suena, y eso no siempre tiene una sola respuesta.
         # Una nota de paso o de adorno puede cambiarle la calidad a un acorde,
@@ -4267,7 +4389,7 @@ class ChordWeaverApp(ctk.CTk):
                     "acorde con otro nombre. Revisalos antes de generar.")
         if score.warnings:
             message += "\n\n" + "\n".join(score.warnings)
-        messagebox.showinfo("Partitura importada", message)
+        messagebox.showinfo(tr("Partitura importada"), message)
 
     def _rebuild_chord_rows(self) -> None:
         # Deliberately does NOT snapshot: by the time the screen re-renders
@@ -4290,7 +4412,9 @@ class ChordWeaverApp(ctk.CTk):
             # rectángulo del color del padre --- invisible, y pago.
             head = tk.Frame(bar_frame, bg=SURFACE_LIGHT)
             head.pack(fill="x", padx=12, pady=(10, 4))
-            FlatLabel(head, text=f"Compás {bar_index + 1}  ·  {signature}",
+            FlatLabel(head, text=trf("Compás {bar_index}  ·  {signature}",
+                                     bar_index=bar_index + 1,
+                                     signature=signature),
                       font=scaled(("Segoe UI Semibold", 13))).pack(side="left")
             fill_label = FlatLabel(head, text="", text_color=TEXT_MUTED)
             fill_label.pack(side="left", padx=12)
@@ -4348,7 +4472,7 @@ class ChordWeaverApp(ctk.CTk):
         line = tk.Frame(row["frame"], bg=SURFACE_LIGHT)
         line.pack(fill="x", pady=2)
 
-        entry = ctk.CTkEntry(line, width=130, placeholder_text="Cmaj7",
+        entry = ctk.CTkEntry(line, width=130, placeholder_text=tr("Cmaj7"),
                              font=FONT_BODY)
         entry.pack(side="left")
 
@@ -4391,9 +4515,9 @@ class ChordWeaverApp(ctk.CTk):
         lock_button.pack(side="right", padx=(6, 0))
         record["lock_button"] = lock_button
         Tooltip(lock_button,
-                "Fijar el orden exacto de las voces de este acorde. El "
-                "programa no va a poder cambiarlo, pero lo sigue teniendo en "
-                "cuenta al acomodar los acordes vecinos.")
+                tr("Fijar el orden exacto de las voces de este acorde. El "
+                   "programa no va a poder cambiarlo, pero lo sigue teniendo en "
+                   "cuenta al acomodar los acordes vecinos."))
 
         piano_button = FlatButton(line, "piano",
                                   lambda r=record: self._open_piano(r),
@@ -4437,7 +4561,7 @@ class ChordWeaverApp(ctk.CTk):
 
     def _validate_chord(self, record: dict) -> None:
         if self._is_rest(record):
-            record["status"].configure(text="silencio — el AG no interviene",
+            record["status"].configure(text=tr("silencio — el AG no interviene"),
                                        text_color=TEXT_MUTED)
             record["entry"].configure(state="disabled")
             record["lock_button"].configure(state="disabled")
@@ -4461,7 +4585,8 @@ class ChordWeaverApp(ctk.CTk):
             extra = len(record["custom"]) - len(self.voice_keys)
             if extra <= 0:
                 record["status"].configure(
-                    text=f"notas propias: {len(record['custom'])}",
+                    text=trf("notas propias: {record}",
+                             record=len(record['custom'])),
                     text_color=OK_GREEN)
             else:
                 # Por la cuenta y no por grados: en un acorde armado a mano
@@ -4469,10 +4594,19 @@ class ChordWeaverApp(ctk.CTk):
                 # intervalos, y «omitiendo 5, 1» sobre seis teclas elegidas
                 # a dedo no le dice nada a nadie. Lo que hay que saber es
                 # cuántas de las que se tocaron no van a sonar.
+                # Las dos formas van escritas enteras y no pegando la
+                # terminación del verbo: «va»/«van» es una concordancia del
+                # castellano y no existe como pedazo en ningún otro idioma.
                 record["status"].configure(
-                    text=f"{len(record['custom'])} notas y sólo "
-                         f"{len(self.voice_keys)} voces — {extra} no se "
-                         f"{'va' if extra == 1 else 'van'} a escribir",
+                    text=trf("{record} notas y sólo {voice_keys} voces — "
+                             "{extra} no se va a escribir",
+                             record=len(record['custom']),
+                             voice_keys=len(self.voice_keys), extra=extra)
+                    if extra == 1 else
+                    trf("{record} notas y sólo {voice_keys} voces — "
+                        "{extra} no se van a escribir",
+                        record=len(record['custom']),
+                        voice_keys=len(self.voice_keys), extra=extra),
                     text_color=WARN)
             return
         if not text:
@@ -4481,21 +4615,23 @@ class ChordWeaverApp(ctk.CTk):
         try:
             chord = parse_chord(text)
         except ChordParseError:
-            record["status"].configure(text="no lo reconozco — probá el piano",
+            record["status"].configure(text=tr("no lo reconozco — probá el piano"),
                                        text_color=ERROR)
             return
         advice = check_chord_fits(chord, len(self.voice_keys))
         if advice.fits:
             record["status"].configure(
-                text=f"{len(chord.tones)} notas — entra", text_color=OK_GREEN
+                text=trf("{tones} notas — entra", tones=len(chord.tones)), text_color=OK_GREEN
             )
         elif advice.suggested_omissions:
             record["status"].configure(
-                text=f"omitiendo {', '.join(advice.suggested_omissions)}",
+                text=trf("omitiendo {value}",
+                         value=', '.join(advice.suggested_omissions)),
                 text_color=WARN,
             )
         else:
-            record["status"].configure(text=advice.message[:60], text_color=ERROR)
+            record["status"].configure(text=tr(advice.message)[:60],
+                                       text_color=ERROR)
 
     def _revalidate_bar(self, bar_index: int) -> None:
         """Re-check every row of a bar, e.g. after a duration became a rest."""
@@ -4508,10 +4644,14 @@ class ChordWeaverApp(ctk.CTk):
         total = sum(self._duration_of(r) for r in row["entries"])
         target = signature.quarters_per_bar
         if abs(total - target) < 1e-6:
-            row["fill_label"].configure(text=f"{total:g}/{target:g} tiempos",
+            row["fill_label"].configure(text=trf("{total:g}/{target:g} "
+                                                 "tiempos",
+                                                 total=total, target=target),
                                         text_color=OK_GREEN)
         else:
-            row["fill_label"].configure(text=f"{total:g}/{target:g} tiempos",
+            row["fill_label"].configure(text=trf("{total:g}/{target:g} "
+                                                 "tiempos",
+                                                 total=total, target=target),
                                         text_color=WARN)
 
     @staticmethod
@@ -4533,10 +4673,10 @@ class ChordWeaverApp(ctk.CTk):
         window.transient(self)
         window.grab_set()
 
-        ctk.CTkLabel(window, text="Tocá las teclas que forman el acorde",
+        ctk.CTkLabel(window, text=tr("Tocá las teclas que forman el acorde"),
                      font=scaled(("Segoe UI Semibold", 14))).pack(pady=(16, 4))
         ctk.CTkLabel(window,
-                     text="La nota más grave se toma como fundamental.",
+                     text=tr("La nota más grave se toma como fundamental."),
                      font=FONT_SMALL, text_color=TEXT_MUTED).pack()
 
         # Cuántas voces hay, dicho antes de tocar nada. El aviso de la fila
@@ -4544,8 +4684,9 @@ class ChordWeaverApp(ctk.CTk):
         # seis notas sin que nada dijera que sobraban dos.
         limit = ctk.CTkLabel(
             window,
-            text=f"Hay {len(self.voice_keys)} voces: más notas que ésas se "
-                 f"escriben dando algunas por sobreentendidas.",
+            text=trf("Hay {voice_keys} voces: más notas que ésas se "
+                     "escriben dando algunas por sobreentendidas.",
+                     voice_keys=len(self.voice_keys)),
             font=FONT_SMALL, text_color=TEXT_MUTED)
         limit.pack()
 
@@ -4561,15 +4702,19 @@ class ChordWeaverApp(ctk.CTk):
             try:
                 if extra > 0:
                     limit.configure(
-                        text=f"Te pasaste por {extra}: hay "
-                             f"{len(self.voice_keys)} voces, así que "
-                             f"{extra} de estas notas no se van a escribir.",
+                        text=trf("Te pasaste por {extra}: hay {voice_keys} "
+                                 "voces, así que {extra2} de estas notas "
+                                 "no se van a escribir.",
+                                 extra=extra,
+                                 voice_keys=len(self.voice_keys),
+                                 extra2=extra),
                         text_color=WARN)
                 else:
                     limit.configure(
-                        text=f"Hay {len(self.voice_keys)} voces: más notas "
-                             f"que ésas se escriben dando algunas por "
-                             f"sobreentendidas.",
+                        text=trf("Hay {voice_keys} voces: más notas que "
+                                 "ésas se escriben dando algunas por "
+                                 "sobreentendidas.",
+                                 voice_keys=len(self.voice_keys)),
                         text_color=TEXT_MUTED)
             except tk.TclError:
                 pass
@@ -4601,9 +4746,9 @@ class ChordWeaverApp(ctk.CTk):
         def cancel() -> None:
             window.destroy()
 
-        ctk.CTkButton(buttons, text="Usar estas notas", fg_color=ACCENT,
+        ctk.CTkButton(buttons, text=tr("Usar estas notas"), fg_color=ACCENT,
                       hover_color=ACCENT_HOVER, command=accept).pack(side="left", padx=6)
-        ctk.CTkButton(buttons, text="Cancelar", fg_color="transparent",
+        ctk.CTkButton(buttons, text=tr("Cancelar"), fg_color="transparent",
                       border_width=1, border_color=TEXT_MUTED,
                       hover_color=SURFACE_LIGHT, command=cancel).pack(side="left", padx=6)
 
@@ -4611,8 +4756,8 @@ class ChordWeaverApp(ctk.CTk):
         """Pin the exact voicing of one chord so the search cannot alter it."""
         symbol = record["entry"].get().strip()
         if not symbol and not record["custom"]:
-            messagebox.showinfo("Falta el acorde",
-                                "Escribí el acorde antes de bloquearlo.")
+            messagebox.showinfo(tr("Falta el acorde"),
+                                tr("Escribí el acorde antes de bloquearlo."))
             return
 
         try:
@@ -4620,25 +4765,28 @@ class ChordWeaverApp(ctk.CTk):
                 symbol, self.voice_keys, record["custom"]
             )
         except Exception as exc:            # noqa: BLE001
-            messagebox.showerror("No se pudo", f"No entiendo ese acorde: {exc}")
+            messagebox.showerror(tr("No se pudo"), trf("No entiendo ese acorde: "
+                                                       "{exc}",
+                                                       exc=exc))
             return
 
         current = record["locked"] or record.get("imported_voicing") or suggested
 
         window = ctk.CTkToplevel(self)
-        window.title(f"Bloquear {symbol}")
+        window.title(trf("Bloquear {symbol}", symbol=symbol))
         window.geometry("560x500")
         window.configure(fg_color=SURFACE)
         window.transient(self)
         window.grab_set()
 
-        ctk.CTkLabel(window, text=f"Voicing fijo para {symbol}",
+        ctk.CTkLabel(window, text=trf("Voicing fijo para {symbol}",
+                                      symbol=symbol),
                      font=scaled(("Segoe UI Semibold", 15))).pack(anchor="w", padx=22,
                                                           pady=(20, 2))
         ctk.CTkLabel(window,
-                     text="Escribí qué nota canta cada voz. El programa no va a "
-                          "tocar este acorde, pero sí lo usa para decidir cómo se "
-                          "mueven los acordes de al lado.",
+                     text=tr("Escribí qué nota canta cada voz. El programa no va a "
+                             "tocar este acorde, pero sí lo usa para decidir cómo se "
+                             "mueven los acordes de al lado."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=460,
                      justify="left").pack(anchor="w", padx=22, pady=(0, 12))
 
@@ -4652,7 +4800,7 @@ class ChordWeaverApp(ctk.CTk):
         for index, voice in enumerate(voices):
             line = ctk.CTkFrame(window, fg_color="transparent")
             line.pack(fill="x", padx=22, pady=4)
-            ctk.CTkLabel(line, text=voice.name, font=FONT_SMALL, width=140,
+            ctk.CTkLabel(line, text=tr(voice.name), font=FONT_SMALL, width=140,
                          anchor="w").pack(side="left")
             variable = tk.StringVar(
                 value=note_name(current[index]) if index < len(current) else ""
@@ -4661,7 +4809,9 @@ class ChordWeaverApp(ctk.CTk):
             field.pack(side="left")
             field_vars.append(variable)
             ctk.CTkLabel(line,
-                         text=f"rango {note_name(voice.low)}–{note_name(voice.high)}",
+                         text=trf("rango {note_name}–{note_name2}",
+                                  note_name=note_name(voice.low),
+                                  note_name2=note_name(voice.high)),
                          font=FONT_SMALL, text_color=TEXT_MUTED
                          ).pack(side="left", padx=10)
             entries.append(field)
@@ -4679,9 +4829,9 @@ class ChordWeaverApp(ctk.CTk):
                                       text_color=ACCENT)
         summary_figure.pack(side="right", padx=14)
         Tooltip(summary_figure,
-                "Cifrado barroco: los intervalos se cuentan desde el bajo. "
-                "Un 6/5 es una séptima en primera inversión, o sea con la "
-                "tercera abajo.")
+                tr("Cifrado barroco: los intervalos se cuentan desde el bajo. "
+                   "Un 6/5 es una séptima en primera inversión, o sea con la "
+                   "tercera abajo."))
 
         def refresh_summary(*_args) -> None:
             pitches = []
@@ -4700,8 +4850,9 @@ class ChordWeaverApp(ctk.CTk):
             names = "   ".join(note_name(p) for p in pitches)
             sizes = intervals_above_bass(pitches)
             summary_notes.configure(
-                text=f"bajo → soprano:   {names}      "
-                     f"({'-'.join(['1'] + sizes)} sobre el bajo)",
+                text=trf("bajo → soprano:   {names}      ({value} sobre el "
+                         "bajo)",
+                         names=names, value='-'.join(['1'] + sizes)),
                 text_color=TEXT_NORMAL,
             )
             summary_figure.configure(text=figured_bass(chord, pitches))
@@ -4721,19 +4872,23 @@ class ChordWeaverApp(ctk.CTk):
                     pitch = parse_note_name(field.get())
                 except ValueError:
                     message.configure(
-                        text=f"«{field.get()}» no es una nota válida. Usá C4, Bb3, F#5."
+                        text=trf("«{value}» no es una nota válida. Usá C4, "
+                                 "Bb3, F#5.",
+                                 value=field.get())
                     )
                     return
                 if not voices[index].contains(pitch):
                     message.configure(
-                        text=f"{voices[index].name} no llega a {note_name(pitch)}."
+                        text=trf("{name} no llega a {note_name}.",
+                                 name=voices[index].name,
+                                 note_name=note_name(pitch))
                     )
                     return
                 pitches.append(pitch)
             if any(pitches[i] > pitches[i + 1] for i in range(len(pitches) - 1)):
                 message.configure(
-                    text="Las voces quedan cruzadas: cada una tiene que estar "
-                         "por encima de la anterior."
+                    text=tr("Las voces quedan cruzadas: cada una tiene que estar "
+                            "por encima de la anterior.")
                 )
                 return
             record["locked"] = pitches
@@ -4751,10 +4906,10 @@ class ChordWeaverApp(ctk.CTk):
 
         buttons = ctk.CTkFrame(window, fg_color="transparent")
         buttons.pack(pady=16)
-        ctk.CTkButton(buttons, text="Bloquear", fg_color=ACCENT,
+        ctk.CTkButton(buttons, text=tr("Bloquear"), fg_color=ACCENT,
                       hover_color=ACCENT_HOVER, command=apply_lock
                       ).pack(side="left", padx=6)
-        ctk.CTkButton(buttons, text="Quitar candado", fg_color="transparent",
+        ctk.CTkButton(buttons, text=tr("Quitar candado"), fg_color="transparent",
                       border_width=1, border_color=TEXT_MUTED,
                       hover_color=SURFACE_LIGHT, command=clear_lock
                       ).pack(side="left", padx=6)
@@ -4778,14 +4933,21 @@ class ChordWeaverApp(ctk.CTk):
                             and not r["custom"])
                 extra = ""
                 if empty and total > signature.quarters_per_bar:
-                    extra = (f" Hay {empty} casilla vacía que igual ocupa su "
-                             f"duración: escribí un acorde o borrala con la ✕."
+                    extra = (trf(" Hay {empty} casilla vacía que igual "
+                                 "ocupa su duración: escribí un acorde o "
+                                 "borrala con la ✕.",
+                                 empty=empty)
                              if empty == 1 else
-                             f" Hay {empty} casillas vacías que igual ocupan su "
-                             f"duración: escribí un acorde o borralas con la ✕.")
+                             trf(" Hay {empty} casillas vacías que igual "
+                                 "ocupan su duración: escribí un acorde o "
+                                 "borralas con la ✕.",
+                                 empty=empty))
                 problems.append(
-                    f"El compás {bar_index + 1} suma {total:g} tiempos y "
-                    f"necesita {signature.quarters_per_bar:g}.{extra}"
+                    trf("El compás {bar_index} suma {total:g} tiempos y "
+                        "necesita {quarters_per_bar:g}.{extra}",
+                        bar_index=bar_index + 1, total=total,
+                        quarters_per_bar=signature.quarters_per_bar,
+                        extra=extra)
                 )
                 continue
             for record in row["entries"]:
@@ -4799,7 +4961,9 @@ class ChordWeaverApp(ctk.CTk):
                     continue
                 text = record["entry"].get().strip()
                 if not text and not record["custom"]:
-                    problems.append(f"Falta un acorde en el compás {bar_index + 1}.")
+                    problems.append(trf("Falta un acorde en el compás "
+                                        "{bar_index}.",
+                                        bar_index=bar_index + 1))
                     continue
                 entries.append(session.ChordEntry(
                     symbol=text or "custom",
@@ -4810,10 +4974,10 @@ class ChordWeaverApp(ctk.CTk):
                 ))
 
         if problems:
-            self.chord_hint.configure(text="  ".join(problems[:3]))
+            self.chord_hint.configure(text="  ".join(trs(problems[:3])))
             return False
         if not entries:
-            self.chord_hint.configure(text="Todavía no cargaste ningún acorde.")
+            self.chord_hint.configure(text=tr("Todavía no cargaste ningún acorde."))
             return False
 
         self.chord_entries = entries
@@ -4860,25 +5024,26 @@ class ChordWeaverApp(ctk.CTk):
             self.genre_key, ["B", "T", "S"]))
         self.range_overrides = {}
         self._heading(
-            "Dibujá la melodía",
-            "Click en el pentagrama para poner cada nota, o usá el piano de "
-            "abajo. El programa busca los acordes que la sostienen "
-            "—respetando la armadura— y escribe las otras voces alrededor de "
-            "la tuya, sin tocarla.")
+            tr("Dibujá la melodía"),
+            tr("Click en el pentagrama para poner cada nota, o usá el piano de "
+               "abajo. El programa busca los acordes que la sostienen "
+               "—respetando la armadura— y escribe las otras voces alrededor de "
+               "la tuya, sin tocarla."))
 
         toolbar = ctk.CTkFrame(self.body, fg_color="transparent")
         toolbar.pack(fill="x", pady=(0, 8))
 
-        ctk.CTkLabel(toolbar, text="Armadura", font=FONT_SMALL,
+        ctk.CTkLabel(toolbar, text=tr("Armadura"), font=FONT_SMALL,
                      text_color=TEXT_MUTED).pack(side="left", padx=(0, 6))
         self.key_menu = ctk.CTkOptionMenu(
-            toolbar, values=[label for label, _f in self.KEY_SIGNATURES],
+            toolbar, values=trs(label for label, _f in self.KEY_SIGNATURES),
             width=180, fg_color=SURFACE, button_color=SURFACE,
             button_hover_color=ACCENT_HOVER, command=lambda _v: self._sync_staff())
-        self.key_menu.set(getattr(self, "_key_label", self.KEY_SIGNATURES[0][0]))
+        self.key_menu.set(tr(getattr(self, "_key_label",
+                                     self.KEY_SIGNATURES[0][0])))
         self.key_menu.pack(side="left")
 
-        ctk.CTkLabel(toolbar, text="Compás", font=FONT_SMALL,
+        ctk.CTkLabel(toolbar, text=tr("Compás"), font=FONT_SMALL,
                      text_color=TEXT_MUTED).pack(side="left", padx=(14, 6))
         self.melody_metre = ctk.CTkOptionMenu(
             toolbar, values=["4/4", "3/4", "2/4", "6/8"], width=80,
@@ -4887,10 +5052,11 @@ class ChordWeaverApp(ctk.CTk):
         self.melody_metre.set(getattr(self, "_melody_metre", "4/4"))
         self.melody_metre.pack(side="left")
 
-        ctk.CTkLabel(toolbar, text="Mi voz es", font=FONT_SMALL,
+        ctk.CTkLabel(toolbar, text=tr("Mi voz es"), font=FONT_SMALL,
                      text_color=TEXT_MUTED).pack(side="left", padx=(14, 6))
         self.melody_voice_menu = ctk.CTkOptionMenu(
-            toolbar, values=[VOICE_CATALOG[k].label for k in self.voice_keys],
+            toolbar, values=trs(VOICE_CATALOG[k].label
+                                for k in self.voice_keys),
             width=140, fg_color=SURFACE, button_color=SURFACE,
             button_hover_color=ACCENT_HOVER, command=lambda _v: self._sync_staff())
         # Por defecto, la voz más aguda: el pentagrama está en clave de sol y
@@ -4903,14 +5069,14 @@ class ChordWeaverApp(ctk.CTk):
         self.melody_voice_menu.pack(side="left")
 
         import_button = ctk.CTkButton(
-            toolbar, text="Importar…", width=110, height=30, font=FONT_SMALL,
+            toolbar, text=tr("Importar…"), width=110, height=30, font=FONT_SMALL,
             fg_color="transparent", border_width=1, border_color=TEXT_MUTED,
             hover_color=SURFACE_LIGHT, command=self._import_melody)
         import_button.pack(side="right")
         Tooltip(import_button,
-                "Lee una melodía de un archivo MusicXML. Toma la nota más "
-                "aguda de cada momento, así que sirve aunque la partitura "
-                "traiga más de una voz.")
+                tr("Lee una melodía de un archivo MusicXML. Toma la nota más "
+                   "aguda de cada momento, así que sirve aunque la partitura "
+                   "traiga más de una voz."))
 
         self.staff = StaffEditor(
             self.body,
@@ -4932,41 +5098,41 @@ class ChordWeaverApp(ctk.CTk):
             value=getattr(self, "_duration_label", "Negra"))
         for label, value in DURATIONS:
             ctk.CTkRadioButton(
-                controls, text=label, variable=self.duration_var, value=label,
+                controls, text=tr(label), variable=self.duration_var, value=label,
                 font=FONT_SMALL, fg_color=ACCENT, hover_color=ACCENT_HOVER,
                 command=lambda v=value: setattr(self.staff, "duration", v)
             # Apretadas: la fila lleva además los cuatro botones del
             # pentagrama y con doce píxeles entre figura y figura el último
             # ---«Borrar todo»--- se quedaba sin la mitad de su ancho.
             ).pack(side="left", padx=(0, 4))
-        listen = ctk.CTkButton(controls, text="▶  Escuchar", width=130,
+        listen = ctk.CTkButton(controls, text=tr("▶  Escuchar"), width=130,
                                height=30, font=FONT_SMALL, fg_color=ACCENT,
                                hover_color=ACCENT_HOVER)
         listen.configure(command=lambda b=listen: self._play_melody(b))
         listen.pack(side="right", padx=(12, 0))
-        Tooltip(listen, "Reproduce la melodía sola, para escuchar lo que "
-                        "estás escribiendo antes de armonizarla.")
+        Tooltip(listen, tr("Reproduce la melodía sola, para escuchar lo que "
+                           "estás escribiendo antes de armonizarla."))
         # Entre «Escuchar» y «Deshacer»: es un botón del pentagrama como
         # los otros dos, y con la fila de figuras a la izquierda queda a
         # mano. Lo que significa el dorado sigue explicado abajo.
         self.mark_button = ctk.CTkButton(
-            controls, text="Marcar notas", width=118, height=30,
+            controls, text=tr("Marcar notas"), width=118, height=30,
             font=FONT_SMALL, fg_color="transparent", border_width=1,
             border_color=GOLD_DIM, text_color=GOLD, hover_color=SURFACE_LIGHT,
             command=self._toggle_marking)
         self.mark_button.pack(side="right", padx=(6, 0))
         Tooltip(self.mark_button,
-                "Mientras está encendido, cada click del pentagrama prende o "
-                "apaga el acorde de una nota en vez de escribirla. Apaga "
-                "también las que doró el programa.")
+                tr("Mientras está encendido, cada click del pentagrama prende o "
+                   "apaga el acorde de una nota en vez de escribirla. Apaga "
+                   "también las que doró el programa."))
         self.undo_button = ctk.CTkButton(
-            controls, text="Deshacer", width=100, height=30,
+            controls, text=tr("Deshacer"), width=100, height=30,
             font=FONT_SMALL, fg_color="transparent", border_width=1,
             border_color=TEXT_MUTED, hover_color=SURFACE_LIGHT,
             command=self.staff.undo)
         self.undo_button.pack(side="right", padx=(6, 0))
-        Tooltip(self.undo_button, "Borra la última nota escrita.  (Ctrl+Z)")
-        ctk.CTkButton(controls, text="Borrar todo", width=110, height=30,
+        Tooltip(self.undo_button, tr("Borra la última nota escrita.  (Ctrl+Z)"))
+        ctk.CTkButton(controls, text=tr("Borrar todo"), width=110, height=30,
                       font=FONT_SMALL, fg_color="transparent", border_width=1,
                       border_color=TEXT_MUTED, hover_color=SURFACE_LIGHT,
                       command=self.staff.clear).pack(side="right")
@@ -4981,11 +5147,11 @@ class ChordWeaverApp(ctk.CTk):
                      width=14).pack(side="left")
         ctk.CTkLabel(
             legend,
-            text="Las doradas son las notas que van a llevar acorde. El "
-                 "click derecho ---o «Marcar notas» prendido--- prende y "
-                 "apaga el dorado de una nota: sirve tanto para pedir un "
-                 "acorde donde no lo había como para sacar el que puso el "
-                 "programa.",
+            text=tr("Las doradas son las notas que van a llevar acorde. El "
+                    "click derecho ---o «Marcar notas» prendido--- prende y "
+                    "apaga el dorado de una nota: sirve tanto para pedir un "
+                    "acorde donde no lo había como para sacar el que puso el "
+                    "programa."),
             font=FONT_SMALL, text_color=TEXT_MUTED, justify="left",
             wraplength=760).pack(side="left")
 
@@ -5086,7 +5252,7 @@ class ChordWeaverApp(ctk.CTk):
         on = self.staff.marking
         try:
             self.mark_button.configure(
-                text="Marcando…" if on else "Marcar notas",
+                text=tr("Marcando…" if on else "Marcar notas"),
                 fg_color=GOLD_DIM if on else "transparent",
                 text_color=TEXT_NORMAL if on else GOLD,
                 border_color=GOLD if on else GOLD_DIM)
@@ -5103,7 +5269,7 @@ class ChordWeaverApp(ctk.CTk):
         # Tónica, tónica y quinta, las tres redondas, y nada más: el
         # armonizador contesta con otra cosa.
         fifths = next((f for name, f in self.KEY_SIGNATURES
-                       if name == self.key_menu.get()), 0)
+                       if name == i18n.untr(self.key_menu.get())), 0)
         tonic, _mode_key = importer.key_from_fifths(fifths)
         if eggs.zombie_call(written, tonic):
             self._egg_zombie(button)
@@ -5112,11 +5278,11 @@ class ChordWeaverApp(ctk.CTk):
         for pitch, duration in written:
             line.append((pitch, position, duration))
             position += duration
-        button.configure(text="♪  Sonando…", state="disabled")
+        button.configure(text=tr("♪  Sonando…"), state="disabled")
 
         def restore() -> None:
             try:
-                button.configure(text="▶  Escuchar", state="normal")
+                button.configure(text=tr("▶  Escuchar"), state="normal")
             except tk.TclError:
                 pass
 
@@ -5127,10 +5293,10 @@ class ChordWeaverApp(ctk.CTk):
         """Push the chosen key and metre into the staff."""
         if not hasattr(self, "staff"):
             return
-        label = self.key_menu.get()
+        label = i18n.untr(self.key_menu.get())
         fifths = next((f for name, f in self.KEY_SIGNATURES if name == label), 0)
         beats, beat_type = (int(x) for x in self.melody_metre.get().split("/"))
-        voice_label = self.melody_voice_menu.get()
+        voice_label = i18n.untr(self.melody_voice_menu.get())
         index = next((i for i, k in enumerate(self.voice_keys)
                       if VOICE_CATALOG[k].label == voice_label), 0)
         # A low part reads on the bass staff; anything else on the treble.
@@ -5149,7 +5315,7 @@ class ChordWeaverApp(ctk.CTk):
         if getattr(self, "_story_piano_on", False):
             try:
                 self.melody_hint.configure(
-                    text="Tocá la tecla dorada del piano para seguir.",
+                    text=tr("Tocá la tecla dorada del piano para seguir."),
                     text_color=GOLD)
             except tk.TclError:
                 pass
@@ -5159,7 +5325,8 @@ class ChordWeaverApp(ctk.CTk):
         per_bar = self.staff.beats * 4.0 / self.staff.beat_type
         bars = quarters / per_bar if per_bar else 0
         self.melody_hint.configure(
-            text=f"{count} nota(s) · {bars:.2g} compás(es)"
+            text=trf("{count} nota(s) · {bars:.2g} compás(es)",
+                     count=count, bars=bars)
             + ("" if abs(bars - round(bars)) < 1e-6
                else "  ·  el último compás quedó incompleto")
         )
@@ -5184,7 +5351,7 @@ class ChordWeaverApp(ctk.CTk):
         try:
             melody = importer.read_melody(path)
         except importer.ImportError_ as exc:
-            messagebox.showerror("No se pudo importar", str(exc))
+            messagebox.showerror(tr("No se pudo importar"), str(exc))
             return
         self.staff.clear()
         for note in melody.notes:
@@ -5193,24 +5360,25 @@ class ChordWeaverApp(ctk.CTk):
             self.melody_metre.set(f"{melody.bars[0].beats}/{melody.bars[0].beat_type}")
         self._sync_staff()
         self._award({"import_score"})
-        messagebox.showinfo("Melodía importada",
-                            f"Se cargaron {len(melody.notes)} notas.")
+        messagebox.showinfo(tr("Melodía importada"),
+                            trf("Se cargaron {notes} notas.",
+                                notes=len(melody.notes)))
 
     def _commit_melody(self) -> bool:
         if not hasattr(self, "staff"):
             return True
         if not self.staff.notes:
             self.melody_hint.configure(
-                text="Escribí al menos una nota antes de seguir.",
+                text=tr("Escribí al menos una nota antes de seguir."),
                 text_color=WARN)
             return False
         self._melody_notes = list(self.staff.notes)
         self._melody_marks = set(self.staff.marked)
         self._melody_skips = set(self.staff.blocked)
-        self._key_label = self.key_menu.get()
+        self._key_label = i18n.untr(self.key_menu.get())
         self._melody_metre = self.melody_metre.get()
         self._duration_label = self.duration_var.get()
-        voice_label = self.melody_voice_menu.get()
+        voice_label = i18n.untr(self.melody_voice_menu.get())
         self._melody_voice = next(
             (i for i, k in enumerate(self.voice_keys)
              if VOICE_CATALOG[k].label == voice_label), 0)
@@ -5231,19 +5399,26 @@ class ChordWeaverApp(ctk.CTk):
         too_low = [p for p in pitches if p < chosen.low]
         if too_high or too_low:
             if too_high and too_low:
-                detail = (f"La melodía baja hasta {note_name(min(too_low))} y "
-                          f"sube hasta {note_name(max(too_high))}")
+                detail = (trf("La melodía baja hasta {note_name} y sube "
+                              "hasta {note_name2}",
+                              note_name=note_name(min(too_low)),
+                              note_name2=note_name(max(too_high))))
             elif too_high:
-                detail = f"La melodía sube hasta {note_name(max(too_high))}"
+                detail = trf("La melodía sube hasta {note_name}",
+                             note_name=note_name(max(too_high)))
             else:
-                detail = f"La melodía baja hasta {note_name(min(too_low))}"
+                detail = trf("La melodía baja hasta {note_name}",
+                             note_name=note_name(min(too_low)))
             # Sin mandar a la pantalla de voces: en el Armonizador no existe
             # ---el modo fija la textura por estilo--- así que el consejo era
             # una puerta que no está.
             self.melody_hint.configure(
-                text=f"{detail}, y {chosen.label.lower()} sólo canta de "
-                     f"{note_name(chosen.low)} a {note_name(chosen.high)}. "
-                     f"Elegí otra voz en «Mi voz es» o movela de octava.",
+                text=trf("{detail}, y {lower} sólo canta de {note_name} a "
+                         "{note_name2}. Elegí otra voz en «Mi voz es» o "
+                         "movela de octava.",
+                         detail=detail, lower=chosen.label.lower(),
+                         note_name=note_name(chosen.low),
+                         note_name2=note_name(chosen.high)),
                 text_color=WARN)
             return False
 
@@ -5333,7 +5508,8 @@ class ChordWeaverApp(ctk.CTk):
         try:
             melody = self._build_melody(
                 written=self.staff.notes, marks=self.staff.marked,
-                key_label=self.key_menu.get(), metre=self.melody_metre.get(),
+                key_label=i18n.untr(self.key_menu.get()),
+                metre=self.melody_metre.get(),
                 skips=self.staff.blocked)
             planned = harmonize.planned_notes(melody, self._harmonisation_rules())
         except (tk.TclError, AttributeError, ValueError):
@@ -5423,11 +5599,11 @@ class ChordWeaverApp(ctk.CTk):
     def _screen_harmony(self) -> None:
         self._forget_genre_settings()
         self._heading(
-            "¿De dónde saca los acordes?",
-            "Acá se define el material: la tonalidad, el modo, qué acordes "
-            "prestados de fuera de la escala se permiten y con qué empieza y "
-            "termina. El programa arma la progresión con eso y nada más, y "
-            "después la juzga con las reglas del estilo.")
+            tr("¿De dónde saca los acordes?"),
+            tr("Acá se define el material: la tonalidad, el modo, qué acordes "
+               "prestados de fuera de la escala se permiten y con qué empieza y "
+               "termina. El programa arma la progresión con eso y nada más, y "
+               "después la juzga con las reglas del estilo."))
 
         columns = ctk.CTkFrame(self.body, fg_color="transparent")
         columns.pack(fill="both", expand=True)
@@ -5453,7 +5629,7 @@ class ChordWeaverApp(ctk.CTk):
             height=available)
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 8), pady=(0, 4))
 
-        ctk.CTkLabel(left, text="Tonalidad", font=scaled(("Segoe UI Semibold", 14))
+        ctk.CTkLabel(left, text=tr("Tonalidad"), font=scaled(("Segoe UI Semibold", 14))
                      ).pack(anchor="w", padx=16, pady=(14, 8))
         row = ctk.CTkFrame(left, fg_color="transparent")
         row.pack(fill="x", padx=16, pady=4)
@@ -5464,21 +5640,22 @@ class ChordWeaverApp(ctk.CTk):
         self.tonic_menu.set(getattr(self, "_tonic", "C"))
         self.tonic_menu.pack(side="left")
         self.mode_menu = ctk.CTkOptionMenu(
-            row, values=[m.label for m in harmony.MODES.values()], width=180,
+            row, values=trs(m.label for m in harmony.MODES.values()),
+            width=180,
             fg_color=SURFACE, button_color=SURFACE,
             button_hover_color=ACCENT_HOVER,
             command=self._follow_key_change)
-        self.mode_menu.set(getattr(self, "_mode_label",
-                                   harmony.MODES["major"].label))
+        self.mode_menu.set(tr(getattr(self, "_mode_label",
+                                      harmony.MODES["major"].label)))
         self.mode_menu.pack(side="left", padx=10)
 
-        ctk.CTkLabel(left, text="Acorde inicial y final",
+        ctk.CTkLabel(left, text=tr("Acorde inicial y final"),
                      font=scaled(("Segoe UI Semibold", 14))).pack(anchor="w", padx=16,
                                                           pady=(16, 4))
         ctk.CTkLabel(left,
-                     text="Podés dejarlos libres, preferirlos con peso, o "
-                          "exigirlos. Obligatorio no se negocia: ese lugar "
-                          "queda con un solo acorde posible.",
+                     text=tr("Podés dejarlos libres, preferirlos con peso, o "
+                             "exigirlos. Obligatorio no se negocia: ese lugar "
+                             "queda con un solo acorde posible."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=330,
                      justify="left").pack(anchor="w", padx=16)
         # The tonic is written "I" in a major key and "i" in a minor one, so
@@ -5489,15 +5666,16 @@ class ChordWeaverApp(ctk.CTk):
         for label, attr in (("Empieza en", "start"), ("Termina en", "end")):
             line = ctk.CTkFrame(left, fg_color="transparent")
             line.pack(fill="x", padx=16, pady=5)
-            ctk.CTkLabel(line, text=label, font=FONT_SMALL, width=90,
+            ctk.CTkLabel(line, text=tr(label), font=FONT_SMALL, width=90,
                          anchor="w").pack(side="left")
             roman = ctk.CTkEntry(line, width=70)
             roman.insert(0, getattr(self, f"_{attr}_roman", None) or tonic_numeral)
             roman.pack(side="left")
-            menu = ctk.CTkOptionMenu(line, values=self.ENDPOINT_MODES, width=130,
+            menu = ctk.CTkOptionMenu(line, values=trs(self.ENDPOINT_MODES),
+                                     width=130,
                                      fg_color=SURFACE, button_color=SURFACE,
                                      button_hover_color=ACCENT_HOVER)
-            menu.set(getattr(self, f"_{attr}_mode", "Obligatorio"))
+            menu.set(tr(getattr(self, f"_{attr}_mode", "Obligatorio")))
             menu.pack(side="left", padx=8)
             setattr(self, f"{attr}_roman_entry", roman)
             setattr(self, f"{attr}_mode_menu", menu)
@@ -5506,23 +5684,23 @@ class ChordWeaverApp(ctk.CTk):
         # defecto de uno que el usuario eligió a mano.
         self._tonic_numeral_shown = tonic_numeral
 
-        ctk.CTkLabel(left, text="Notas de paso",
+        ctk.CTkLabel(left, text=tr("Notas de paso"),
                      font=scaled(("Segoe UI Semibold", 14))).pack(anchor="w", padx=16,
                                                           pady=(16, 4))
         ctk.CTkLabel(left,
-                     text="Rellenan un salto de tercera con movimiento por "
-                          "grado conjunto. Elegí qué voces pueden usarlas.",
+                     text=tr("Rellenan un salto de tercera con movimiento por "
+                             "grado conjunto. Elegí qué voces pueden usarlas."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=330,
                      justify="left").pack(anchor="w", padx=16)
         self.passing_vars: Dict[int, tk.BooleanVar] = {}
         for index, key in enumerate(self.voice_keys):
             var = tk.BooleanVar(value=getattr(self, "_passing_saved", {}).get(index, False))
             self.passing_vars[index] = var
-            ctk.CTkCheckBox(left, text=VOICE_CATALOG[key].label, variable=var,
+            ctk.CTkCheckBox(left, text=tr(VOICE_CATALOG[key].label), variable=var,
                             font=FONT_SMALL, fg_color=ACCENT,
                             hover_color=ACCENT_HOVER).pack(anchor="w", padx=16,
                                                            pady=3)
-        ctk.CTkLabel(left, text="Con qué frecuencia aparecen", font=FONT_SMALL,
+        ctk.CTkLabel(left, text=tr("Con qué frecuencia aparecen"), font=FONT_SMALL,
                      text_color=TEXT_MUTED).pack(anchor="w", padx=16, pady=(8, 2))
         self.passing_density = LabelledSlider(
             left, "pocas", "muchas", 0.0, 1.0,
@@ -5534,26 +5712,26 @@ class ChordWeaverApp(ctk.CTk):
         self.passing_chromatic = tk.BooleanVar(
             value=getattr(self, "_passing_chromatic", False))
         chromatic_box = ctk.CTkCheckBox(
-            chrom, text="Permitir cromáticas", variable=self.passing_chromatic,
+            chrom, text=tr("Permitir cromáticas"), variable=self.passing_chromatic,
             font=FONT_SMALL, fg_color=ACCENT, hover_color=ACCENT_HOVER)
         chromatic_box.pack(anchor="w")
         Tooltip(chromatic_box,
-                "Deja que los adornos usen notas de fuera de la escala. Da "
-                "resultados más ricos, pero es muy probable que haya que "
-                "retocarlos a mano: el programa no juzga si la cromática "
-                "encaja en el contexto, sólo que sea alcanzable.")
+                tr("Deja que los adornos usen notas de fuera de la escala. Da "
+                   "resultados más ricos, pero es muy probable que haya que "
+                   "retocarlos a mano: el programa no juzga si la cromática "
+                   "encaja en el contexto, sólo que sea alcanzable."))
 
         # --- right: borrowed chords ---
         self.borrowed_panel = right = ctk.CTkScrollableFrame(
             columns, fg_color=SURFACE_LIGHT, corner_radius=11,
             height=available)
         right.grid(row=0, column=1, sticky="nsew", padx=(8, 0), pady=(0, 4))
-        ctk.CTkLabel(right, text="Intercambios modales",
+        ctk.CTkLabel(right, text=tr("Intercambios modales"),
                      font=scaled(("Segoe UI Semibold", 14))).pack(anchor="w", padx=16,
                                                           pady=(14, 4))
         ctk.CTkLabel(right,
-                     text="Acordes prestados del modo paralelo. Pasá el mouse "
-                          "por cada uno para ver qué aporta.",
+                     text=tr("Acordes prestados del modo paralelo. Pasá el mouse "
+                             "por cada uno para ver qué aporta."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=330,
                      justify="left").pack(anchor="w", padx=16, pady=(0, 6))
 
@@ -5566,13 +5744,13 @@ class ChordWeaverApp(ctk.CTk):
         for key, spec in harmony.BORROWED_CHORDS.items():
             var = tk.BooleanVar(value=key in saved)
             self.borrowed_vars[key] = var
-            box = ctk.CTkCheckBox(right, text=spec.label, variable=var,
+            box = ctk.CTkCheckBox(right, text=tr(spec.label), variable=var,
                                   font=FONT_SMALL, fg_color=ACCENT,
                                   hover_color=ACCENT_HOVER)
             box.pack(anchor="w", padx=16, pady=4)
             Tooltip(box, spec.description)
 
-        ctk.CTkLabel(right, text="Cuánto usarlos", font=FONT_SMALL,
+        ctk.CTkLabel(right, text=tr("Cuánto usarlos"), font=FONT_SMALL,
                      text_color=TEXT_MUTED).pack(anchor="w", padx=16, pady=(14, 2))
         # Reads left-to-right as less-to-more, like every other slider here.
         # Running it the other way meant dragging it down made the program do
@@ -5589,7 +5767,7 @@ class ChordWeaverApp(ctk.CTk):
             getattr(self, "_borrowed_weight", BORROWED_DEFAULT))
         self.borrowed_slider.pack(fill="x", padx=16, pady=(0, 10))
 
-        ctk.CTkLabel(right, text="Peso de la armonía frente al voice leading",
+        ctk.CTkLabel(right, text=tr("Peso de la armonía frente al voice leading"),
                      font=FONT_SMALL, text_color=TEXT_MUTED).pack(anchor="w",
                                                                   padx=16,
                                                                   pady=(12, 2))
@@ -5606,22 +5784,22 @@ class ChordWeaverApp(ctk.CTk):
             value=getattr(self, "_sevenths",
                           harmony.GENRE_SEVENTHS.get(self.genre_key, False)))
         sevenths_box = ctk.CTkCheckBox(
-            right, text="Acordes de séptima", variable=self.sevenths_var,
+            right, text=tr("Acordes de séptima"), variable=self.sevenths_var,
             font=FONT_SMALL, fg_color=ACCENT, hover_color=ACCENT_HOVER)
         sevenths_box.pack(anchor="w", padx=16, pady=(10, 4))
         Tooltip(sevenths_box,
-                "Construye los acordes con cuatro notas en vez de tres: "
-                "Cmaj7 en lugar de C. Es lo normal en jazz y la excepción en "
-                "los otros estilos.")
+                tr("Construye los acordes con cuatro notas en vez de tres: "
+                   "Cmaj7 en lugar de C. Es lo normal en jazz y la excepción en "
+                   "los otros estilos."))
 
-        ctk.CTkLabel(right, text="Modulaciones",
+        ctk.CTkLabel(right, text=tr("Modulaciones"),
                      font=scaled(("Segoe UI Semibold", 14))).pack(anchor="w", padx=16,
                                                           pady=(6, 2))
         ctk.CTkLabel(right,
-                     text="La pieza puede irse a otra tonalidad, o cambiar de "
-                          "modo sobre la misma tónica, y siempre vuelve al "
-                          "punto de partida antes de terminar. Se pueden usar "
-                          "las dos a la vez.",
+                     text=tr("La pieza puede irse a otra tonalidad, o cambiar de "
+                             "modo sobre la misma tónica, y siempre vuelve al "
+                             "punto de partida antes de terminar. Se pueden usar "
+                             "las dos a la vez."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=330,
                      justify="left").pack(anchor="w", padx=16)
 
@@ -5637,7 +5815,7 @@ class ChordWeaverApp(ctk.CTk):
         enough_bars = self.bar_count >= harmony.ModulationSettings().min_bars_for_modulation
         state = "normal" if enough_bars else "disabled"
 
-        key_box = ctk.CTkCheckBox(right, text="A otra tonalidad",
+        key_box = ctk.CTkCheckBox(right, text=tr("A otra tonalidad"),
                                   variable=self.mod_key_var, font=FONT_SMALL,
                                   fg_color=ACCENT, hover_color=ACCENT_HOVER,
                                   state=state)
@@ -5645,7 +5823,7 @@ class ChordWeaverApp(ctk.CTk):
         if not enough_bars:
             self.mod_key_var.set(False)
             self.mod_modal_var.set(False)
-        modal_box = ctk.CTkCheckBox(right, text="De modo (misma tónica)",
+        modal_box = ctk.CTkCheckBox(right, text=tr("De modo (misma tónica)"),
                                     variable=self.mod_modal_var, font=FONT_SMALL,
                                     fg_color=ACCENT, hover_color=ACCENT_HOVER,
                                     state=state)
@@ -5658,7 +5836,7 @@ class ChordWeaverApp(ctk.CTk):
         self._mod_enough_bars = enough_bars
         self._refresh_modulation_labels()
 
-        ctk.CTkLabel(right, text="Cuánto se aleja", font=FONT_SMALL,
+        ctk.CTkLabel(right, text=tr("Cuánto se aleja"), font=FONT_SMALL,
                      text_color=TEXT_MUTED).pack(anchor="w", padx=16, pady=(8, 2))
         self.mod_slider = LabelledSlider(
             right, "casi nunca", "muy seguido", 0.0, 60.0,
@@ -5669,13 +5847,13 @@ class ChordWeaverApp(ctk.CTk):
         #: fuera de la explicación que los nombra.
         self.modulation_block = key_box
 
-        ctk.CTkLabel(right, text="Acordes con color añadido",
+        ctk.CTkLabel(right, text=tr("Acordes con color añadido"),
                      font=scaled(("Segoe UI Semibold", 14))).pack(anchor="w", padx=16,
                                                           pady=(6, 2))
         ctk.CTkLabel(right,
-                     text="Cuando a un acorde le sobran voces, en vez de "
-                          "repetir una nota puede agregar una novena, una "
-                          "oncena o una sexta.",
+                     text=tr("Cuando a un acorde le sobran voces, en vez de "
+                             "repetir una nota puede agregar una novena, una "
+                             "oncena o una sexta."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=330,
                      justify="left").pack(anchor="w", padx=16)
         # With five or six voices a plain triad has nothing left to do but
@@ -5788,18 +5966,20 @@ class ChordWeaverApp(ctk.CTk):
         except tk.TclError:
             return
         if not self._mod_enough_bars:
-            no_room = ("Necesitás al menos 8 compases: la pieza tiene que "
-                       "asentar la tonalidad, viajar y volver, y con "
-                       f"{self.bar_count} no hay lugar para eso.")
+            no_room = (trf("Necesitás al menos 8 compases: la pieza tiene "
+                           "que asentar la tonalidad, viajar y volver, y "
+                           "con {bar_count} no hay lugar para eso.",
+                           bar_count=self.bar_count))
             key_tip.text = modal_tip.text = no_room
             return
         keys, modals = self._modulation_targets_now()
-        key_tip.text = (f"Viaja a otra tonalidad — {_listed(keys)} — y "
-                        "regresa." if keys else
+        key_tip.text = (trf("Viaja a otra tonalidad — {listed} — y regresa.",
+                            listed=_listed(keys)) if keys else
                         "Este estilo no viaja a otra tonalidad.")
         if modals:
-            modal_tip.text = ("Cambia el color sin cambiar el centro: la "
-                              f"misma tónica pasa a {_listed(modals)}.")
+            modal_tip.text = (trf("Cambia el color sin cambiar el centro: "
+                                  "la misma tónica pasa a {listed}.",
+                                  listed=_listed(modals)))
             modal_box.configure(state="normal")
         else:
             # Sin destino modal el tilde se prendía y no pasaba nada.
@@ -5814,7 +5994,7 @@ class ChordWeaverApp(ctk.CTk):
     def _mode_key_now(self) -> str:
         """The mode currently chosen, before it has been committed."""
         try:
-            label = self.mode_menu.get()
+            label = i18n.untr(self.mode_menu.get())
         except (AttributeError, tk.TclError):
             return getattr(self, "_mode_key", "major")
         return next((k for k, m in harmony.MODES.items() if m.label == label),
@@ -5822,7 +6002,7 @@ class ChordWeaverApp(ctk.CTk):
 
     def _commit_harmony(self) -> bool:
         self._tonic = self.tonic_menu.get()
-        self._mode_label = self.mode_menu.get()
+        self._mode_label = i18n.untr(self.mode_menu.get())
         previous_mode = getattr(self, "_mode_key", None)
         self._mode_key = next(
             (k for k, m in harmony.MODES.items() if m.label == self._mode_label),
@@ -5840,8 +6020,8 @@ class ChordWeaverApp(ctk.CTk):
                     field.insert(0, "i" if minor_now else "I")
         self._start_roman = self.start_roman_entry.get().strip()
         self._end_roman = self.end_roman_entry.get().strip()
-        self._start_mode = self.start_mode_menu.get()
-        self._end_mode = self.end_mode_menu.get()
+        self._start_mode = i18n.untr(self.start_mode_menu.get())
+        self._end_mode = i18n.untr(self.end_mode_menu.get())
         self._borrowed_saved = {k for k, v in self.borrowed_vars.items() if v.get()}
         self._borrowed_weight = float(self.borrowed_slider.get())
         self._harmony_emphasis = float(self.harmony_slider.get())
@@ -5865,8 +6045,10 @@ class ChordWeaverApp(ctk.CTk):
                                    ("final", self._end_roman, self._end_mode)):
             if mode != "Libre" and roman and roman not in available:
                 self.harmony_hint.configure(
-                    text=f"El acorde {label} «{roman}» no existe en esta "
-                         f"tonalidad. Disponibles: {', '.join(sorted(available))}"
+                    text=trf("El acorde {label} «{roman}» no existe en "
+                             "esta tonalidad. Disponibles: {value}",
+                             label=label, roman=roman,
+                             value=', '.join(sorted(available)))
                 )
                 return False
 
@@ -5997,12 +6179,13 @@ class ChordWeaverApp(ctk.CTk):
         self.strict_var = None
         profile = GENRE_PROFILES[self.genre_key]
         self._heading(
-            "Reglas y balance",
-            f"Los valores arrancan como los deja el estilo {profile.label}, "
-            f"pero desde acá mandás vos: las de la izquierda son duras —lo "
-            f"que las rompe se descarta— y la de la derecha decide qué pesa "
-            f"más al comparar dos soluciones válidas. Pasá el mouse por cada "
-            f"una para ver qué significa.")
+            tr("Reglas y balance"),
+            trf("Los valores arrancan como los deja el estilo {label}, "
+                "pero desde acá mandás vos: las de la izquierda son duras "
+                "—lo que las rompe se descarta— y la de la derecha decide "
+                "qué pesa más al comparar dos soluciones válidas. Pasá el "
+                "mouse por cada una para ver qué significa.",
+                label=profile.label))
 
         columns = ctk.CTkFrame(self.body, fg_color="transparent")
         columns.pack(fill="both", expand=True)
@@ -6012,9 +6195,9 @@ class ChordWeaverApp(ctk.CTk):
         self.rules_panel = rules = ctk.CTkFrame(
             columns, fg_color=SURFACE_LIGHT, corner_radius=11)
         rules.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        ctk.CTkLabel(rules, text="Reglas duras", font=scaled(("Segoe UI Semibold", 14))
+        ctk.CTkLabel(rules, text=tr("Reglas duras"), font=scaled(("Segoe UI Semibold", 14))
                      ).pack(anchor="w", padx=16, pady=(14, 2))
-        ctk.CTkLabel(rules, text="Una solución que rompa una regla prendida se descarta.",
+        ctk.CTkLabel(rules, text=tr("Una solución que rompa una regla prendida se descarta."),
                      font=FONT_SMALL, text_color=TEXT_MUTED
                      ).pack(anchor="w", padx=16, pady=(0, 8))
 
@@ -6032,7 +6215,7 @@ class ChordWeaverApp(ctk.CTk):
             var = tk.BooleanVar(
                 value=remembered.get(key, bool(getattr(profile, key, False))))
             self.switch_vars[key] = var
-            switch = ctk.CTkSwitch(rules, text=label, variable=var,
+            switch = ctk.CTkSwitch(rules, text=tr(label), variable=var,
                                    font=FONT_SMALL, progress_color=ACCENT)
             switch.pack(anchor="w", padx=16, pady=7)
             self.switch_widgets[key] = switch
@@ -6041,12 +6224,12 @@ class ChordWeaverApp(ctk.CTk):
         self.balance_panel = balance = ctk.CTkFrame(
             columns, fg_color=SURFACE_LIGHT, corner_radius=11)
         balance.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-        ctk.CTkLabel(balance, text="¿Qué te importa más?",
+        ctk.CTkLabel(balance, text=tr("¿Qué te importa más?"),
                      font=scaled(("Segoe UI Semibold", 14))).pack(anchor="w", padx=16,
                                                           pady=(14, 2))
         ctk.CTkLabel(balance,
-                     text="El resultado se juzga por dos cosas: cuánto se mueven las voces y "
-                          "cuánto respeta el estilo. Acá decidís cuál pesa más.",
+                     text=tr("El resultado se juzga por dos cosas: cuánto se mueven las voces y "
+                             "cuánto respeta el estilo. Acá decidís cuál pesa más."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=380,
                      justify="left").pack(anchor="w", padx=16, pady=(0, 10))
 
@@ -6057,7 +6240,8 @@ class ChordWeaverApp(ctk.CTk):
             position = self.balance_slider.get()
             motion, style = self._emphases_from(position)
             self.balance_value.configure(
-                text=f"distancia ×{motion:.2f}   ·   estilo ×{style:.2f}"
+                text=trf("distancia ×{motion:.2f}   ·   estilo ×{style:.2f}",
+                         motion=motion, style=style)
             )
 
         self.balance_slider = ctk.CTkSlider(balance, from_=0, to=100, number_of_steps=100,
@@ -6070,31 +6254,32 @@ class ChordWeaverApp(ctk.CTk):
 
         legend = ctk.CTkFrame(balance, fg_color="transparent")
         legend.pack(fill="x", padx=16)
-        ctk.CTkLabel(legend, text="sólo distancia", font=FONT_SMALL,
+        ctk.CTkLabel(legend, text=tr("sólo distancia"), font=FONT_SMALL,
                      text_color=TEXT_MUTED).pack(side="left")
-        ctk.CTkLabel(legend, text="sólo estilo", font=FONT_SMALL,
+        ctk.CTkLabel(legend, text=tr("sólo estilo"), font=FONT_SMALL,
                      text_color=TEXT_MUTED).pack(side="right")
         self.balance_value.pack(anchor="w", padx=16, pady=(6, 4))
         on_balance()
 
         ctk.CTkLabel(balance,
-                     text="Consonancia en los acordes de reposo",
+                     text=tr("Consonancia en los acordes de reposo"),
                      font=FONT_BODY).pack(anchor="w", padx=16, pady=(16, 2))
         ctk.CTkLabel(balance,
-                     text="Medida desde el bajo, como en el bajo cifrado: en un "
-                          "3-5-1 el bajo canta la tercera, así que los intervalos "
-                          "son de 3ra y 6ta, ambos consonantes. Elegí cuánto pesa: "
-                          "la última opción la vuelve regla dura y anula cualquier "
-                          "solución que no la cumpla.",
+                     text=tr("Medida desde el bajo, como en el bajo cifrado: en un "
+                             "3-5-1 el bajo canta la tercera, así que los intervalos "
+                             "son de 3ra y 6ta, ambos consonantes. Elegí cuánto pesa: "
+                             "la última opción la vuelve regla dura y anula cualquier "
+                             "solución que no la cumpla."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=380,
                      justify="left").pack(anchor="w", padx=16)
         self.cadence_menu = ctk.CTkOptionMenu(
-            balance, values=["Ignorar", "Premiar apenas", "Premiar fuerte",
-                             "Exigir (regla dura)"],
+            balance, values=trs(["Ignorar", "Premiar apenas",
+                                 "Premiar fuerte", "Exigir (regla dura)"]),
             width=200, fg_color=SURFACE, button_color=SURFACE,
             button_hover_color=ACCENT_HOVER,
         )
-        self.cadence_menu.set(getattr(self, "_cadence_choice", "Premiar apenas"))
+        self.cadence_menu.set(tr(getattr(self, "_cadence_choice",
+                                         "Premiar apenas")))
         self.cadence_menu.pack(anchor="w", padx=16, pady=(8, 16))
 
         if self.genre_key == "classical":
@@ -6103,7 +6288,7 @@ class ChordWeaverApp(ctk.CTk):
             self.strict_var = tk.BooleanVar(
                 value=getattr(self, "_strict_counterpoint", False))
             strict_switch = ctk.CTkSwitch(
-                strict, text="Modo coral",
+                strict, text=tr("Modo coral"),
                 variable=self.strict_var,
                 font=scaled(("Segoe UI Semibold", 15)),
                 switch_width=58, switch_height=28,
@@ -6111,61 +6296,61 @@ class ChordWeaverApp(ctk.CTk):
             strict_switch.pack(anchor="w", padx=14, pady=(12, 4))
             blurb = ctk.CTkLabel(
                 strict,
-                text="Coral al estilo Bach. Como el barroco pero más "
-                     "estricto: nunca duplica la sensible, exige que las "
-                     "séptimas resuelvan hacia abajo y vigila el espaciado "
-                     "entre voces.",
+                text=tr("Coral al estilo Bach. Como el barroco pero más "
+                        "estricto: nunca duplica la sensible, exige que las "
+                        "séptimas resuelvan hacia abajo y vigila el espaciado "
+                        "entre voces."),
                 font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=380,
                 justify="left")
             blurb.pack(anchor="w", padx=14, pady=(0, 12))
             for widget in (strict, strict_switch, blurb):
                 Tooltip(widget,
-                        "Las mismas reglas, pero pesando mucho más: salta "
-                        "menos (3 semitonos en vez de 4), castiga el doble "
-                        "duplicar la sensible, exige la resolución de las "
-                        "séptimas y no tolera el solapamiento de voces. "
-                        "Escribe más ceñido y se mueve menos libremente.")
+                        tr("Las mismas reglas, pero pesando mucho más: salta "
+                           "menos (3 semitonos en vez de 4), castiga el doble "
+                           "duplicar la sensible, exige la resolución de las "
+                           "séptimas y no tolera el solapamiento de voces. "
+                           "Escribe más ceñido y se mueve menos libremente."))
 
         if self.mode == "harmonise":
-            ctk.CTkLabel(balance, text="Armonización",
+            ctk.CTkLabel(balance, text=tr("Armonización"),
                          font=scaled(("Segoe UI Semibold", 14))
                          ).pack(anchor="w", padx=16, pady=(14, 4))
             self.harm_colour = tk.BooleanVar(
                 value=getattr(self, "_harm_colour", False))
             colour_box = ctk.CTkCheckBox(
-                balance, text="Permitir voicings especiales",
+                balance, text=tr("Permitir voicings especiales"),
                 variable=self.harm_colour, font=FONT_SMALL,
                 fg_color=ACCENT, hover_color=ACCENT_HOVER)
             colour_box.pack(anchor="w", padx=16, pady=3)
             Tooltip(colour_box,
-                    "Deja que la melodía se apoye también en sextas, séptimas "
-                    "o novenas, y que los acordes agreguen color en vez de "
-                    "duplicar notas.")
+                    tr("Deja que la melodía se apoye también en sextas, séptimas "
+                       "o novenas, y que los acordes agreguen color en vez de "
+                       "duplicar notas."))
             self.harm_borrowed = tk.BooleanVar(
                 value=getattr(self, "_harm_borrowed", True))
             borrowed_box = ctk.CTkCheckBox(
-                balance, text="Permitir intercambios modales",
+                balance, text=tr("Permitir intercambios modales"),
                 variable=self.harm_borrowed, font=FONT_SMALL,
                 fg_color=ACCENT, hover_color=ACCENT_HOVER)
             borrowed_box.pack(anchor="w", padx=16, pady=(3, 14))
             Tooltip(borrowed_box,
-                    "Deja usar el cuarto menor en lugar del IV o del V, y el "
-                    "séptimo rebajado justo antes del cierre.")
+                    tr("Deja usar el cuarto menor en lugar del IV o del V, y el "
+                       "séptimo rebajado justo antes del cierre."))
 
         if self.mode == "manual":
-            ctk.CTkLabel(balance, text="Cuánto color",
+            ctk.CTkLabel(balance, text=tr("Cuánto color"),
                          font=scaled(("Segoe UI Semibold", 14))
                          ).pack(anchor="w", padx=16, pady=(6, 2))
             ctk.CTkLabel(balance,
-                         text="Con los voicings especiales prendidos, cuánto "
-                              "busca agregar novenas, oncenas o sextas en vez "
-                              "de duplicar una nota.",
+                         text=tr("Con los voicings especiales prendidos, cuánto "
+                                 "busca agregar novenas, oncenas o sextas en vez "
+                                 "de duplicar una nota."),
                          font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=360,
                          justify="left").pack(anchor="w", padx=16)
             ctk.CTkLabel(balance,
-                         text="Hasta un tercio de la barra sólo agrega sextas, "
-                              "que es el color más suave. Más allá entran "
-                              "también novenas y oncenas.",
+                         text=tr("Hasta un tercio de la barra sólo agrega sextas, "
+                                 "que es el color más suave. Más allá entran "
+                                 "también novenas y oncenas."),
                          font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=360,
                          justify="left").pack(anchor="w", padx=16)
             self.manual_colour_slider = LabelledSlider(
@@ -6250,7 +6435,8 @@ class ChordWeaverApp(ctk.CTk):
                 name = harmony.modulation_key_name(area, tonic_pc)
                 if name:
                     ctk.CTkLabel(
-                        grid, text=f"→  {name}", font=FONT_SMALL,
+                        grid, text=trf("→  {name}", name=tr(name)),
+                        font=FONT_SMALL,
                         text_color=MODULATION_TEXT, fg_color=MODULATION_TINT,
                         corner_radius=6,
                     ).grid(row=0, column=column + 1, columnspan=end - column + 1,
@@ -6308,7 +6494,7 @@ class ChordWeaverApp(ctk.CTk):
             return True
         try:
             self._balance_position = self.balance_slider.get()
-            self._cadence_choice = self.cadence_menu.get()
+            self._cadence_choice = i18n.untr(self.cadence_menu.get())
         except tk.TclError:
             return True
         self._switch_state = {key: var.get()
@@ -6660,8 +6846,10 @@ class ChordWeaverApp(ctk.CTk):
                 try:
                     self.progress_bar.set(min(1.0, generation / total))
                     self.progress_text.configure(
-                        text=f"Generación {generation} de {total}"
-                             f"   ·   mejor costo {best:.0f}"
+                        text=trf("Generación {generation} de {total}   ·   "
+                                 "mejor costo {best:.0f}",
+                                 generation=generation, total=total,
+                                 best=best)
                     )
                 except tk.TclError:
                     # La barra ya no existe --- el usuario tocó «Atrás» y la
@@ -6694,11 +6882,11 @@ class ChordWeaverApp(ctk.CTk):
         panel = ctk.CTkFrame(self.results_container, fg_color="transparent")
         panel.pack(expand=True)
 
-        ctk.CTkLabel(panel, text="Buscando soluciones",
+        ctk.CTkLabel(panel, text=tr("Buscando soluciones"),
                      font=scaled(("Segoe UI Semibold", 26))).pack()
         ctk.CTkLabel(panel,
-                     text="El algoritmo prueba miles de repartos de voces y se "
-                          "queda con los tres más baratos.",
+                     text=tr("El algoritmo prueba miles de repartos de voces y se "
+                             "queda con los tres más baratos."),
                      font=scaled(("Segoe UI", 13)), text_color=TEXT_MUTED,
                      wraplength=520, justify="center").pack(pady=(8, 22))
 
@@ -6708,7 +6896,7 @@ class ChordWeaverApp(ctk.CTk):
                                                progress_color=accent)
         self.progress_bar.set(0)
         self.progress_bar.pack()
-        self.progress_text = ctk.CTkLabel(panel, text="Preparando…",
+        self.progress_text = ctk.CTkLabel(panel, text=tr("Preparando…"),
                                           font=scaled(("Segoe UI", 15)),
                                           text_color=TEXT_NORMAL)
         self.progress_text.pack(pady=(16, 0))
@@ -6758,7 +6946,7 @@ class ChordWeaverApp(ctk.CTk):
 
         if error is not None:
             ctk.CTkLabel(self.results_container,
-                         text=f"Se cortó la búsqueda: {error}",
+                         text=trf("Se cortó la búsqueda: {error}", error=error),
                          font=FONT_BODY, text_color=ERROR,
                          wraplength=900, justify="left").pack(anchor="w")
             self._show_results()
@@ -6766,16 +6954,16 @@ class ChordWeaverApp(ctk.CTk):
 
         self.outcome = outcome
         if not outcome.succeeded:
-            ctk.CTkLabel(self.results_container, text="No se encontró solución",
+            ctk.CTkLabel(self.results_container, text=tr("No se encontró solución"),
                          font=scaled(("Segoe UI Semibold", 16)), text_color=ERROR
                          ).pack(anchor="w")
             for message in outcome.errors:
-                ctk.CTkLabel(self.results_container, text=message, font=FONT_SMALL,
+                ctk.CTkLabel(self.results_container, text=tr(message), font=FONT_SMALL,
                              text_color=TEXT_MUTED, wraplength=900, justify="left"
                              ).pack(anchor="w", pady=2)
             ctk.CTkLabel(self.results_container,
-                         text="Probá aflojando alguna regla en la pantalla anterior "
-                              "o ampliando los rangos vocales.",
+                         text=tr("Probá aflojando alguna regla en la pantalla anterior "
+                                 "o ampliando los rangos vocales."),
                          font=FONT_SMALL, text_color=WARN).pack(anchor="w", pady=(10, 0))
             self._show_results()
             return
@@ -6816,11 +7004,13 @@ class ChordWeaverApp(ctk.CTk):
             banner = ctk.CTkFrame(self.results_container, fg_color=SET_PIECE_TINT,
                                   corner_radius=11)
             banner.pack(fill="x", pady=(0, 10))
-            ctk.CTkLabel(banner, text=f"★  {outcome.set_piece.label}",
+            ctk.CTkLabel(banner,
+                         text=trf("★  {label}",
+                                  label=tr(outcome.set_piece.label)),
                          font=scaled(("Segoe UI Semibold", 14)),
                          text_color=SET_PIECE_TEXT).pack(anchor="w", padx=14,
                                                          pady=(10, 2))
-            ctk.CTkLabel(banner, text=outcome.set_piece.description,
+            ctk.CTkLabel(banner, text=tr(outcome.set_piece.description),
                          font=FONT_SMALL, text_color=SET_PIECE_TEXT,
                          wraplength=880, justify="left"
                          ).pack(anchor="w", padx=14, pady=(0, 10))
@@ -6828,21 +7018,21 @@ class ChordWeaverApp(ctk.CTk):
         # «Las mejores soluciones», sin número: el tres estaba escrito a mano
         # y no siempre vuelven tres. Una progresión muy atada devuelve dos, y
         # las piezas del sendero devuelven una sola.
-        ctk.CTkLabel(self.results_container, text="Las mejores soluciones",
+        ctk.CTkLabel(self.results_container, text=tr("Las mejores soluciones"),
                      font=scaled(("Segoe UI Semibold", 20))).pack(anchor="w")
         # El costo sigue ordenándolas ---la primera es la más barata--- pero
         # ya no se muestra: es un número interno del algoritmo y a quien mira
         # la partitura no le dice nada. Lo que sí dice cuál es cuál es el
         # orden, y el punto del color en la que el programa eligió.
         ctk.CTkLabel(self.results_container,
-                     text="La primera es la que el programa eligió; las otras "
-                          "mueven menos bien las voces o negocian algo más con "
-                          "las reglas del estilo.",
+                     text=tr("La primera es la que el programa eligió; las otras "
+                             "mueven menos bien las voces o negocian algo más con "
+                             "las reglas del estilo."),
                      font=FONT_SMALL, text_color=TEXT_MUTED,
                      wraplength=900, justify="left"
                      ).pack(anchor="w", pady=(3, 0))
         for warning in outcome.warnings:
-            ctk.CTkLabel(self.results_container, text=warning, font=FONT_SMALL,
+            ctk.CTkLabel(self.results_container, text=tr(warning), font=FONT_SMALL,
                          text_color=WARN, wraplength=900, justify="left"
                          ).pack(anchor="w", pady=2)
 
@@ -6885,8 +7075,11 @@ class ChordWeaverApp(ctk.CTk):
                                      else TEXT_MUTED)
                          ).pack(side="left", padx=(0, 8))
             ctk.CTkLabel(heading,
-                         text=(f"Opción {position}  ·  {outcome.set_piece.label}"
-                               if quoted else f"Opción {position}"),
+                         text=(trf("Opción {position}  ·  {label}",
+                                   position=position,
+                                   label=outcome.set_piece.label)
+                               if quoted else trf("Opción {position}",
+                                                  position=position)),
                          font=scaled(("Segoe UI Semibold", 13))).pack(side="left")
 
             # Named devices for THIS option, right above its own grid.
@@ -6899,14 +7092,15 @@ class ChordWeaverApp(ctk.CTk):
                 # looked as though it applied to both.
                 where = self._slot_span(mark.slots)
                 ctk.CTkLabel(block,
-                             text=f"★  {mark.label}"
-                                  f"{f'  ({where})' if where else ''}"
-                                  f" — {mark.detail}",
+                             text=trf("★  {label}{where} — {detail}",
+                                      label=tr(mark.label),
+                                      where=(" (%s)" % where) if where else "",
+                                      detail=tr(mark.detail)),
                              font=FONT_SMALL, text_color=SET_PIECE_TEXT,
                              wraplength=860, justify="left"
                              ).pack(anchor="w", padx=14, pady=(0, 2))
             play = ctk.CTkButton(
-                heading, text="▶  Escuchar", width=140, height=32,
+                heading, text=tr("▶  Escuchar"), width=140, height=32,
                 font=FONT_SMALL,
                 fg_color=GOLD_DIM if story_gated else ACCENT,
                 hover_color=GOLD if story_gated else ACCENT_HOVER,
@@ -6919,9 +7113,9 @@ class ChordWeaverApp(ctk.CTk):
             if story_gated:
                 start_shimmer(play, period=110, option="border_color")
             play.pack(side="right")
-            Tooltip(play, "Reproduce los acordes en orden con un sonido "
-                          "simple, respetando sus duraciones. Las notas de "
-                          "adorno no se incluyen.")
+            Tooltip(play, tr("Reproduce los acordes en orden con un sonido "
+                             "simple, respetando sus duraciones. Las notas de "
+                             "adorno no se incluyen."))
             # Horizontal scrolling: a long piece ran off the edge with no
             # way to reach the later bars.
             # Height follows the number of voices. Fixed at 190 the last
@@ -7036,16 +7230,18 @@ class ChordWeaverApp(ctk.CTk):
                     corner_radius=6)
                 if lent and not away:
                     Tooltip(header,
-                            "Intercambio modal: un acorde prestado del modo "
-                            "paralelo. Sigue en la misma tonalidad, con una "
-                            "nota de la escala cambiada.")
+                            tr("Intercambio modal: un acorde prestado del modo "
+                               "paralelo. Sigue en la misma tonalidad, con una "
+                               "nota de la escala cambiada."))
                 if marked:
                     # The explanation lives in the banner above; the tooltip
                     # repeats it here so a highlighted chord can be
                     # identified without hunting for which device it belongs
                     # to.
+                    # El nombre y la explicación se traducen por separado:
+                    # el renglón armado con los dos nunca sería una clave.
                     Tooltip(header, "  ".join(
-                        f"{m.label}: {m.detail}"
+                        f"{tr(m.label)}: {tr(m.detail)}"
                         for m in flourishes.marks_for(column, position - 1)))
                 header.grid(row=1, column=column + 1, padx=2, sticky="ew")
                 chord_label = ctk.CTkLabel(
@@ -7062,7 +7258,7 @@ class ChordWeaverApp(ctk.CTk):
                                 else BORROWED_TEXT if lent else None))
                 chord_label.pack()
                 if resting:
-                    Tooltip(header, "Silencio: acá no suena nada.")
+                    Tooltip(header, tr("Silencio: acá no suena nada."))
                 if legendary:
                     # Desfasados por posición: el brillo recorre la
                     # progresión de izquierda a derecha en vez de prenderse
@@ -7077,7 +7273,7 @@ class ChordWeaverApp(ctk.CTk):
                 # Una fila más abajo: la primera la ocupa el cartel de la
                 # modulación, que existe aunque esta opción no viaje.
                 display_row = len(voice_names) - voice_index + 1
-                ctk.CTkLabel(grid, text=voice_names[voice_index], font=FONT_SMALL,
+                ctk.CTkLabel(grid, text=tr(voice_names[voice_index]), font=FONT_SMALL,
                              text_color=TEXT_MUTED, width=110, anchor="w"
                              ).grid(row=display_row, column=0, sticky="w")
                 # Alineadas contra los slots de la partitura y no contra
@@ -7098,15 +7294,16 @@ class ChordWeaverApp(ctk.CTk):
         export_row.pack(fill="x", pady=(4, 0))
         self._show_results()
         self.format_menu = ctk.CTkOptionMenu(
-            export_row, values=["MusicXML y MIDI", "Sólo MusicXML", "Sólo MIDI"],
+            export_row, values=trs(["MusicXML y MIDI", "Sólo MusicXML",
+                                    "Sólo MIDI"]),
             width=170, fg_color=SURFACE_LIGHT, button_color=SURFACE_LIGHT,
             button_hover_color=ACCENT_HOVER,
         )
         self.format_menu.pack(side="left")
-        ctk.CTkButton(export_row, text="Guardar como…", width=150, fg_color=ACCENT,
+        ctk.CTkButton(export_row, text=tr("Guardar como…"), width=150, fg_color=ACCENT,
                       hover_color=ACCENT_HOVER, command=self._export_dialog
                       ).pack(side="left", padx=10)
-        ctk.CTkButton(export_row, text="Guardar en la carpeta del programa",
+        ctk.CTkButton(export_row, text=tr("Guardar en la carpeta del programa"),
                       width=250, fg_color="transparent", border_width=1,
                       border_color=TEXT_MUTED, hover_color=SURFACE_LIGHT,
                       command=lambda: self._export(None)).pack(side="left")
@@ -7114,7 +7311,7 @@ class ChordWeaverApp(ctk.CTk):
     def _screen_record(self, record) -> None:
         """Redraw a stored run the way the results screen shows it."""
         self._heading(record.display_name,
-                      "Las mismas tres opciones, tal como quedaron guardadas.")
+                      tr("Las mismas tres opciones, tal como quedaron guardadas."))
 
         scroll = ctk.CTkScrollableFrame(self.body, fg_color="transparent")
         scroll.pack(fill="both", expand=True, pady=(0, 6))
@@ -7135,11 +7332,12 @@ class ChordWeaverApp(ctk.CTk):
             ctk.CTkLabel(heading, text="●", font=scaled(("Segoe UI", 12)),
                          text_color=accent if position == 1 else TEXT_MUTED
                          ).pack(side="left", padx=(0, 8))
-            ctk.CTkLabel(heading, text=f"Opción {position}",
+            ctk.CTkLabel(heading, text=trf("Opción {position}",
+                                           position=position),
                          font=scaled(("Segoe UI Semibold", 13))
                          ).pack(side="left")
             if record.durations:
-                play = ctk.CTkButton(heading, text="▶  Escuchar", width=130,
+                play = ctk.CTkButton(heading, text=tr("▶  Escuchar"), width=130,
                                      height=28, font=FONT_SMALL,
                                      fg_color=accent,
                                      hover_color=mix(accent, "#FFFFFF", 0.18))
@@ -7163,13 +7361,13 @@ class ChordWeaverApp(ctk.CTk):
                           else scaled(("Segoe UI Semibold", 11)))).pack()
                 if (not resting and column < len(record.romans)
                         and record.romans[column]):
-                    ctk.CTkLabel(head, text=record.romans[column], width=64,
+                    ctk.CTkLabel(head, text=tr(record.romans[column]), width=64,
                                  font=FONT_SMALL, text_color=TEXT_MUTED).pack()
 
             names = record.voice_names
             for voice_index in reversed(range(len(names))):
                 row = len(names) - voice_index
-                ctk.CTkLabel(grid, text=names[voice_index], font=FONT_SMALL,
+                ctk.CTkLabel(grid, text=tr(names[voice_index]), font=FONT_SMALL,
                              text_color=TEXT_MUTED, width=110, anchor="w"
                              ).grid(row=row, column=0, sticky="w")
                 for column, chord in enumerate(pitches):
@@ -7306,11 +7504,11 @@ class ChordWeaverApp(ctk.CTk):
             chords, durations,
             session.ornaments_of(self.outcome.spec, solution),
             drop_voice=melody_voice)
-        button.configure(text="♪  Sonando…", state="disabled")
+        button.configure(text=tr("♪  Sonando…"), state="disabled")
 
         def restore() -> None:
             try:
-                button.configure(text="▶  Escuchar", state="normal")
+                button.configure(text=tr("▶  Escuchar"), state="normal")
             except tk.TclError:
                 pass
 
@@ -7331,7 +7529,7 @@ class ChordWeaverApp(ctk.CTk):
     def _export(self, folder: Optional[str]) -> None:
         if not self.outcome or not self.outcome.succeeded:
             return
-        choice = self.format_menu.get()
+        choice = i18n.untr(self.format_menu.get())
         formats = {
             "MusicXML y MIDI": ("musicxml", "midi"),
             "Sólo MusicXML": ("musicxml",),
@@ -7348,11 +7546,13 @@ class ChordWeaverApp(ctk.CTk):
         if written:
             self._award({"first_export"})
             messagebox.showinfo(
-                "Listo",
-                f"Se guardaron {len(written)} archivos en:\n{os.path.dirname(written[0])}",
+                tr("Listo"),
+                trf("Se guardaron {written} archivos en:\n{dirname}",
+                    written=len(written),
+                    dirname=os.path.dirname(written[0])),
             )
         else:
-            messagebox.showerror("Error", "No se pudo escribir ningún archivo.")
+            messagebox.showerror(tr("Error"), tr("No se pudo escribir ningún archivo."))
 
     # -- history ------------------------------------------------------------
 
@@ -7381,20 +7581,20 @@ class ChordWeaverApp(ctk.CTk):
         self._award({"history_open"})
         records = history.load_history(self.history_path)
         self._heading(
-            "Últimas producciones",
-            "Las diez más recientes, guardadas al lado del programa. Se anota "
-            "cada corrida que termina, se haya exportado o no. El color del "
-            "recuadro es el del modo con el que se hizo.")
+            tr("Últimas producciones"),
+            tr("Las diez más recientes, guardadas al lado del programa. Se anota "
+               "cada corrida que termina, se haya exportado o no. El color del "
+               "recuadro es el del modo con el que se hizo."))
         if not records:
             empty = ctk.CTkFrame(self.body, fg_color=SURFACE_LIGHT,
                                  corner_radius=12)
             empty.pack(fill="x", pady=(10, 0))
-            ctk.CTkLabel(empty, text="Todavía no hay nada guardado",
+            ctk.CTkLabel(empty, text=tr("Todavía no hay nada guardado"),
                          font=scaled(("Segoe UI Semibold", 14))
                          ).pack(anchor="w", padx=18, pady=(16, 2))
             ctk.CTkLabel(empty,
-                         text="Cada corrida que termina se anota sola. Generá "
-                              "una partitura y volvé acá.",
+                         text=tr("Cada corrida que termina se anota sola. Generá "
+                                 "una partitura y volvé acá."),
                          font=FONT_SMALL, text_color=TEXT_MUTED
                          ).pack(anchor="w", padx=18, pady=(0, 16))
             return
@@ -7413,13 +7613,14 @@ class ChordWeaverApp(ctk.CTk):
 
             head = ctk.CTkFrame(block, fg_color="transparent")
             head.pack(fill="x", padx=14, pady=(10, 2))
-            ctk.CTkLabel(head, text=self._record_icon(record),
+            ctk.CTkLabel(head, text=tr(self._record_icon(record)),
                          font=scaled(("Segoe UI", 15)), text_color=accent
                          ).pack(side="left", padx=(0, 8))
-            ctk.CTkLabel(head, text=record.mode_label or "Producción",
+            ctk.CTkLabel(head, text=tr(record.mode_label or "Producción"),
                          font=scaled(("Segoe UI Semibold", 13)),
                          text_color=accent).pack(side="left")
-            ctk.CTkLabel(head, text=f"·  {record.genre_label}",
+            ctk.CTkLabel(head, text=trf("·  {genre}",
+                                        genre=tr(record.genre_label)),
                          font=scaled(("Segoe UI", 12)),
                          text_color=TEXT_NORMAL).pack(side="left", padx=(8, 0))
             # La fecha va a la derecha: es lo que se busca para ubicar una
@@ -7438,10 +7639,12 @@ class ChordWeaverApp(ctk.CTk):
             # resultados: un número que sólo significa algo comparado con
             # otro de la misma corrida no dice nada suelto en una lista.
             voices = ", ".join(record.voice_names or record.voice_keys)
-            details = (f"{len(record.voice_keys)} voces  ·  {voices}  ·  "
-                       f"{record.time_signature}  ·  "
-                       f"{record.bar_count} compases")
-            ctk.CTkLabel(block, text=details, font=FONT_SMALL,
+            details = (trf("{voice_keys} voces  ·  {voices}  ·  "
+                           "{time_signature}  ·  {bar_count} compases",
+                           voice_keys=len(record.voice_keys), voices=voices,
+                           time_signature=record.time_signature,
+                           bar_count=record.bar_count))
+            ctk.CTkLabel(block, text=tr(details), font=FONT_SMALL,
                          text_color=TEXT_MUTED, wraplength=820,
                          justify="left").pack(anchor="w", padx=14)
 
@@ -7452,18 +7655,18 @@ class ChordWeaverApp(ctk.CTk):
                 # todo lo que hace falta para volver a oírlo. Una lista de
                 # cosas que uno hizo y no puede escuchar es un inventario,
                 # no un historial.
-                play = ctk.CTkButton(buttons, text="▶  Escuchar", width=130,
+                play = ctk.CTkButton(buttons, text=tr("▶  Escuchar"), width=130,
                                      height=28, font=FONT_SMALL,
                                      fg_color=accent,
                                      hover_color=mix(accent, "#FFFFFF", 0.18))
                 play.configure(command=lambda r=record, b=play:
                                self._play_record(r, b))
                 play.pack(side="left")
-                Tooltip(play, "Reproduce la primera opción tal como quedó "
-                              "guardada, con sus duraciones.")
+                Tooltip(play, tr("Reproduce la primera opción tal como quedó "
+                                 "guardada, con sus duraciones."))
             if record.solutions:
                 detail = ctk.CTkButton(
-                    buttons, text="Ver detalle", width=110, height=28,
+                    buttons, text=tr("Ver detalle"), width=110, height=28,
                     font=FONT_SMALL, fg_color="transparent", border_width=1,
                     border_color=TEXT_MUTED, hover_color=SURFACE,
                     command=lambda r=record: self._open_detour("record", r))
@@ -7483,11 +7686,11 @@ class ChordWeaverApp(ctk.CTk):
         chords, durations, ornamented = session.playback_events(
             chords, durations,
             stored[option] if option < len(stored) else ())
-        button.configure(text="♪  Sonando…", state="disabled")
+        button.configure(text=tr("♪  Sonando…"), state="disabled")
 
         def restore() -> None:
             try:
-                button.configure(text="▶  Escuchar", state="normal")
+                button.configure(text=tr("▶  Escuchar"), state="normal")
             except tk.TclError:
                 pass
 
@@ -7539,16 +7742,19 @@ class ChordWeaverApp(ctk.CTk):
 
         header = ctk.CTkFrame(self.body, fg_color="transparent")
         header.pack(fill="x", pady=(0, 10))
-        ctk.CTkLabel(header, text="Libro de teoría",
+        ctk.CTkLabel(header, text=tr("Libro de teoría"),
                      font=scaled(("Georgia", 22))).pack(side="left")
-        ctk.CTkLabel(header, text=f"{written} de {total} apartados escritos",
+        ctk.CTkLabel(header, text=trf("{written} de {total} apartados "
+                                      "escritos",
+                                      written=written, total=total),
                      font=FONT_SMALL, text_color=TEXT_MUTED
                      ).pack(side="left", padx=14)
         pending = len(self._fresh_notes())
         if pending:
             ctk.CTkLabel(header,
-                         text=("🖋  1 anotación nueva" if pending == 1
-                               else f"🖋  {pending} anotaciones nuevas"),
+                         text=(tr("🖋  1 anotación nueva" if pending == 1
+                                  else trf("🖋  {pending} anotaciones nuevas",
+                                           pending=pending))),
                          font=scaled(("Segoe UI Semibold", 12)),
                          text_color=GOLD).pack(side="right")
 
@@ -7560,7 +7766,7 @@ class ChordWeaverApp(ctk.CTk):
 
         toc = ctk.CTkFrame(columns, fg_color=SURFACE_LIGHT, corner_radius=12)
         toc.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
-        ctk.CTkLabel(toc, text="Índice", font=FONT_SMALL,
+        ctk.CTkLabel(toc, text=tr("Índice"), font=FONT_SMALL,
                      text_color=TEXT_MUTED).pack(anchor="w", padx=16,
                                                  pady=(14, 6))
         chosen = min(getattr(self, "_book_chapter", 0),
@@ -7576,7 +7782,7 @@ class ChordWeaverApp(ctk.CTk):
             done = sum(1 for entry in chapter.entries
                        if not entry.locked_by
                        or self._lore_unlocked(entry.locked_by))
-            label = f"{chapter.numeral}.  {chapter.title}"
+            label = f"{chapter.numeral}.  {tr(chapter.title)}"
             if done < len(chapter.entries):
                 label += f"   ({done}/{len(chapter.entries)})"
             # Los capítulos que no se llenan estudiando van en dorado, como
@@ -7674,14 +7880,14 @@ class ChordWeaverApp(ctk.CTk):
         host = tk.Frame(page, bg=PAPER)
         host.pack(anchor="n", padx=30, pady=(30, 34))
 
-        tk.Label(host, text=f"CAPÍTULO {chapter.numeral}",
+        tk.Label(host, text=trf("CAPÍTULO {numeral}", numeral=chapter.numeral),
                  font=scaled(("Georgia", 10)), bg=PAPER, fg=GOLD_DIM,
                  anchor="w").pack(anchor="w")
-        tk.Label(host, text=chapter.title, font=scaled(FONT_BOOK_HEAD),
+        tk.Label(host, text=tr(chapter.title), font=scaled(FONT_BOOK_HEAD),
                  bg=PAPER, fg=INK, wraplength=wrap, justify="left",
                  anchor="w").pack(anchor="w", pady=(2, 10))
         tk.Frame(host, bg=RULE, height=1, width=wrap).pack(fill="x")
-        tk.Label(host, text=chapter.blurb,
+        tk.Label(host, text=tr(chapter.blurb),
                  font=scaled(("Georgia", 12, "italic")), bg=PAPER,
                  fg=INK_MUTED, wraplength=wrap, justify="left", anchor="w"
                  ).pack(anchor="w", pady=(12, 4))
@@ -7696,7 +7902,7 @@ class ChordWeaverApp(ctk.CTk):
             # para revelar. Los demás sí, porque ahí el título es la pista.
             secret = book.is_secret(entry)
             heading = tk.Label(
-                host, text=entry.heading if open_now or not secret else "? ? ?",
+                host, text=tr(entry.heading if open_now or not secret else "? ? ?"),
                 font=scaled(("Georgia", 15, "bold")), bg=PAPER,
                 fg=INK if open_now else INK_FAINT, wraplength=wrap,
                 justify="left", anchor="w")
@@ -7710,18 +7916,21 @@ class ChordWeaverApp(ctk.CTk):
                 else:
                     heading.configure(fg=GOLD_DIM)
             if not open_now:
-                tk.Label(host, text="— sin anotar todavía —",
+                tk.Label(host, text=tr("— sin anotar todavía —"),
                          font=scaled(("Georgia", 11, "italic")), bg=PAPER,
                          fg=INK_FAINT, anchor="w").pack(anchor="w")
                 if entry.hint:
-                    tk.Label(host, text=entry.hint,
+                    tk.Label(host, text=tr(entry.hint),
                              font=scaled(("Georgia", 11)), bg=PAPER,
                              fg=INK_FAINT, wraplength=wrap, justify="left",
                              anchor="w").pack(anchor="w", pady=(4, 0))
                 continue
 
             for text in entry.paragraphs:
-                lead, rest = self._split_lead(text)
+                # El párrafo se traduce **entero** y se parte después: la
+                # entradilla y el cuerpo son dos mitades de una misma frase,
+                # y partidas primero ninguna de las dos sería una clave.
+                lead, rest = self._split_lead(tr(text))
                 if lead:
                     tk.Label(host, text=lead,
                              font=scaled(("Georgia", 12, "bold")), bg=PAPER,
@@ -7840,10 +8049,10 @@ class ChordWeaverApp(ctk.CTk):
         for column, mark in enumerate(figure.marks):
             if mark:
                 canvas.create_text(left + column * gap, height - 14,
-                                   text=mark, fill=INK_FAINT,
+                                   text=tr(mark), fill=INK_FAINT,
                                    font=scaled(("Georgia", 9)))
         if figure.caption:
-            tk.Label(host, text=figure.caption,
+            tk.Label(host, text=tr(figure.caption),
                      font=scaled(("Georgia", 10, "italic")), bg=PAPER,
                      fg=INK_MUTED, wraplength=wrap, justify="left",
                      anchor="w").pack(anchor="w", pady=(0, 12))
@@ -7905,7 +8114,7 @@ class ChordWeaverApp(ctk.CTk):
             canvas.create_line(left, y, right, y, fill=RULE, dash=(1, 5))
         canvas.create_line(left, floor_y, right, floor_y, fill=INK_MUTED)
         canvas.create_line(left, floor_y, left, top, fill=INK_MUTED)
-        canvas.create_text(left - 13, (floor_y + top) / 2, text="amplitud",
+        canvas.create_text(left - 13, (floor_y + top) / 2, text=tr("amplitud"),
                            anchor="center", fill=INK_FAINT,
                            font=scaled(("Georgia", 9)), angle=90)
         # El eje horizontal, en tres: dónde empieza, qué mide y dónde
@@ -7926,7 +8135,8 @@ class ChordWeaverApp(ctk.CTk):
             # alta de todas.
             canvas.create_text(
                 right, 2,
-                text=f"fundamental: {plot.reference:.0f} Hz",
+                text=trf("fundamental: {reference:.0f} Hz",
+                         reference=plot.reference),
                 anchor="ne", fill=INK_FAINT, font=scaled(("Georgia", 9)))
 
         # Hasta dónde llegó lo escrito en cada renglón de rótulos. Uno que
@@ -7952,7 +8162,7 @@ class ChordWeaverApp(ctk.CTk):
                 taken[row] = x + half
                 rows_used = max(rows_used, row + 1)
                 canvas.create_text(x, floor_y + 6 + row * self.PLOT_LABEL_STEP,
-                                   text=mark, anchor="n", fill=INK_MUTED,
+                                   text=tr(mark), anchor="n", fill=INK_MUTED,
                                    font=scaled(("Georgia", 9)))
 
         for frequency, mark in plot.ticks:
@@ -7961,11 +8171,11 @@ class ChordWeaverApp(ctk.CTk):
                                dash=(2, 3))
             canvas.create_text(x + 3,
                                floor_y + 8 + rows_used * self.PLOT_LABEL_STEP,
-                               text=mark, anchor="nw", fill=GOLD_DIM,
+                               text=tr(mark), anchor="nw", fill=GOLD_DIM,
                                font=scaled(("Georgia", 9)))
 
         if plot.caption:
-            tk.Label(host, text=plot.caption,
+            tk.Label(host, text=tr(plot.caption),
                      font=scaled(("Georgia", 10, "italic")), bg=PAPER,
                      fg=INK_MUTED, wraplength=wrap, justify="left",
                      anchor="w").pack(anchor="w", pady=(0, 12))
@@ -7977,10 +8187,10 @@ class ChordWeaverApp(ctk.CTk):
         tk.Frame(box, bg=GOLD_DIM, width=3).pack(side="left", fill="y")
         inner = tk.Frame(box, bg=PAPER_EDGE)
         inner.pack(side="left", fill="both", expand=True)
-        tk.Label(inner, text="CÓMO CONSEGUIRLO", font=scaled(("Georgia", 9)),
+        tk.Label(inner, text=tr("CÓMO CONSEGUIRLO"), font=scaled(("Georgia", 9)),
                  bg=PAPER_EDGE, fg=GOLD_DIM, anchor="w"
                  ).pack(anchor="w", padx=12, pady=(9, 2))
-        tk.Label(inner, text=text, font=scaled(("Georgia", 11)),
+        tk.Label(inner, text=tr(text), font=scaled(("Georgia", 11)),
                  bg=PAPER_EDGE, fg=INK_MUTED, wraplength=wrap - 30,
                  justify="left", anchor="w"
                  ).pack(anchor="w", padx=12, pady=(0, 10))
@@ -8232,23 +8442,27 @@ class ChordWeaverApp(ctk.CTk):
             if not holder.winfo_exists():
                 return
             headline = ctk.CTkLabel(
-                holder, text=f"¡Ganaste la {ordinal} estrella!",
+                holder, text=trf("¡Ganaste la {ordinal} estrella!",
+                                 ordinal=ordinal),
                 font=scaled(("Segoe UI Semibold", 26)), text_color=GOLD)
             headline.pack(pady=(6, 6))
             start_shimmer(headline)
             _done, total = self.achievements.star_progress(star)
             ctk.CTkLabel(
                 holder,
-                text=f"Completaste los {total} logros de la {ordinal} estrella.",
+                text=trf("Completaste los {total} logros de la {ordinal} "
+                         "estrella.",
+                         total=total, ordinal=ordinal),
                 font=scaled(("Segoe UI", 15)), text_color=TEXT_NORMAL
                 ).pack()
             if star >= achievements.STAR_COUNT:
                 title = ctk.CTkLabel(
-                    holder, text=f"Título obtenido: {achievements.TRIUMPH_TITLE}",
+                    holder, text=trf("Título obtenido: {TRIUMPH_TITLE}",
+                                     TRIUMPH_TITLE=achievements.TRIUMPH_TITLE),
                     font=scaled(("Segoe UI Semibold", 19)), text_color=GOLD)
                 title.pack(pady=(14, 0))
                 start_shimmer(title)
-            ctk.CTkButton(holder, text="Seguir", width=180, height=42,
+            ctk.CTkButton(holder, text=tr("Seguir"), width=180, height=42,
                           font=scaled(("Segoe UI Semibold", 14)),
                           fg_color=ACCENT, hover_color=ACCENT_HOVER,
                           command=self._close_overlay).pack(pady=(24, 0))
@@ -8264,28 +8478,29 @@ class ChordWeaverApp(ctk.CTk):
         def reveal() -> None:
             if not holder.winfo_exists():
                 return
-            heading = ctk.CTkLabel(holder, text="LOGRO LEGENDARIO",
+            heading = ctk.CTkLabel(holder, text=tr("LOGRO LEGENDARIO"),
                                    font=scaled(("Segoe UI Semibold", 15)),
                                    text_color=GOLD)
             heading.pack()
             start_shimmer(heading, period=70)
-            name = ctk.CTkLabel(holder, text=achievement.name,
+            name = ctk.CTkLabel(holder, text=tr(achievement.name),
                                 font=scaled(("Segoe UI Semibold", 28)),
                                 text_color=GOLD)
             name.pack(pady=(6, 8))
             start_shimmer(name, period=70)
             ctk.CTkLabel(holder,
-                         text=achievements.plain(achievement.description),
+                         text=tr(achievements.plain(achievement.description)),
                          font=scaled(("Segoe UI", 15, "italic")),
                          text_color=TEXT_MUTED, wraplength=520,
                          justify="center").pack()
             if achievement.title:
                 title = ctk.CTkLabel(
-                    holder, text=f"Título obtenido: {achievement.title}",
+                    holder, text=trf("Título obtenido: {title}",
+                                     title=achievement.title),
                     font=scaled(("Segoe UI Semibold", 19)), text_color=GOLD)
                 title.pack(pady=(18, 0))
                 start_shimmer(title)
-            ctk.CTkButton(holder, text="Seguir", width=180, height=42,
+            ctk.CTkButton(holder, text=tr("Seguir"), width=180, height=42,
                           font=scaled(("Segoe UI Semibold", 14)),
                           fg_color=ACCENT, hover_color=ACCENT_HOVER,
                           command=self._close_overlay).pack(pady=(24, 0))
@@ -8392,12 +8607,12 @@ class ChordWeaverApp(ctk.CTk):
         veil.lift()
         card = ctk.CTkFrame(veil, fg_color=SURFACE_LIGHT, corner_radius=16,
                             border_width=2, border_color=SURFACE_LIGHT)
-        label = ctk.CTkLabel(card, text=text,
+        label = ctk.CTkLabel(card, text=tr(text),
                              font=scaled(("Georgia", 21, "italic")),
                              text_color=GOLD, wraplength=520,
                              justify="center")
         label.pack(padx=34, pady=(24, 6))
-        ctk.CTkLabel(card, text="(tocá para cerrar)", font=FONT_SMALL,
+        ctk.CTkLabel(card, text=tr("(tocá para cerrar)"), font=FONT_SMALL,
                      text_color=TEXT_MUTED).pack(pady=(0, 16))
         card.place(relx=0.5, rely=0.5, anchor="center")
         start_shimmer(label)
@@ -8421,13 +8636,13 @@ class ChordWeaverApp(ctk.CTk):
         self._egg("zombie")
         self._play_cue("zombie")
         try:
-            button.configure(text="🧟  GRAAAH…", state="disabled")
+            button.configure(text=tr("🧟  GRAAAH…"), state="disabled")
         except tk.TclError:
             return
 
         def restore() -> None:
             try:
-                button.configure(text="▶  Escuchar", state="normal")
+                button.configure(text=tr("▶  Escuchar"), state="normal")
             except tk.TclError:
                 pass
 
@@ -8565,7 +8780,7 @@ class ChordWeaverApp(ctk.CTk):
         block(0.945, 0.13, 0.055, 0.74)
         block(0.477, 0.13, 0.046, 0.74)
 
-        wink = ctk.CTkLabel(bottom, text="¿Mejor así?",
+        wink = ctk.CTkLabel(bottom, text=tr("¿Mejor así?"),
                             font=scaled(("Georgia", 15, "italic")),
                             text_color=GOLD_DIM, fg_color=shade)
         wink.place(relx=0.5, rely=0.5, anchor="center")
@@ -8672,13 +8887,13 @@ class ChordWeaverApp(ctk.CTk):
         canvas.create_text(width / 2, height * 0.16, text="☢",
                            font=scaled(("Segoe UI Symbol", 44)), fill=GOLD)
         canvas.create_text(width / 2, height * 0.26,
-                           text="Le pediste todo, a la vez, al máximo.",
+                           text=tr("Le pediste todo, a la vez, al máximo."),
                            font=scaled(("Georgia", 20, "italic")), fill=GOLD)
         canvas.create_text(width / 2, height * 0.32,
-                           text="Y el generador te lo dio.",
+                           text=tr("Y el generador te lo dio."),
                            font=scaled(("Georgia", 15, "italic")),
                            fill=TEXT_MUTED)
-        button = ctk.CTkButton(canvas, text="Seguir", width=180, height=42,
+        button = ctk.CTkButton(canvas, text=tr("Seguir"), width=180, height=42,
                                font=scaled(("Segoe UI Semibold", 14)),
                                fg_color=ACCENT, hover_color=ACCENT_HOVER,
                                command=self._close_overlay)
@@ -8714,28 +8929,28 @@ class ChordWeaverApp(ctk.CTk):
         def reveal() -> None:
             if not holder.winfo_exists():
                 return
-            heading = ctk.CTkLabel(holder, text="TÍTULO SECRETO",
+            heading = ctk.CTkLabel(holder, text=tr("TÍTULO SECRETO"),
                                    font=scaled(("Segoe UI Semibold", 15)),
                                    text_color=GOLD)
             heading.pack()
             start_shimmer(heading, period=70)
-            name = ctk.CTkLabel(holder, text=eggs.SECRET_TITLE,
+            name = ctk.CTkLabel(holder, text=tr(eggs.SECRET_TITLE),
                                 font=scaled(("Segoe UI Semibold", 28)),
                                 text_color=GOLD)
             name.pack(pady=(6, 10))
             start_shimmer(name, period=70)
-            ctk.CTkLabel(holder, text=eggs.SECRET_NOTE,
+            ctk.CTkLabel(holder, text=tr(eggs.SECRET_NOTE),
                          font=scaled(("Georgia", 16, "italic")),
                          text_color=TEXT_NORMAL, wraplength=560,
                          justify="center").pack(pady=(2, 0))
             # La firma va con la letra de las anotaciones a mano del libro:
             # es la misma voz. En dorado lleno y no apagado: es lo último
             # que se lee y estaba quedando al borde de no verse.
-            signature = ctk.CTkLabel(holder, text=eggs.SECRET_SIGNATURE,
+            signature = ctk.CTkLabel(holder, text=tr(eggs.SECRET_SIGNATURE),
                                      font=scaled(FONT_HAND), text_color=GOLD)
             signature.pack(pady=(14, 0))
             start_shimmer(signature, period=90)
-            ctk.CTkButton(holder, text="Seguir", width=180, height=42,
+            ctk.CTkButton(holder, text=tr("Seguir"), width=180, height=42,
                           font=scaled(("Segoe UI Semibold", 14)),
                           fg_color=ACCENT, hover_color=ACCENT_HOVER,
                           command=self._close_overlay).pack(pady=(22, 0))
@@ -8857,7 +9072,7 @@ class ChordWeaverApp(ctk.CTk):
         icon = ctk.CTkLabel(row, text="🥚", font=scaled(("Segoe UI Emoji", 26)),
                             text_color=GOLD if found else GOLD_DIM)
         icon.pack(side="left", padx=(2, 10))
-        caption = ctk.CTkLabel(row, text="Huevos de pascua",
+        caption = ctk.CTkLabel(row, text=tr("Huevos de pascua"),
                                font=scaled(("Segoe UI Semibold", 14)),
                                text_color=GOLD if found else TEXT_MUTED)
         caption.pack(side="left")
@@ -8867,14 +9082,15 @@ class ChordWeaverApp(ctk.CTk):
         count.pack(side="right", padx=(0, 4))
 
         if not complete:
-            Tooltip(panel, "Hay cosas que el programa hace y no cuenta.")
+            Tooltip(panel, tr("Hay cosas que el programa hace y no cuenta."))
             return
 
         note = ctk.CTkLabel(
             panel,
-            text=("Los encontraste todos. Tocá el huevo."
-                  if not self.eggs.claimed
-                  else f"Título obtenido: {eggs.SECRET_TITLE}."),
+            text=(tr("Los encontraste todos. Tocá el huevo."
+                     if not self.eggs.claimed
+                     else trf("Título obtenido: {SECRET_TITLE}.",
+                              SECRET_TITLE=eggs.SECRET_TITLE))),
             font=FONT_SMALL, text_color=GOLD_DIM)
         note.pack(anchor="w", padx=18, pady=(0, 12))
         for widget in (icon, count, caption):
@@ -8902,12 +9118,12 @@ class ChordWeaverApp(ctk.CTk):
         panel.pack(fill="x", pady=(10, 18))
         head = ctk.CTkFrame(panel, fg_color="transparent")
         head.pack(fill="x", padx=16, pady=(14, 2))
-        title = ctk.CTkLabel(head, text="Cómo se hace cada uno",
+        title = ctk.CTkLabel(head, text=tr("Cómo se hace cada uno"),
                              font=scaled(("Segoe UI Semibold", 14)),
                              text_color=GOLD)
         title.pack(side="left")
         start_shimmer(title)
-        ctk.CTkLabel(head, text="lo dejó quien estuvo mirando",
+        ctk.CTkLabel(head, text=tr("lo dejó quien estuvo mirando"),
                      font=FONT_SMALL, text_color=TEXT_MUTED
                      ).pack(side="left", padx=10)
         for egg in eggs.CATALOG:
@@ -8920,11 +9136,11 @@ class ChordWeaverApp(ctk.CTk):
                          width=28).pack(side="left", anchor="n")
             text = ctk.CTkFrame(row, fg_color="transparent")
             text.pack(side="left", fill="x", expand=True)
-            ctk.CTkLabel(text, text=egg.name,
+            ctk.CTkLabel(text, text=tr(egg.name),
                          font=scaled(("Segoe UI Semibold", 12)),
                          text_color=GOLD_DIM if found else TEXT_NORMAL,
                          anchor="w").pack(anchor="w")
-            ctk.CTkLabel(text, text=egg.recipe, font=FONT_SMALL,
+            ctk.CTkLabel(text, text=tr(egg.recipe), font=FONT_SMALL,
                          text_color=TEXT_MUTED, wraplength=760,
                          justify="left", anchor="w").pack(anchor="w")
         ctk.CTkLabel(panel, text="", height=6).pack()
@@ -8938,9 +9154,10 @@ class ChordWeaverApp(ctk.CTk):
 
         header = ctk.CTkFrame(self.body, fg_color="transparent")
         header.pack(fill="x", pady=(0, 6))
-        ctk.CTkLabel(header, text="Logros",
+        ctk.CTkLabel(header, text=tr("Logros"),
                      font=scaled(("Segoe UI Semibold", 20))).pack(side="left")
-        ctk.CTkLabel(header, text=f"{done} de {total}", font=FONT_SMALL,
+        ctk.CTkLabel(header, text=trf("{done} de {total}",
+                                      done=done, total=total), font=FONT_SMALL,
                      text_color=TEXT_MUTED).pack(side="left", padx=12)
         stars_row = ctk.CTkFrame(header, fg_color="transparent")
         stars_row.pack(side="right")
@@ -8963,19 +9180,19 @@ class ChordWeaverApp(ctk.CTk):
             strip = ctk.CTkFrame(self.body, fg_color=SURFACE_LIGHT,
                                  corner_radius=11)
             strip.pack(fill="x", pady=(2, 8))
-            ctk.CTkLabel(strip, text="Títulos", font=FONT_SMALL,
+            ctk.CTkLabel(strip, text=tr("Títulos"), font=FONT_SMALL,
                          text_color=TEXT_MUTED).pack(anchor="w", padx=14,
                                                      pady=(10, 0))
             line = ctk.CTkFrame(strip, fg_color="transparent")
             line.pack(fill="x", padx=14, pady=(2, 12))
             for name in titles:
-                label = ctk.CTkLabel(line, text=name,
+                label = ctk.CTkLabel(line, text=tr(name),
                                      font=scaled(("Segoe UI Semibold", 17)),
                                      text_color=GOLD)
                 label.pack(side="left", padx=(0, 18))
                 start_shimmer(label)
             if not titles:
-                ctk.CTkLabel(line, text="Todavía ninguno.", font=FONT_SMALL,
+                ctk.CTkLabel(line, text=tr("Todavía ninguno."), font=FONT_SMALL,
                              text_color=TEXT_MUTED).pack(side="left")
             # Lo que entregaron los personajes del sendero. No son logros ni
             # dan nada: son la marca de haber llegado hasta el final de un
@@ -8986,7 +9203,8 @@ class ChordWeaverApp(ctk.CTk):
                     line, text=f"{path.keepsake_icon}  {path.keepsake}",
                     font=scaled(("Georgia", 14)), text_color=GOLD_DIM)
                 mark.pack(side="left", padx=(18, 0))
-                Tooltip(mark, f"Recuerdo de {path.name.lower()}.")
+                Tooltip(mark, trf("Recuerdo de {lower}.",
+                                  lower=path.name.lower()))
                 # Sólo se muestran los recuerdos de los caminos terminados,
                 # así que acá el nombre ya no es un spoiler: es el premio.
             for icon, name in relics:
@@ -8994,13 +9212,13 @@ class ChordWeaverApp(ctk.CTk):
                                      font=scaled(("Georgia", 14)),
                                      text_color=GOLD_DIM)
                 relic.pack(side="left", padx=(18, 0))
-                Tooltip(relic, "No se llega a leer de quién es, ni de qué.")
+                Tooltip(relic, tr("No se llega a leer de quién es, ni de qué."))
             # El arrepentimiento: volver a la encrucijada y elegir de nuevo.
             # Va acá, junto a los títulos, porque es donde se ve lo que un
             # sendero dejó --- y por lo tanto lo que se estaría cambiando.
             if self.story.path_key:
                 ctk.CTkButton(
-                    line, text="Arrepentirse", width=140, height=32,
+                    line, text=tr("Arrepentirse"), width=140, height=32,
                     corner_radius=9, font=FONT_SMALL,
                     fg_color="transparent", border_width=1,
                     border_color=GOLD_DIM, text_color=GOLD_DIM,
@@ -9021,14 +9239,14 @@ class ChordWeaverApp(ctk.CTk):
                          font=scaled(("Segoe UI", 20)),
                          text_color=GOLD if complete else GOLD_DIM
                          ).pack(side="left", padx=(4, 8))
-            ctk.CTkLabel(head, text=ordinals[star],
+            ctk.CTkLabel(head, text=tr(ordinals[star]),
                          font=scaled(("Segoe UI Semibold", 16))).pack(side="left")
-            note = f"{got} de {needed}"
+            note = trf("{got} de {needed}", got=got, needed=needed)
             if got == needed and not complete:
                 # Está llena pero la anterior no: la estrella no se entrega
                 # hasta que la de abajo cierre, y decirlo evita que parezca
                 # que el programa se olvidó de dársela.
-                note += " · falta la estrella anterior"
+                note += tr(" · falta la estrella anterior")
             ctk.CTkLabel(head, text=note, font=FONT_SMALL,
                          text_color=TEXT_MUTED).pack(side="left", padx=12)
             # Un solo panel redondeado por estrella, con las filas adentro
@@ -9046,7 +9264,7 @@ class ChordWeaverApp(ctk.CTk):
 
         head = ctk.CTkFrame(scroll, fg_color="transparent")
         head.pack(fill="x", pady=(20, 4))
-        legend = ctk.CTkLabel(head, text="Legendarios",
+        legend = ctk.CTkLabel(head, text=tr("Legendarios"),
                               font=scaled(("Segoe UI Semibold", 16)),
                               text_color=GOLD)
         legend.pack(side="left", padx=(4, 0))
@@ -9104,7 +9322,7 @@ class ChordWeaverApp(ctk.CTk):
                  width=3).grid(row=0, column=0, sticky="w", padx=(2, 0),
                                pady=(9, 0))
         name = tk.Label(
-            row, text=achievement.name, anchor="w", bg=SURFACE_LIGHT,
+            row, text=tr(achievement.name), anchor="w", bg=SURFACE_LIGHT,
             font=scaled(("Segoe UI Semibold", 13)),
             fg=(GOLD if gold and unlocked
                 else TEXT_NORMAL if unlocked else TEXT_MUTED))
@@ -9113,8 +9331,9 @@ class ChordWeaverApp(ctk.CTk):
             start_shimmer(name, option="fg")
         if gold and achievement.title:
             tk.Label(row,
-                     text=(f"título: {achievement.title}" if unlocked
-                           else "título dorado"),
+                     text=(trf("título: {title}",
+                               title=tr(achievement.title)) if unlocked
+                           else tr("título dorado")),
                      font=scaled(FONT_SMALL), bg=SURFACE_LIGHT,
                      fg=GOLD if unlocked else GOLD_DIM
                      ).grid(row=0, column=2, sticky="e",
@@ -9123,16 +9342,16 @@ class ChordWeaverApp(ctk.CTk):
             # En el mismo azul que el índice del libro usa para lo que
             # todavía no se leyó: en este programa el azul es «esto es
             # nuevo», y el oro ya dice otra cosa.
-            tk.Label(row, text="recién completado",
+            tk.Label(row, text=tr("recién completado"),
                      font=scaled(("Segoe UI Semibold", 10)),
                      bg=SURFACE_LIGHT, fg=NOTE_BLUE
                      ).grid(row=0, column=3, sticky="e", padx=(8, 16),
                             pady=(9, 0))
         # Los legendarios van en itálica y no cuentan cómo se consiguen.
         italic = ("Segoe UI", 10, "italic") if gold else ("Segoe UI", 10)
-        pieces = achievements.runs(achievement.description)
+        pieces = achievements.runs(tr(achievement.description))
         if len(pieces) == 1:
-            tk.Label(row, text=achievement.description, font=scaled(italic),
+            tk.Label(row, text=tr(achievement.description), font=scaled(italic),
                      bg=SURFACE_LIGHT, fg=TEXT_MUTED, wraplength=740,
                      justify="left", anchor="w"
                      ).grid(row=1, column=1, columnspan=3, sticky="w",
@@ -9147,7 +9366,7 @@ class ChordWeaverApp(ctk.CTk):
         line.grid(row=1, column=1, columnspan=3, sticky="w", pady=(1, 10))
         for text, strong in pieces:
             font = (("Segoe UI Semibold", 10) + italic[2:]) if strong else italic
-            tk.Label(line, text=text, font=scaled(font), bg=SURFACE_LIGHT,
+            tk.Label(line, text=tr(text), font=scaled(font), bg=SURFACE_LIGHT,
                      fg=TEXT_NORMAL if strong else TEXT_MUTED,
                      justify="left", anchor="w").pack(side="left")
 
@@ -9168,10 +9387,10 @@ class ChordWeaverApp(ctk.CTk):
         """El experimentador de armónicos, a pantalla completa."""
         header = ctk.CTkFrame(self.body, fg_color="transparent")
         header.pack(fill="x", pady=(0, 8))
-        ctk.CTkLabel(header, text="Experimentador de armónicos",
+        ctk.CTkLabel(header, text=tr("Experimentador de armónicos"),
                      font=scaled(("Segoe UI Semibold", 20))).pack(side="left")
         ctk.CTkLabel(header,
-                     text="mirá de qué está hecha una nota, y desarmala",
+                     text=tr("mirá de qué está hecha una nota, y desarmala"),
                      font=FONT_SMALL, text_color=TEXT_MUTED
                      ).pack(side="left", padx=12)
 
@@ -9226,11 +9445,11 @@ class ChordWeaverApp(ctk.CTk):
         self._award({"analyser_first"})
         header = ctk.CTkFrame(self.body, fg_color="transparent")
         header.pack(fill="x", pady=(0, 8))
-        ctk.CTkLabel(header, text="Analizador",
+        ctk.CTkLabel(header, text=tr("Analizador"),
                      font=scaled(("Segoe UI Semibold", 20))).pack(side="left")
         ctk.CTkLabel(header,
-                     text="escribí o traé una partitura, y mirá qué está "
-                          "haciendo",
+                     text=tr("escribí o traé una partitura, y mirá qué está "
+                             "haciendo"),
                      font=FONT_SMALL, text_color=TEXT_MUTED
                      ).pack(side="left", padx=12)
 
@@ -9694,8 +9913,9 @@ class ChordWeaverApp(ctk.CTk):
             "Anotaste lo que viste",
             ("Hay una entrada nueva en el capítulo del sendero, en el libro "
              "de teoría." if len(fresh) == 1 else
-             f"Hay {len(fresh)} entradas nuevas en el capítulo del sendero, "
-             f"en el libro de teoría."),
+             trf("Hay {fresh} entradas nuevas en el capítulo del sendero, "
+                 "en el libro de teoría.",
+                 fresh=len(fresh))),
             heading="🖋  Se escribe solo")
 
     def _story_opened(self, step) -> None:
@@ -9709,8 +9929,8 @@ class ChordWeaverApp(ctk.CTk):
         """
         self._story_notice(
             "El camino se ha liberado",
-            f"Algo te está esperando en el "
-            f"{self.MODE_NAMES.get(step.where, 'programa')}.",
+            trf("Algo te está esperando en el {value}.",
+                value=self.MODE_NAMES.get(step.where, 'programa')),
             heading="Se enciende el oro")
 
     # -- las trabas de los botones dorados ----------------------------------
@@ -9812,7 +10032,8 @@ class ChordWeaverApp(ctk.CTk):
                 self._story_opened(step)
             else:
                 self._story_notice(
-                    f"{done} de {needed} tonalidades",
+                    trf("{done} de {needed} tonalidades",
+                        done=done, needed=needed),
                     step.locked_text + ".",
                     heading="El sendero avanza")
 
@@ -9864,16 +10085,16 @@ class ChordWeaverApp(ctk.CTk):
         mark.pack(side="left", padx=(0, 16))
         texts = ctk.CTkFrame(row, fg_color="transparent")
         texts.pack(side="left", fill="x", expand=True)
-        title = ctk.CTkLabel(texts, text="Hay alguien esperando",
+        title = ctk.CTkLabel(texts, text=tr("Hay alguien esperando"),
                              font=scaled(("Georgia", 18, "bold")),
                              text_color=GOLD, anchor="w")
         title.pack(anchor="w")
         ctk.CTkLabel(texts,
-                     text="No golpeó la puerta, no hizo ruido y no se fue. "
-                          "Vas a tener que atender vos.",
+                     text=tr("No golpeó la puerta, no hizo ruido y no se fue. "
+                             "Vas a tener que atender vos."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, anchor="w",
                      justify="left").pack(anchor="w", pady=(2, 0))
-        button = ctk.CTkButton(row, text="Atender", width=150, height=40,
+        button = ctk.CTkButton(row, text=tr("Atender"), width=150, height=40,
                                corner_radius=12,
                                font=scaled(("Segoe UI Semibold", 14)),
                                fg_color="transparent", border_width=2,
@@ -9916,28 +10137,31 @@ class ChordWeaverApp(ctk.CTk):
         left.pack(side="left", fill="x", expand=True, padx=(24, 10), pady=11)
 
         title = ctk.CTkLabel(
-            left, text=path.title(path.key in self.story.finished),
+            left, text=tr(path.title(path.key in self.story.finished)),
             font=scaled(("Georgia", 18, "bold")), text_color=GOLD, anchor="w")
         title.pack(anchor="w")
         start_shimmer(title)
 
         if step is None:
-            ctk.CTkLabel(left, text="Recorrido hasta el final.",
+            ctk.CTkLabel(left, text=tr("Recorrido hasta el final."),
                          font=scaled(("Segoe UI", 12)), text_color=TEXT_MUTED,
                          anchor="w").pack(anchor="w", pady=(4, 0))
         else:
             ctk.CTkLabel(
                 left,
-                text=f"Tramo {self.story.step + 1} de "
-                     f"{self.story.total_steps()}  ·  {step.title}  ·  "
-                     f"en el {self.MODE_NAMES.get(step.where, '')}",
+                text=trf("Tramo {step} de {total_steps}  ·  {title}  ·  en "
+                         "el {value}",
+                         step=self.story.step + 1,
+                         total_steps=self.story.total_steps(),
+                         title=step.title,
+                         value=self.MODE_NAMES.get(step.where, '')),
                 font=FONT_SMALL, text_color=TEXT_MUTED, anchor="w"
                 ).pack(anchor="w", pady=(4, 2))
-            ctk.CTkLabel(left, text=step.goal,
+            ctk.CTkLabel(left, text=tr(step.goal),
                          font=scaled(("Segoe UI", 13)), text_color=TEXT_NORMAL,
                          anchor="w", justify="left", wraplength=760
                          ).pack(anchor="w")
-            ctk.CTkLabel(left, text=step.hint, font=FONT_SMALL,
+            ctk.CTkLabel(left, text=tr(step.hint), font=FONT_SMALL,
                          text_color=TEXT_MUTED, anchor="w", justify="left",
                          wraplength=760).pack(anchor="w", pady=(3, 0))
             # Lo único que se pide antes de seguir: leer. Va grande y en
@@ -9946,14 +10170,15 @@ class ChordWeaverApp(ctk.CTk):
             # encontrarlo sin buscar.
             if step.gate and not self.story.gate_open(step.gate):
                 pending = ctk.CTkLabel(
-                    left, text=f"📖  {step.locked_text}",
+                    left, text=trf("📖  {locked}",
+                                   locked=tr(step.locked_text)),
                     font=scaled(("Georgia", 16, "bold")),
                     text_color=GOLD, anchor="w", justify="left",
                     wraplength=760)
                 pending.pack(anchor="w", pady=(8, 0))
                 start_shimmer(pending)
                 ctk.CTkLabel(
-                    left, text=self._story_gate_how(step),
+                    left, text=tr(self._story_gate_how(step)),
                     font=FONT_SMALL, text_color=TEXT_MUTED, anchor="w",
                     justify="left", wraplength=760
                     ).pack(anchor="w", pady=(2, 0))
@@ -9991,7 +10216,8 @@ class ChordWeaverApp(ctk.CTk):
         row.pack(fill="x", pady=(10, 0))
         button = ctk.CTkButton(
             row,
-            text=step.ready_text if open_now else f"🔒  {step.locked_text}",
+            text=(tr(step.ready_text) if open_now
+                  else trf("🔒  {locked}", locked=tr(step.locked_text))),
             height=46, corner_radius=12,
             font=scaled(("Georgia", 15, "bold")),
             fg_color=GOLD_DIM if open_now else SURFACE_LIGHT,
@@ -10005,7 +10231,7 @@ class ChordWeaverApp(ctk.CTk):
             start_shimmer(button, period=110, option="border_color")
         else:
             ctk.CTkLabel(
-                row, text=self._story_gate_how(step),
+                row, text=tr(self._story_gate_how(step)),
                 font=FONT_SMALL, text_color=TEXT_MUTED, anchor="w",
                 justify="left", wraplength=940
                 ).pack(anchor="w", pady=(4, 0))
@@ -10058,15 +10284,16 @@ class ChordWeaverApp(ctk.CTk):
                              corner_radius=12, border_width=2,
                              border_color=GOLD_DIM)
         panel.pack(fill="x", pady=(4, 0))
-        head = ctk.CTkLabel(panel, text=f"★  {step.title}",
+        head = ctk.CTkLabel(panel, text=trf("★  {title}",
+                                            title=tr(step.title)),
                             font=scaled(("Georgia", 14, "bold")),
                             text_color=GOLD, anchor="w")
         head.pack(anchor="w", padx=16, pady=(10, 2))
         start_shimmer(head)
-        ctk.CTkLabel(panel, text=step.goal, font=scaled(("Segoe UI", 13)),
+        ctk.CTkLabel(panel, text=tr(step.goal), font=scaled(("Segoe UI", 13)),
                      text_color=TEXT_NORMAL, anchor="w", justify="left",
                      wraplength=880).pack(anchor="w", padx=16)
-        ctk.CTkLabel(panel, text=step.hint, font=FONT_SMALL,
+        ctk.CTkLabel(panel, text=tr(step.hint), font=FONT_SMALL,
                      text_color=TEXT_MUTED, anchor="w", justify="left",
                      wraplength=880).pack(anchor="w", padx=16, pady=(2, 12))
 
@@ -10077,7 +10304,9 @@ class ChordWeaverApp(ctk.CTk):
                              border_color=GOLD if ready else BORDER_SOFT)
         panel.pack(fill="x", pady=(4, 0))
         head = ctk.CTkLabel(
-            panel, text=step.ready_text if ready else f"🔒  {step.locked_text}",
+            panel,
+            text=(tr(step.ready_text) if ready
+                  else trf("🔒  {locked}", locked=tr(step.locked_text))),
             font=scaled(("Georgia", 14, "bold")),
             text_color=GOLD if ready else TEXT_MUTED, anchor="w")
         head.pack(anchor="w", padx=16, pady=(10, 2))
@@ -10086,9 +10315,11 @@ class ChordWeaverApp(ctk.CTk):
         done, needed = self.story.gate_progress(step.gate)
         ctk.CTkLabel(
             panel,
-            text=(step.hint if ready
-                  else f"{step.locked_text} ({done} de {needed}) y el piano "
-                       f"se enciende."),
+            text=(tr(step.hint if ready
+                     else trf("{locked_text} ({done} de {needed}) y el piano "
+                              "se enciende.",
+                              locked_text=step.locked_text, done=done,
+                              needed=needed))),
             font=FONT_SMALL, text_color=TEXT_MUTED, anchor="w",
             justify="left", wraplength=880).pack(anchor="w", padx=16,
                                                  pady=(0, 12))
@@ -10144,7 +10375,7 @@ class ChordWeaverApp(ctk.CTk):
         hint = getattr(self, "melody_hint", None)
         if hint is not None:
             try:
-                hint.configure(text="♪  Escuchá la línea…", text_color=GOLD)
+                hint.configure(text=tr("♪  Escuchá la línea…"), text_color=GOLD)
             except tk.TclError:
                 hint = None
 
@@ -10244,7 +10475,7 @@ class ChordWeaverApp(ctk.CTk):
         try:
             outcome = session.generate(request)
         except Exception as exc:                            # noqa: BLE001
-            messagebox.showerror("No se pudo escribir la pieza", str(exc))
+            messagebox.showerror(tr("No se pudo escribir la pieza"), str(exc))
             return
         outcome.melody = self._story_melody(piece, len(voice_keys))
 
@@ -10325,11 +10556,11 @@ class ChordWeaverApp(ctk.CTk):
         else:
             row.pack(fill="x", pady=(0, 10))
         ctk.CTkLabel(row,
-                     text="Escuchá lo que salió. Recién ahí se puede seguir.",
+                     text=tr("Escuchá lo que salió. Recién ahí se puede seguir."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, anchor="w"
                      ).pack(anchor="w", pady=(0, 4))
         button = ctk.CTkButton(
-            row, text="🔒  Escuchá primero", height=44, corner_radius=12,
+            row, text=tr("🔒  Escuchá primero"), height=44, corner_radius=12,
             font=scaled(("Georgia", 15, "bold")), fg_color=SURFACE_LIGHT,
             hover_color=SURFACE_LIGHT, text_color=TEXT_MUTED, border_width=2,
             border_color=BORDER_SOFT, state="disabled",
@@ -10358,7 +10589,7 @@ class ChordWeaverApp(ctk.CTk):
         if button is not None:
             try:
                 button.configure(
-                    text="★  Seguir", state="normal", fg_color=GOLD_DIM,
+                    text=tr("★  Seguir"), state="normal", fg_color=GOLD_DIM,
                     hover_color=GOLD, text_color="#1B1D22",
                     border_color=GOLD)
                 start_shimmer(button, period=110, option="border_color")
@@ -10422,11 +10653,11 @@ class ChordWeaverApp(ctk.CTk):
         if self.scene is not None:
             return
         if not messagebox.askyesno(
-                "¿Estás seguro?",
-                "Comenzarás tu camino otra vez.\n\n"
-                "Lo que ya conseguiste no se pierde: los logros, los títulos "
-                "y lo que quedó escrito en el libro siguen siendo tuyos. Lo "
-                "que vuelve a cero es el sendero."):
+                tr("¿Estás seguro?"),
+                tr("Comenzarás tu camino otra vez.\n\n"
+                   "Lo que ya conseguiste no se pierde: los logros, los títulos "
+                   "y lo que quedó escrito en el libro siguen siendo tuyos. Lo "
+                   "que vuelve a cero es el sendero.")):
             return
         self.story.restart()
         self.detour.clear()
@@ -11025,12 +11256,21 @@ def main() -> None:
     # La escala de letra se lee aca porque el cartel es lo primero que se
     # dibuja y `ChordWeaverApp.__init__`, que es quien normalmente la pone,
     # todavia no corrio. La vuelve a poner despues, con el mismo valor.
-    FONT_SCALE = float(history.load_settings().get("font_scale", 1.0) or 1.0)
-    if not updater.greet(colours={
-            "surface": SURFACE, "panel": SURFACE_LIGHT, "text": TEXT_NORMAL,
-            "muted": TEXT_MUTED, "accent": ACCENT,
-            "accent_hover": ACCENT_HOVER, "border": BORDER_SOFT,
-            "gold": GOLD, "font": scaled}):
+    stored = history.load_settings()
+    FONT_SCALE = float(stored.get("font_scale", 1.0) or 1.0)
+    palette = {
+        "surface": SURFACE, "panel": SURFACE_LIGHT, "text": TEXT_NORMAL,
+        "muted": TEXT_MUTED, "accent": ACCENT,
+        "accent_hover": ACCENT_HOVER, "border": BORDER_SOFT,
+        "gold": GOLD, "font": scaled}
+
+    # El idioma, antes que el cartel de version nueva: ese cartel es lo
+    # primero que se dibuja, y preguntar despues lo dejaria escrito en un
+    # idioma que el usuario todavia no eligio. Pregunta una sola vez en la
+    # vida de la instalacion --- despues se cambia desde el engranaje.
+    chooser.settle(stored, history.save_settings, palette)
+
+    if not updater.greet(colours=palette):
         return
 
     app = ChordWeaverApp()

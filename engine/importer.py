@@ -38,6 +38,7 @@ from .theory import (
     ROLE_ROOT,
     parse_chord,
 )
+from engine.i18n import tr, trf, trs
 
 
 class ImportError_(Exception):
@@ -96,7 +97,7 @@ def _load_root(path: str) -> ET.Element:
     try:
         return ET.parse(path).getroot()
     except ET.ParseError as exc:
-        raise ImportError_(f"No se pudo leer el archivo: {exc}") from exc
+        raise ImportError_(trf("No se pudo leer el archivo: {exc}", exc=exc)) from exc
 
 
 def read_musicxml(path: str) -> ImportedScore:
@@ -208,23 +209,26 @@ def read_musicxml(path: str) -> ImportedScore:
         )
     if skipped:
         score.warnings.append(
-            f"Se ignoraron {skipped} momento(s) con menos de tres notas: son "
-            "notas de adorno, no acordes, y se descartan para no deformar la "
-            "progresión."
+            trf("Se ignoraron {skipped} momento(s) con menos de tres "
+                "notas: son notas de adorno, no acordes, y se descartan "
+                "para no deformar la progresión.",
+                skipped=skipped)
         )
     score.voice_count = max(len(c.pitches) for c in score.chords)
     uneven = {len(c.pitches) for c in score.chords}
     if len(uneven) > 1:
         score.warnings.append(
-            "La partitura no tiene la misma cantidad de voces en todos los "
-            f"acordes (van de {min(uneven)} a {max(uneven)}). Se completará "
-            "o recortará según las voces que elijas."
+            trf("La partitura no tiene la misma cantidad de voces en todos "
+                "los acordes (van de {value} a {value2}). Se completará o "
+                "recortará según las voces que elijas.",
+                value=min(uneven), value2=max(uneven))
         )
     unmatched = sum(1 for c in score.chords if not c.matched)
     if unmatched:
         score.warnings.append(
-            f"{unmatched} acorde(s) no coinciden con ningún cifrado conocido; "
-            "quedan cargados como notas sueltas."
+            trf("{unmatched} acorde(s) no coinciden con ningún cifrado "
+                "conocido; quedan cargados como notas sueltas.",
+                unmatched=unmatched)
         )
     return score
 

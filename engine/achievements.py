@@ -34,6 +34,7 @@ from . import history
 from .fitness import GENRE_PROFILES, parallel_interval_violation
 from .harmony import DOMINANT, SET_PIECES, is_applied_dominant
 from .theory import ROLE_FIFTH, ROLE_SEVENTH, ROLE_THIRD, Chord
+from engine.i18n import tr, trf, trs
 
 _FILENAME = "achievements.json"
 

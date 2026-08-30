@@ -83,11 +83,26 @@ a = Analysis(
         # `staff` y `analyzer` --- y se importa desde `app.py` igual que
         # ellos. Sin estos dos, el ejecutable arranca y nunca avisa nada.
         'engine.updates',
+        # Los dos idiomas: el motor de traduccion y los catalogos. Los
+        # catalogos se importan por nombre desde `engine.lang.PARTS`, o sea
+        # que PyInstaller no los ve siguiendo los imports --- sin listarlos,
+        # el ejecutable sale y habla castellano pase lo que pase. `chooser`
+        # tampoco vive en `engine/` --- como `spectrum`, `staff`, `analyzer`
+        # y `updater` --- y se importa desde `app.py` igual que ellos.
+        'engine.i18n',
+        'engine.lang',
+        'engine.lang.en_app',
+        'engine.lang.en_screens',
+        'engine.lang.en_tools',
+        'engine.lang.en_engine',
+        'engine.lang.en_story',
+        'engine.lang.en_book',
         'cinematic',
         'spectrum',
         'staff',
         'analyzer',
         'updater',
+        'chooser',
     ],
     hookspath=[],
     hooksconfig={},

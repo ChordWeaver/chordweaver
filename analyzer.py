@@ -27,13 +27,15 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 import customtkinter as ctk
 
 from engine import analysis, audio, history, importer, session
+from engine.i18n import tr, trf, trs
+from engine import i18n
 from staff import (DURATIONS, GRAND_VOICE_COUNT, GRAND_VOICES, LETTERS,
                    VOICE_COLOURS, GrandStaff, pitch_at)
 
-#: Cómo se dice cada letra. El programa habla en castellano y una partitura
-#: analizada que contesta "F#4" no la lee nadie en voz alta.
-SPANISH_LETTERS = {"C": "Do", "D": "Re", "E": "Mi", "F": "Fa", "G": "Sol",
-                   "A": "La", "B": "Si"}
+#: Cómo se dice cada letra lo decide el idioma: en castellano una partitura
+#: que contesta "F#4" no la lee nadie en voz alta, y en inglés la letra ya es
+#: el nombre. La tabla está en `engine.i18n`, que es donde vive todo lo que
+#: cambia con el idioma.
 
 #: Cómo se nombra cada figura, por su duración en negras.
 FIGURE_NAMES = {4.0: "redonda", 3.0: "blanca con puntillo", 2.0: "blanca",
@@ -97,10 +99,10 @@ MIN_VOICES = 3
 
 
 def spanish_pitch(index: int, fifths: int, accidental=None) -> str:
-    """Cómo se escribe una posición del pentagrama, en castellano."""
+    """Cómo se dice una posición del pentagrama, en el idioma en curso."""
     octave, position = divmod(index, 7)
     letter = LETTERS[position]
-    name = SPANISH_LETTERS[letter]
+    name = i18n.say_letter(letter)
     written = pitch_at(index, fifths, accidental) - pitch_at(index, fifths, 0)
     if accidental is None:
         # Sin accidente propio manda la armadura.
@@ -192,7 +194,7 @@ class Analyzer(ctk.CTkFrame):
         self.key_menu = self._menu(
             bar, [name for name, _f in self.key_signatures], 168,
             lambda _v: self._sync_staff())
-        self.key_menu.set(self.key_signatures[0][0])
+        self.key_menu.set(tr(self.key_signatures[0][0]))
         self.key_menu.pack(side="left")
 
         self._label(bar, "Compás").pack(side="left", padx=(12, 6))
@@ -218,7 +220,7 @@ class Analyzer(ctk.CTkFrame):
         # vuelve al que regía.
         self.only_one = tk.BooleanVar(value=False)
         ctk.CTkCheckBox(
-            bar, text="sólo ese", variable=self.only_one, width=20,
+            bar, text=tr("sólo ese"), variable=self.only_one, width=20,
             checkbox_width=17, checkbox_height=17,
             font=self.font(("Segoe UI", 11)),
             fg_color=self.colours["accent"],
@@ -230,20 +232,20 @@ class Analyzer(ctk.CTkFrame):
         self._label(bar, "Escribo la").pack(side="left", padx=(14, 6))
         self.voice_menu = self._menu(bar, list(GRAND_VOICES), 112,
                                      lambda _v: self._voice_changed())
-        self.voice_menu.set(GRAND_VOICES[0])
+        self.voice_menu.set(tr(GRAND_VOICES[0]))
         self.voice_menu.pack(side="left")
 
         for text, command in (("Exportar…", self._export),
                               ("Importar…", self._import)):
             ctk.CTkButton(
-                bar, text=text, width=104, height=30,
+                bar, text=tr(text), width=104, height=30,
                 font=self.font(("Segoe UI", 12)), fg_color="transparent",
                 border_width=1, border_color=self.colours["muted"],
                 hover_color=self.colours["panel"], command=command
             ).pack(side="right", padx=(6, 0))
 
         self.play_button = ctk.CTkButton(
-            bar, text="▶  Escuchar", width=124, height=30,
+            bar, text=tr("▶  Escuchar"), width=124, height=30,
             font=self.font(("Segoe UI", 12)), fg_color=self.colours["accent"],
             hover_color=self.colours["accent_hover"], command=self._play)
         self.play_button.pack(side="right", padx=(6, 0))
@@ -254,7 +256,7 @@ class Analyzer(ctk.CTkFrame):
         self.duration_var = tk.StringVar(value="Negra")
         for label, value in DURATIONS:
             ctk.CTkRadioButton(
-                tools, text=label, variable=self.duration_var, value=label,
+                tools, text=tr(label), variable=self.duration_var, value=label,
                 font=self.font(("Segoe UI", 11)),
                 fg_color=self.colours["accent"],
                 hover_color=self.colours["accent_hover"],
@@ -279,21 +281,21 @@ class Analyzer(ctk.CTkFrame):
             self.accidental_buttons[value] = button
 
         self.rest_button = ctk.CTkButton(
-            tools, text="Silencio", width=88, height=28,
+            tools, text=tr("Silencio"), width=88, height=28,
             font=self.font(("Segoe UI", 11)), fg_color="transparent",
             border_width=1, border_color=self.colours["muted"],
             hover_color=self.colours["panel"], command=self._toggle_rests)
         self.rest_button.pack(side="left", padx=(14, 0))
 
         ctk.CTkButton(
-            tools, text="↶  Deshacer", width=104, height=28,
+            tools, text=tr("↶  Deshacer"), width=104, height=28,
             font=self.font(("Segoe UI", 11)), fg_color="transparent",
             border_width=1, border_color=self.colours["muted"],
             hover_color=self.colours["panel"], command=self._undo
         ).pack(side="left", padx=(8, 0))
 
         ctk.CTkButton(
-            tools, text="Borrar todo", width=98, height=28,
+            tools, text=tr("Borrar todo"), width=98, height=28,
             font=self.font(("Segoe UI", 11)), fg_color="transparent",
             border_width=1, border_color=self.colours["warn"],
             text_color=self.colours["warn"],
@@ -321,7 +323,7 @@ class Analyzer(ctk.CTkFrame):
     def _next_voice(self, _event=None, step: int = 1) -> str:
         """Pasar a la voz siguiente. Devuelve "break": el tabulador es nuestro."""
         try:
-            visible = GRAND_VOICES.index(self.voice_menu.get())
+            visible = GRAND_VOICES.index(i18n.untr(self.voice_menu.get()))
         except ValueError:
             visible = 0
         self.voice_menu.set(GRAND_VOICES[(visible + step) % len(GRAND_VOICES)])
@@ -333,12 +335,12 @@ class Analyzer(ctk.CTkFrame):
         return "break"
 
     def _label(self, master, text: str) -> ctk.CTkLabel:
-        return ctk.CTkLabel(master, text=text, font=self.font(("Segoe UI", 11)),
+        return ctk.CTkLabel(master, text=tr(text), font=self.font(("Segoe UI", 11)),
                             text_color=self.colours["muted"])
 
     def _menu(self, master, values, width, command) -> ctk.CTkOptionMenu:
         return ctk.CTkOptionMenu(
-            master, values=list(values), width=width, height=30,
+            master, values=trs(values), width=width, height=30,
             font=self.font(("Segoe UI", 12)),
             fg_color=self.colours["surface"], button_color=self.colours["surface"],
             button_hover_color=self.colours["accent_hover"], command=command)
@@ -361,7 +363,7 @@ class Analyzer(ctk.CTkFrame):
         #: El renglón que contesta "¿qué nota es ésta?". Es lo único que
         #: hace falta para leer una partitura ajena sin contar líneas.
         self.picked = ctk.CTkLabel(
-            strip, text=self._resting,
+            strip, text=tr(self._resting),
             font=self.font(("Segoe UI", 12)), text_color=self.colours["muted"],
             anchor="w", justify="left", wraplength=980)
         self.picked.pack(side="left")
@@ -370,7 +372,7 @@ class Analyzer(ctk.CTkFrame):
         for position, name in enumerate(GRAND_VOICES):
             ctk.CTkLabel(legend, text="●", text_color=VOICE_COLOURS[position],
                          font=self.font(("Segoe UI", 13))).pack(side="left")
-            ctk.CTkLabel(legend, text=name,
+            ctk.CTkLabel(legend, text=tr(name),
                          font=self.font(("Segoe UI", 11)),
                          text_color=self.colours["muted"]
                          ).pack(side="left", padx=(2, 10))
@@ -406,8 +408,9 @@ class Analyzer(ctk.CTkFrame):
             written = self.written_voices()
             ctk.CTkLabel(
                 row,
-                text=(f"{written} de {MIN_VOICES} voces escritas"
-                      if written else "Sin partitura todavía"),
+                text=(trf("{written} de {MIN_VOICES} voces escritas",
+                          written=written, MIN_VOICES=MIN_VOICES)
+                      if written else tr("Sin partitura todavía")),
                 font=self.font(("Segoe UI Semibold", 16)),
                 text_color=self.colours["muted"]).pack(side="left")
             return
@@ -418,11 +421,11 @@ class Analyzer(ctk.CTkFrame):
         confidence = ("lectura clara" if key.confidence >= 0.6
                       else "lectura probable" if key.confidence >= 0.3
                       else "lectura dudosa")
-        title = ctk.CTkLabel(left, text=key.label,
+        title = ctk.CTkLabel(left, text=tr(key.label),
                              font=self.font(("Segoe UI Semibold", 18)),
                              anchor="w")
         title.pack(side="left")
-        why = ctk.CTkLabel(left, text=confidence,
+        why = ctk.CTkLabel(left, text=tr(confidence),
                            font=self.font(("Segoe UI", 11)),
                            text_color=self.colours["muted"], anchor="w")
         why.pack(side="left", padx=(8, 0))
@@ -458,7 +461,7 @@ class Analyzer(ctk.CTkFrame):
     def _hover(self, widget, text: str) -> None:
         """Lo que dice el renglón de lectura mientras el mouse esté encima."""
         widget.bind("<Enter>", lambda _e: self.picked.configure(
-            text=text, text_color=self.colours["muted"]))
+            text=tr(text), text_color=self.colours["muted"]))
 
     def _show_span(self, first: int, last: int) -> None:
         """Resaltar en el sistema el tramo que va de un segmento a otro."""
@@ -482,7 +485,7 @@ class Analyzer(ctk.CTkFrame):
                             border_width=1, border_color=colour,
                             cursor="hand2" if command else "")
         chip.pack(side="left", padx=(0, 6), pady=2)
-        label = ctk.CTkLabel(chip, text=text, font=self.font(("Segoe UI", 11)),
+        label = ctk.CTkLabel(chip, text=tr(text), font=self.font(("Segoe UI", 11)),
                              text_color=colour)
         label.pack(padx=9, pady=3)
         for widget in (chip, label):
@@ -509,7 +512,7 @@ class Analyzer(ctk.CTkFrame):
                               corner_radius=12)
         holder.grid(row=0, column=column, sticky="nsew",
                     padx=(0 if column == 0 else 5, 0 if column == 2 else 5))
-        ctk.CTkLabel(holder, text=title,
+        ctk.CTkLabel(holder, text=tr(title),
                      font=self.font(("Segoe UI Semibold", 14)),
                      anchor="w").pack(fill="x", padx=14, pady=(10, 4))
         body = ctk.CTkScrollableFrame(holder, fg_color="transparent")
@@ -519,7 +522,7 @@ class Analyzer(ctk.CTkFrame):
     # -- estado -------------------------------------------------------------
 
     def _fifths(self) -> int:
-        label = self.key_menu.get()
+        label = i18n.untr(self.key_menu.get())
         return next((f for name, f in self.key_signatures if name == label), 0)
 
     def _sync_staff(self) -> None:
@@ -536,8 +539,8 @@ class Analyzer(ctk.CTkFrame):
         self.staff.set_metres(self.metres())
         changes = self.metres()
         self.metre_list.configure(
-            text="" if len(changes) <= 1 else
-            " · ".join(f"{b}/{t} desde el c.{bar}" for bar, b, t in changes[1:]))
+            text=tr("" if len(changes) <= 1 else
+               " · ".join(trf("{b}/{t} desde el c.{bar}", b=b, t=t, bar=bar) for bar, b, t in changes[1:])))
         self._schedule()
 
     def _metre_changed(self) -> None:
@@ -586,7 +589,7 @@ class Analyzer(ctk.CTkFrame):
 
     def _voice_changed(self) -> None:
         """La voz elegida se cuenta de aguda a grave; adentro, al revés."""
-        name = self.voice_menu.get()
+        name = i18n.untr(self.voice_menu.get())
         try:
             visible = GRAND_VOICES.index(name)
         except ValueError:
@@ -626,9 +629,9 @@ class Analyzer(ctk.CTkFrame):
 
     def _clear(self) -> None:
         if not self.staff.is_empty() and not messagebox.askyesno(
-                "Borrar todo",
-                "Esto saca del pentagrama todo lo que hay escrito. "
-                "¿Seguimos?"):
+                tr("Borrar todo"),
+                tr("Esto saca del pentagrama todo lo que hay escrito. "
+                   "¿Seguimos?")):
             return
         self._pickup = 0.0
         self.staff.clear()
@@ -761,10 +764,16 @@ class Analyzer(ctk.CTkFrame):
         written = self.written_voices()
         missing = MIN_VOICES - written
         if written:
-            first = (f"Falta{'n' if missing > 1 else ''} {missing} "
-                     f"voz{'ces' if missing > 1 else ''}: un acorde son tres "
-                     "notas sonando, así que hasta que no haya tres voces "
-                     "escritas no hay nada que nombrar.")
+            # Las dos formas enteras: «falta/faltan» y «voz/voces» son
+            # concordancias del castellano, y una terminación suelta no se
+            # puede traducir.
+            first = (trf("Falta {missing} voz: un acorde son tres notas "
+                         "sonando, así que hasta que no haya tres voces "
+                         "escritas no hay nada que nombrar.", missing=missing)
+                     if missing == 1 else
+                     trf("Faltan {missing} voces: un acorde son tres notas "
+                         "sonando, así que hasta que no haya tres voces "
+                         "escritas no hay nada que nombrar.", missing=missing))
         else:
             first = ("Escribí las voces en el sistema o importá una "
                      "partitura. Con tres voces escritas aparece acá la "
@@ -781,7 +790,7 @@ class Analyzer(ctk.CTkFrame):
                  "Y acá, los adornos melódicos: las notas que no pertenecen "
                  "al acorde, con el nombre que les corresponde.")):
             self._wipe(panel)
-            ctk.CTkLabel(panel, text=text, font=self.font(("Segoe UI", 12)),
+            ctk.CTkLabel(panel, text=tr(text), font=self.font(("Segoe UI", 12)),
                          text_color=self.colours["muted"], wraplength=250,
                          justify="left", anchor="w").pack(fill="x", padx=10,
                                                           pady=8)
@@ -796,7 +805,7 @@ class Analyzer(ctk.CTkFrame):
               size: int = 12, pad: Tuple[int, int] = (2, 2),
               bold: bool = False) -> ctk.CTkLabel:
         label = ctk.CTkLabel(
-            panel, text=text,
+            panel, text=tr(text),
             font=self.font((f"Segoe UI{' Semibold' if bold else ''}", size)),
             text_color=colour or self.colours["text"], wraplength=250,
             justify="left", anchor="w")
@@ -819,7 +828,7 @@ class Analyzer(ctk.CTkFrame):
 
         head = ctk.CTkFrame(row, fg_color="transparent")
         head.pack(fill="x", padx=6, pady=(4, 0))
-        ctk.CTkLabel(head, text=f"c.{segment.bar_index}",
+        ctk.CTkLabel(head, text=trf("c.{bar}", bar=segment.bar_index),
                      font=self.font(("Segoe UI", 10)),
                      text_color=self.colours["muted"], width=34, anchor="w"
                      ).pack(side="left")
@@ -839,21 +848,25 @@ class Analyzer(ctk.CTkFrame):
             ctk.CTkLabel(head, text="·", font=self.font(("Segoe UI", 12)),
                          text_color=self.colours["faint"], anchor="w"
                          ).pack(side="left", padx=(8, 0))
-            ctk.CTkLabel(head, text=segment.figure,
+            ctk.CTkLabel(head, text=tr(segment.figure),
                          font=self.font(("Consolas", 13)),
                          text_color=self.colours["gold"], anchor="w"
                          ).pack(side="left", padx=(8, 0))
         ctk.CTkLabel(head,
-                     text=analysis.FUNCTION_LABELS.get(segment.function, ""),
+                     text=tr(analysis.FUNCTION_LABELS.get(segment.function, "")),
                      font=self.font(("Segoe UI", 11)),
                      text_color=self.colours["muted"], anchor="e"
                      ).pack(side="right")
 
-        detail = segment.detail
+        # Cada pedazo se traduce por separado y se pegan después: el
+        # renglón armado lleva el cifrado adentro, así que como clave no
+        # existiría nunca.
+        detail = tr(segment.detail)
         if segment.sus_note:
-            detail = segment.sus_note + (". " + detail if detail else "")
+            detail = tr(segment.sus_note) + (". " + detail if detail else "")
         if segment.alternative is not None:
-            detail = (f"También se puede leer {segment.alternative.symbol}. "
+            detail = (trf("También se puede leer {symbol}. ",
+                          symbol=segment.alternative.symbol)
                       + detail)
         if detail:
             ctk.CTkLabel(row, text=detail, font=self.font(("Segoe UI", 11)),
@@ -865,7 +878,7 @@ class Analyzer(ctk.CTkFrame):
         # medir el doble, que es justo lo que hay que poder recorrer de un
         # vistazo.
         if segment.relation and index == self._selected:
-            ctk.CTkLabel(row, text="↓  " + segment.relation,
+            ctk.CTkLabel(row, text=tr("↓  " + segment.relation),
                          font=self.font(("Segoe UI", 10)),
                          text_color=self.colours["faint"], anchor="w"
                          ).pack(fill="x", padx=(46, 6), pady=(0, 4))
@@ -919,8 +932,9 @@ class Analyzer(ctk.CTkFrame):
 
         graves = [f for f in result.findings if f.severity == "grave"]
         self._note(panel,
-                   f"{len(result.findings)} cosa(s) para mirar"
-                   + (f", {len(graves)} grave(s)" if graves else ""),
+                   trf("{findings} cosa(s) para mirar",
+                       findings=len(result.findings))
+                   + (trf(", {graves} grave(s)", graves=len(graves)) if graves else ""),
                    self.colours["muted"], 11, (10, 4), bold=True)
         if not result.findings:
             self._note(panel, "Ni paralelas, ni cruces, ni saltos difíciles: "
@@ -935,13 +949,13 @@ class Analyzer(ctk.CTkFrame):
         row = ctk.CTkFrame(panel, fg_color="transparent", corner_radius=7,
                            cursor="hand2")
         row.pack(fill="x", padx=6, pady=1)
-        ctk.CTkLabel(row, text=label.capitalize(),
+        ctk.CTkLabel(row, text=tr(label.capitalize()),
                      font=self.font(("Segoe UI", 11)), width=72, anchor="w"
                      ).pack(side="left", padx=(4, 0))
         track = tk.Canvas(row, height=10, highlightthickness=0, bd=0,
                           bg=self.colours["panel"])
         track.pack(side="left", fill="x", expand=True, padx=(2, 6))
-        ctk.CTkLabel(row, text=str(count), font=self.font(("Segoe UI", 11)),
+        ctk.CTkLabel(row, text=tr(str(count)), font=self.font(("Segoe UI", 11)),
                      text_color=self.colours["muted"], width=30, anchor="e"
                      ).pack(side="right", padx=(0, 4))
 
@@ -1024,14 +1038,14 @@ class Analyzer(ctk.CTkFrame):
         head.pack(fill="x")
         ctk.CTkLabel(head, text="●", text_color=colour, width=14,
                      font=self.font(("Segoe UI", 12))).pack(side="left")
-        ctk.CTkLabel(head, text=finding.label,
+        ctk.CTkLabel(head, text=tr(finding.label),
                      font=self.font(("Segoe UI Semibold", 12)), anchor="w"
                      ).pack(side="left")
-        ctk.CTkLabel(head, text=f"c. {finding.bar_index}",
+        ctk.CTkLabel(head, text=trf("c. {bar}", bar=finding.bar_index),
                      font=self.font(("Segoe UI", 10)),
                      text_color=self.colours["muted"], anchor="e"
                      ).pack(side="right")
-        ctk.CTkLabel(row, text=finding.detail, font=self.font(("Segoe UI", 11)),
+        ctk.CTkLabel(row, text=tr(finding.detail), font=self.font(("Segoe UI", 11)),
                      text_color=self.colours["muted"], wraplength=230,
                      justify="left", anchor="w").pack(fill="x", padx=(18, 4))
 
@@ -1044,7 +1058,8 @@ class Analyzer(ctk.CTkFrame):
                               "escritura es de notas reales.",
                        self.colours["muted"], 11, (4, 6))
             return
-        self._note(panel, f"{len(result.ornaments)} adorno(s) melódico(s)",
+        self._note(panel, trf("{ornaments} adorno(s) melódico(s)",
+                              ornaments=len(result.ornaments)),
                    self.colours["muted"], 11, (4, 2), bold=True)
         self._note(panel,
                    "Pasá el mouse por uno y abajo dice qué es; tocalo y se "
@@ -1069,10 +1084,11 @@ class Analyzer(ctk.CTkFrame):
         row.pack(fill="x", padx=6, pady=(3, 0))
         head = ctk.CTkFrame(row, fg_color="transparent")
         head.pack(fill="x")
-        ctk.CTkLabel(head, text=ornament.label,
+        ctk.CTkLabel(head, text=tr(ornament.label),
                      font=self.font(("Segoe UI Semibold", 12)), anchor="w"
                      ).pack(side="left", padx=(4, 0))
-        ctk.CTkLabel(head, text=f"c.{ornament.bar_index} · t.{beat:g}",
+        ctk.CTkLabel(head, text=trf("c.{bar} · t.{beat:g}",
+                                    bar=ornament.bar_index, beat=beat),
                      font=self.font(("Segoe UI", 10)),
                      text_color=self.colours["muted"], anchor="e"
                      ).pack(side="right", padx=(0, 4))
@@ -1110,7 +1126,7 @@ class Analyzer(ctk.CTkFrame):
         es lo que uno hace para leer una partitura ajena.
         """
         if hit is None:
-            self.picked.configure(text=self._resting,
+            self.picked.configure(text=tr(self._resting),
                                   text_color=self.colours["muted"])
             return
         voice, position = hit
@@ -1127,30 +1143,36 @@ class Analyzer(ctk.CTkFrame):
         name = spanish_pitch(index, self.staff.fifths, accidental)
         part_name = list(reversed(GRAND_VOICES))[
             min(voice, GRAND_VOICE_COUNT - 1)]
-        figure = FIGURE_NAMES.get(duration, f"{duration:g} negras")
-        text = f"{name} · {part_name} · {figure}"
+        figure = tr(FIGURE_NAMES.get(duration, trf("{duration:g} negras",
+                                                   duration=duration)))
+        text = f"{name} · {tr(part_name)} · {figure}"
 
         if self.result is not None:
             bar, offset = analysis.bar_and_offset(self.result.score, onset)
             beat = offset / (self.result.score.metrics_at(bar)[1] or 1.0) + 1
-            text += f" · compás {bar}, tiempo {beat:g}"
+            text += trf(" · compás {bar}, tiempo {beat:g}", bar=bar, beat=beat)
             segment = next((s for s in self.result.segments
                             if s.start - 1e-6 <= onset < s.end - 1e-6), None)
             if segment is not None and segment.reading is not None:
                 role = next((r for pc, r, _s in segment.reading.tones
                              if pc == midi % 12), None)
                 if role is not None:
-                    text += (f" · es {ROLE_NAMES.get(role, role)} de "
-                             f"{segment.symbol}")
+                    text += (trf(" · es {value} de {symbol}",
+                                 value=tr(ROLE_NAMES.get(role, role)),
+                                 symbol=segment.symbol))
                 else:
                     part = self._voice_of(voice)
                     ornament = next(
                         (o for o in self.result.ornaments
                          if o.voice == part and abs(o.onset - onset) < 1e-6),
                         None)
-                    text += f" · no pertenece a {segment.symbol}"
+                    text += trf(" · no pertenece a {symbol}",
+                                symbol=segment.symbol)
                     if ornament is not None:
-                        text += f" — {ornament.label.lower()}"
+                        text += f" — {tr(ornament.label).lower()}"
+        # Ya viene traducido por partes: `tr()` sobre el renglón armado no
+        # encontraría nunca esa clave, porque la clave sería la frase entera
+        # con el nombre de la nota adentro.
         self.picked.configure(text=text, text_color=self.colours["text"])
 
     # -- escuchar -----------------------------------------------------------
@@ -1180,11 +1202,11 @@ class Analyzer(ctk.CTkFrame):
         events = self.written_events()
         if not events:
             messagebox.showinfo(
-                "Nada que escuchar",
-                "Todavía no hay ninguna nota escrita. Poné algunas en el "
-                "sistema o importá una partitura.")
+                tr("Nada que escuchar"),
+                tr("Todavía no hay ninguna nota escrita. Poné algunas en el "
+                   "sistema o importá una partitura."))
             return
-        self.play_button.configure(text="♪  Sonando…", state="disabled")
+        self.play_button.configure(text=tr("♪  Sonando…"), state="disabled")
         self._playing = audio.play_chords([], [], voices=events)
         if self.on_played is not None:
             self.on_played()
@@ -1203,7 +1225,7 @@ class Analyzer(ctk.CTkFrame):
             self.after(140, self._watch_sound)
             return
         try:
-            self.play_button.configure(text="▶  Escuchar", state="normal")
+            self.play_button.configure(text=tr("▶  Escuchar"), state="normal")
         except tk.TclError:
             pass
 
@@ -1231,11 +1253,12 @@ class Analyzer(ctk.CTkFrame):
         try:
             score = importer.read_voices(path)
         except importer.ImportError_ as exc:
-            messagebox.showerror("No se pudo importar", str(exc))
+            messagebox.showerror(tr("No se pudo importar"), str(exc))
             return
         except Exception as exc:                            # noqa: BLE001
-            messagebox.showerror("No se pudo importar",
-                                 f"El archivo no se pudo leer: {exc}")
+            messagebox.showerror(tr("No se pudo importar"),
+                                 trf("El archivo no se pudo leer: {exc}",
+                                     exc=exc))
             return
 
         trimmed = max(0, len(score.parts) - MAX_VOICES)
@@ -1264,18 +1287,20 @@ class Analyzer(ctk.CTkFrame):
         if self.on_imported is not None:
             self.on_imported()
         names = ", ".join(list(reversed(GRAND_VOICES))[:len(parts)])
-        message = f"Se leyeron {len(parts)} voces: {names.lower()}."
+        message = trf("Se leyeron {parts} voces: {lower}.",
+                      parts=len(parts), lower=names.lower())
         if trimmed:
-            message += ("\n\n"
-                        f"La partitura traía {trimmed} voz/voces más. El "
-                        "sistema de dos pentagramas escribe hasta cuatro, así "
-                        "que se conservaron las cuatro más graves.")
-        messagebox.showinfo("Partitura importada", message)
+            message += (trf("\n\nLa partitura traía {trimmed} voz/voces más. "
+                            "El sistema de dos pentagramas escribe hasta "
+                            "cuatro, así que se conservaron las cuatro más "
+                            "graves.",
+                            trimmed=trimmed))
+        messagebox.showinfo(tr("Partitura importada"), message)
 
     def _export(self) -> None:
         if self.result is None:
-            messagebox.showinfo("Nada que exportar",
-                                "Escribí o importá una partitura primero.")
+            messagebox.showinfo(tr("Nada que exportar"),
+                                tr("Escribí o importá una partitura primero."))
             return
         folder = filedialog.askdirectory(
             title="Elegí dónde guardar la partitura")
@@ -1286,17 +1311,18 @@ class Analyzer(ctk.CTkFrame):
                                               ("musicxml", "midi"),
                                               "Análisis")
         except Exception as exc:                            # noqa: BLE001
-            messagebox.showerror("No se pudo exportar", str(exc))
+            messagebox.showerror(tr("No se pudo exportar"), str(exc))
             return
         if written:
             if self.on_exported is not None:
                 self.on_exported()
             messagebox.showinfo(
-                "Listo",
-                f"Se guardaron {len(written)} archivos en:\n"
-                f"{os.path.dirname(written[0])}")
+                tr("Listo"),
+                trf("Se guardaron {written} archivos en:\n{dirname}",
+                    written=len(written),
+                    dirname=os.path.dirname(written[0])))
         else:
-            messagebox.showerror("Error", "No se pudo escribir ningún archivo.")
+            messagebox.showerror(tr("Error"), tr("No se pudo escribir ningún archivo."))
 
 
 def _descendants(widget) -> List:

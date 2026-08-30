@@ -91,8 +91,9 @@ Distribución:
 - experimentador de armónicos: `spectrum.py`
 - analizador (pantalla): `analyzer.py`
 - aviso de version nueva: `engine/updates.py` (consulta) + `updater.py` (cartel)
+- idiomas: `engine/i18n.py` (motor) + `engine/lang/` (catálogos) + `chooser.py` (cartel de la primera vez)
 
-`staff.py`, `spectrum.py`, `analyzer.py` y `updater.py` no importan `app.py`: reciben la paleta por parámetro (`colours=...`). No agregarles un import de la aplicación.
+`staff.py`, `spectrum.py`, `analyzer.py`, `updater.py` y `chooser.py` no importan `app.py`: reciben la paleta por parámetro (`colours=...`). No agregarles un import de la aplicación.
 
 ### Contrapunto
 
@@ -136,7 +137,11 @@ Para detalles de reglas, excepciones y orden de chequeos: `MUSIC_LOGIC.md`, secc
 
 Si existen `engine/*.pyd`, el `.pyd` gana al `.py` en importación.
 
-**Después de modificar `engine/theory.py`, `engine/fitness.py` o `engine/style.py`, recompilar o limpiar:**
+**Después de modificar cualquiera de los seis ---`theory`, `fitness`,
+`style`, `ga`, `voicing`, `harmony`---, recompilar o limpiar.** Vale también
+para un cambio de traducción: envolver una cadena con `trf()` en
+`voicing.py` no se ve hasta recompilar, porque el `.pyd` viejo sigue
+ganando.
 ```bash
 python build_engine.py
 # o durante desarrollo:
@@ -374,6 +379,65 @@ Exportación: `session.export_analysis()` --- **un hueco por compás** y una lí
   puede dispararse en `after(0)` porque `CTk.mainloop` llama a `update()` antes
   de entrar al bucle, y el cartel se destruiria abajo de sus propios pies.
 
+## Los dos idiomas
+
+`engine/i18n.py` (el motor, puro) + `engine/lang/` (los catálogos) +
+`chooser.py` (el cartel de la primera vez). El original está en castellano y
+**el castellano es la clave**: cada cadena se busca tal cual está escrita en
+el código y, si no está en el catálogo, se devuelve igual. Una pantalla
+nueva sin traducir sale en castellano, no vacía.
+
+- **La traducción ocurre al dibujar, no al importar.** Las tablas de prosa
+  ---`MODE_CARDS`, `TUTORIAL_STEPS`, el libro, el guion--- siguen guardando
+  el castellano; quien lo convierte es el `tr()` del lugar donde el texto
+  entra a un widget. Es lo que permite cambiar de idioma sin reabrir el
+  programa: alcanza con volver a dibujar.
+- `tr(texto)` traduce, `trf(plantilla, hueco=…)` traduce y rellena, `trs()`
+  traduce una lista y `N()` **marca sin traducir** --- es para la prosa que
+  vive en una constante de módulo y se traduce lejos.
+- **Los huecos van con nombre** (`{compás}`) y nunca por posición: traducir
+  es reordenar. `TestLanguages` falla si un hueco se pierde o se inventa.
+- **Un desplegable se muestra traducido y se lee en castellano**: se arma
+  con `trs(...)` y se lee con `i18n.untr(menu.get())`. Así ninguna de las
+  comparaciones del programa ---que están escritas contra el castellano---
+  cambia. Traducir un menú sin poner el `untr()` del otro lado rompe en
+  silencio: la comparación deja de dar y no falla nada.
+- **No traducir a mitad de frase.** Pegar `«va»`/`«van»` o `«voz»`/`«voces»`
+  con un hueco es una concordancia del castellano y no existe como pedazo en
+  ningún otro idioma: van las dos frases enteras. Lo mismo con cualquier
+  renglón armado con `+` o `join`: se traducen los pedazos y se pega después,
+  nunca al revés --- `tr()` sobre la frase ya armada no acierta nunca, porque
+  la clave llevaría el dato adentro.
+- `_switch_language` destruye y rearma **los cuatro marcos** de
+  `_build_chrome` además de `_render()`: la cabecera y el pie se arman una
+  sola vez y no pasan por el render.
+- El cartel del idioma sale **antes** que el de versión nueva y antes de
+  construir `ChordWeaverApp`, por lo mismo que aquél (ver más abajo) y para
+  que el de versión nueva salga ya en el idioma elegido. Está escrito en los
+  dos idiomas a la vez y **no** pasa por `tr()`: se dibuja cuando todavía no
+  hay ninguno elegido.
+- `DEFAULT_SETTINGS["language"]` arranca **vacío**, no en `"es"`: vacío es
+  «no lo eligió nadie todavía», que es lo que hace que se pregunte una sola
+  vez en la vida de la instalación.
+- Los nombres de nota los decide el idioma (`i18n.note_name`, `say_letter`):
+  solfeo en castellano, letras en inglés. `analysis.spanish_note` y
+  `analyzer.spanish_pitch` bajan ahí.
+- `uitest` clava el idioma en el original: lo que el arnés lee son los
+  rótulos de la ventana viva, y una corrida en inglés fallaría entera sin que
+  nada esté mal.
+
+Mantenimiento:
+
+```bash
+python -m engine.lang.audit            # qué falta y qué sobra
+python -m engine.lang.audit --missing  # las que faltan, listas para pegar
+```
+
+**Las claves no se copian a mano**: varias se arman pegando renglones y un
+espacio de más deja la entrada muerta sin que se note. Las saca el audit
+leyendo el árbol de sintaxis, y `TestLanguages.test_the_catalogue_has_no_holes`
+falla cuando se agrega una pantalla sin traducir.
+
 ## Audio
 
 El audio se sintetiza en `engine/ambience.py`, sin archivos ni librerías externas.
@@ -402,7 +466,8 @@ Revisar especialmente antes de cambios estructurales:
 - `engine/history.py`: rutas/lista blanca de settings.
 - `ChordWeaver.spec`: empaquetado.
 - `app.py`: threading/Tk, persistencia de UI y estado global.
-- `uitest.py`: aislamiento de datos y tutorial/visitas.
+- `uitest.py`: aislamiento de datos, idioma y tutorial/visitas.
+- `engine/lang/`: los catálogos. Las claves son castellano exacto.
 
 ## Regla final
 
@@ -415,5 +480,7 @@ Antes de tocar tests/UI: asegurar aislamiento mediante `uitest.Session` o rutas 
 Antes de agregar una preferencia persistente: agregarla a `DEFAULT_SETTINGS`.
 
 Antes de agregar un módulo al build: revisar `ChordWeaver.spec`.
+
+Antes de agregar texto visible: envolverlo con `tr()` y correr `python -m engine.lang.audit`.
 
 No introducir documentación aquí para hechos que el código ya hace obvios.

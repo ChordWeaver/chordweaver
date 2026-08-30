@@ -20,6 +20,9 @@ from typing import (Callable, Dict, List, Optional, Sequence, Set,
 
 import customtkinter as ctk
 
+from engine.i18n import tr, trf, trs
+from engine import i18n
+
 #: Staff geometry, in pixels.
 #: Generous on purpose. At a tighter spacing a step is only a few pixels and
 #: neighbouring notes become impossible to tell apart -- a written G reads as
@@ -401,8 +404,8 @@ class StaffEditor(ctk.CTkFrame):
         if not self.notes:
             canvas.create_text(max(canvas.winfo_width(), 400) / 2,
                                top + 2 * LINE_GAP + 60,
-                               text="Hacé click en el pentagrama para escribir "
-                                    "la melodía",
+                               text=tr("Hacé click en el pentagrama para escribir "
+                                       "la melodía"),
                                fill=faint, font=("Segoe UI", 12))
 
     def _sharp_positions(self) -> Dict[str, int]:
@@ -1370,8 +1373,8 @@ class GrandStaff(ctk.CTkFrame):
         if self.is_empty():
             canvas.create_text(
                 max(canvas.winfo_width(), 420) / 2, bottom + 40,
-                text="Elegí una voz y hacé click donde va cada nota, "
-                     "o importá una partitura.",
+                text=tr("Elegí una voz y hacé click donde va cada nota, "
+                        "o importá una partitura."),
                 fill=faint, font=("Segoe UI", 12))
 
     def _draw_clefs(self, ink: str) -> None:
@@ -1395,10 +1398,10 @@ class GrandStaff(ctk.CTkFrame):
         """El compás, en los dos pentagramas."""
         for treble, lines in ((True, TREBLE_LINES), (False, BASS_LINES)):
             self.canvas.create_text(x, self._y_for(lines[3], treble),
-                                    text=str(beats), fill=colour,
+                                    text=tr(str(beats)), fill=colour,
                                     font=("Segoe UI Semibold", 14))
             self.canvas.create_text(x, self._y_for(lines[1], treble),
-                                    text=str(beat_type), fill=colour,
+                                    text=tr(str(beat_type)), fill=colour,
                                     font=("Segoe UI Semibold", 14))
 
     def _draw_signature(self, x: float, ink: str) -> float:
@@ -1479,7 +1482,7 @@ class GrandStaff(ctk.CTkFrame):
             if bar > 1:
                 self.canvas.create_line(x, top, x, bottom, fill=colour, width=1)
             if start < total - EPSILON or bar == 1:
-                self.canvas.create_text(x + 5, BAR_NUMBER_Y, text=str(bar),
+                self.canvas.create_text(x + 5, BAR_NUMBER_Y, text=tr(str(bar)),
                                         fill=colour, anchor="w",
                                         font=("Segoe UI", 9))
             if bar > 1 and (beats, beat_type) != previous:
@@ -1520,7 +1523,7 @@ class GrandStaff(ctk.CTkFrame):
             self._draw_ledgers(x, index, faint, treble)
             if accidental is not None:
                 canvas.create_text(x - 15, y,
-                                   text=ACCIDENTALS.get(accidental, ""),
+                                   text=tr(ACCIDENTALS.get(accidental, "")),
                                    fill=colour, font=("Segoe UI Symbol", 15))
             filled = duration <= 1.0
             canvas.create_oval(x - 6, y - 5, x + 6, y + 5,
@@ -1717,7 +1720,7 @@ class GrandStaff(ctk.CTkFrame):
                 # se lee, no un realce, y en azul sobre el fondo oscuro no se
                 # distinguía un 6 de un 5.
                 canvas.create_text(x, figure_top + row * FIGURE_LINE,
-                                   text=text, fill=ink,
+                                   text=tr(text), fill=ink,
                                    anchor="center", font=("Segoe UI", 11))
         for onset, colour in self.flags:
             x = self._x_for(onset)

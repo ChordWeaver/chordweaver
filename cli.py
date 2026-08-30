@@ -39,11 +39,13 @@ def parse_time_signature(text: str) -> TimeSignature:
         top, bottom = int(beats), int(beat_type or 4)
     except ValueError:
         raise argparse.ArgumentTypeError(
-            f"compás inválido: {text!r}. Se escribe como 4/4 o 6/8.")
+            trf("compás inválido: {value!r}. Se escribe como 4/4 o 6/8.",
+                value=text))
     if top < 1 or bottom < 1:
         raise argparse.ArgumentTypeError(
-            f"compás inválido: {text!r}. Los dos números tienen que ser "
-            f"mayores que cero.")
+            trf("compás inválido: {value!r}. Los dos números tienen que "
+                "ser mayores que cero.",
+                value=text))
     return TimeSignature(top, bottom)
 
 
@@ -52,7 +54,8 @@ def positive_duration(text: str) -> float:
     try:
         value = float(text)
     except ValueError:
-        raise argparse.ArgumentTypeError(f"duración inválida: {text!r}")
+        raise argparse.ArgumentTypeError(trf("duración inválida: {value!r}",
+                                             value=text))
     if value <= 0:
         raise argparse.ArgumentTypeError(
             "la duración tiene que ser mayor que cero: con 0 la partitura "
@@ -68,7 +71,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Space-separated chord symbols, e.g. \"C Am F G\"")
     parser.add_argument("--genre", default="classical", choices=sorted(GENRE_PROFILES))
     parser.add_argument("--voices", default="B,T,A,S",
-                        help=f"Comma-separated voice keys from: {', '.join(VOICE_CATALOG)}")
+                        help=trf("Comma-separated voice keys from: {value}",
+                                 value=', '.join(VOICE_CATALOG)))
     parser.add_argument("--duration", type=positive_duration, default=2.0,
                         help="Chord duration in quarter notes (4, 2, 1 or 0.5)")
     parser.add_argument("--time", type=parse_time_signature,
@@ -144,20 +148,26 @@ def main(argv: List[str] | None = None) -> int:
         ),
     )
 
-    print(f"Genre: {args.genre} | voices: {args.voices} | {signature} | {len(entries)} chords")
+    print(trf("Genre: {genre} | voices: {voices} | {signature} | {entries} "
+              "chords",
+              genre=args.genre, voices=args.voices, signature=signature,
+              entries=len(entries)))
     outcome = session.generate(request)
 
     for warning in outcome.warnings:
-        print(f"  warning: {warning}")
+        print(trf("  warning: {warning}", warning=warning))
     if not outcome.succeeded:
         for error in outcome.errors:
-            print(f"  error: {error}")
+            print(trf("  error: {error}", error=error))
         return 1
 
-    print(f"\nSearched {outcome.result.generations_run} generations, "
-          f"{outcome.result.evaluated} evaluations.\n")
+    print(trf("\nSearched {generations_run} generations, {evaluated} "
+              "evaluations.\n",
+              generations_run=outcome.result.generations_run,
+              evaluated=outcome.result.evaluated))
     for index, solution in enumerate(outcome.result.solutions, start=1):
-        print(f"Option {index}  (cost {solution.cost:.0f})")
+        print(trf("Option {index}  (cost {cost:.0f})",
+                  index=index, cost=solution.cost))
         for slot_index, slot in enumerate(outcome.spec.slots):
             pitches = " ".join(
                 note_name(p).ljust(4) for p in reversed(solution.slots[slot_index])

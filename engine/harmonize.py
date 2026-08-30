@@ -37,6 +37,7 @@ from .harmony import (
     build_chord_pool,
     function_of,
 )
+from engine.i18n import tr, trf, trs
 
 #: Melody notes shorter than this are never harmonised on their own.
 MIN_DURATION = 0.5

@@ -30,6 +30,7 @@ from .theory import (
     ROLE_SEVENTH,
     ROLE_THIRD,
 )
+from engine.i18n import tr, trf, trs
 
 #: Los roles que definen de qué acorde se trata, y por lo tanto los únicos
 #: que pueden ir en el bajo. Todo lo demás es color y va por encima.
@@ -323,9 +324,11 @@ def check_chord_fits(chord: Chord, voice_count: int) -> VoicingAdvice:
         return VoicingAdvice(
             fits=False,
             message=(
-                f"{chord.symbol} tiene {tone_count} notas y hay sólo {voice_count} "
-                f"voces. Ni sacando todo lo prescindible entra: usá más voces "
-                f"o un acorde más simple."
+                trf("{symbol} tiene {tone_count} notas y hay sólo "
+                    "{voice_count} voces. Ni sacando todo lo prescindible "
+                    "entra: usá más voces o un acorde más simple.",
+                    symbol=chord.symbol, tone_count=tone_count,
+                    voice_count=voice_count)
             ),
         )
 
@@ -333,8 +336,11 @@ def check_chord_fits(chord: Chord, voice_count: int) -> VoicingAdvice:
     return VoicingAdvice(
         fits=False,
         message=(
-            f"{chord.symbol} tiene {tone_count} notas y hay {voice_count} voces. "
-            f"Igual se puede escribir dando por sobreentendido: {', '.join(to_drop)}."
+            trf("{symbol} tiene {tone_count} notas y hay {voice_count} "
+                "voces. Igual se puede escribir dando por sobreentendido: "
+                "{value}.",
+                symbol=chord.symbol, tone_count=tone_count,
+                voice_count=voice_count, value=', '.join(to_drop))
         ),
         suggested_omissions=to_drop,
     )
