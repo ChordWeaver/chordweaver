@@ -1,141 +1,141 @@
-# Cómo contribuir a ChordWeaver
+# How to Contribute to ChordWeaver
 
-Gracias por pasar. Este archivo es corto a propósito: casi todo lo que hay que
-saber para no romper nada ya está escrito en otros dos lugares, y lo que sigue
-te dice cuál leer antes de tocar qué.
+Thanks for stopping by. This file is short on purpose: almost everything you need
+to know to avoid breaking things is already documented in two other places, and
+this file tells you which one to read before touching what.
 
-- [`README.md`](README.md) — qué hace el programa y cómo correrlo.
-- [`MUSIC_LOGIC.md`](MUSIC_LOGIC.md) — **lectura obligatoria antes de tocar
-  cualquier cosa musical.** Documenta, con referencias `archivo:línea`, cómo se
-  representan notas, voces e intervalos; los tres criterios distintos de
-  consonancia y por qué no coinciden; el catálogo completo de reglas; y las
-  excepciones que parecen bugs y no lo son.
-- [`CLAUDE.md`](CLAUDE.md) — el mapa de las decisiones de diseño y de las
-  optimizaciones medidas. Si algo del código parece innecesariamente raro,
-  probablemente esté explicado ahí, con el número que lo justifica.
+* [`README.md`](README.md) — what the program does and how to run it.
+* [`MUSIC_LOGIC.md`](MUSIC_LOGIC.md) — **mandatory reading before touching
+  anything musical.** Documents, with `file:line` references, how notes, voices,
+  and intervals are represented; the three different criteria for consonance and
+  why they don't agree; the complete rule catalog; and the exceptions that look
+  like bugs but aren't.
+* [`CLAUDE.md`](CLAUDE.md) — the map of design decisions and measured
+  optimizations. If something in the code seems unnecessarily weird, it's
+  probably explained there, along with the numbers that justify it.
 
-## Poner a andar el proyecto
+## Setting Up the Project
 
 ```bash
-pip install customtkinter     # la única dependencia para correr la app
-python app.py                 # la aplicación con interfaz
-python tests.py               # la suite del motor (369 tests)
+pip install customtkinter     # the only dependency needed to run the app
+python app.py                 # the GUI application
+python tests.py               # the engine test suite (369 tests)
 python cli.py --chords "Cmaj7 Am7 Dm7 G7" --genre jazz
 ```
 
-Hay que estar parado en la carpeta que contiene `cli.py`; si no, Python tira
+You must be in the directory containing `cli.py`; otherwise Python will throw
 `No module named engine`.
 
-## Antes de mandar un pull request
+## Before Submitting a Pull Request
 
-1. **`python tests.py` tiene que pasar entero.** Son 369 tests y tardan menos
-   de dos minutos. Un test nuevo por cada comportamiento nuevo.
-2. **Si tocaste `engine/fitness.py` o `engine/style.py`, corré también
-   `python audit.py`** y pegá el resultado en el PR. Los pesos están calibrados
-   contra esa auditoría: cambiar un número altera el resultado musical de todas
-   las generaciones **sin que falle ningún test**. El README tiene la tabla de
-   control con la que comparar.
-3. **Contá qué mediste.** Este proyecto tiene varias optimizaciones que sólo se
-   justifican con números —el relleno de la población, el intervalo de cambio
-   de hilo, los marcos de tkinter pelado— y todas están documentadas con el
-   antes y el después. Si tu cambio es por rendimiento, medilo.
+1. **`python tests.py` must pass completely.** There are 369 tests and they take
+   less than two minutes. Add a new test for every new behavior.
+2. **If you touched `engine/fitness.py` or `engine/style.py`, also run
+   `python audit.py`** and paste the result into the PR. The weights are calibrated
+   against that audit: changing a single number changes the musical output of all
+   generations **without causing any test to fail**. The README contains the
+   control table to compare against.
+3. **Say what you measured.** This project has several optimizations that are
+   only justified by numbers — population filling, thread-switch intervals,
+   bare Tkinter frames — and all of them are documented with before-and-after
+   measurements. If your change is performance-related, measure it.
 
-## Las cinco trampas que se llevan puestas a todo el mundo
+## The Five Traps That Catch Everyone
 
-Ninguna de estas falla con un error. Todas fallan en silencio.
+None of these produce an error. They all fail silently.
 
-1. **Si el motor está compilado, editar el `.py` no hace nada.**
-   `python build_engine.py` deja `engine/*.pyd` al lado de los `.py`, y un
-   `.pyd` gana en el orden de importación. Editás, corrés, no pasa nada, y
-   buscás el bug en otro lado. `ls engine/*.pyd` te dice en un segundo si el
-   motor está compilado; `python build_engine.py --clean` lo devuelve a Python
-   puro mientras trabajás.
+1. **If the engine is compiled, editing the `.py` file does nothing.**
+   `python build_engine.py` leaves `engine/*.pyd` next to the `.py` files, and a
+   `.pyd` takes precedence in the import order. You edit, run, nothing changes,
+   and start looking for the bug somewhere else. `ls engine/*.pyd` tells you in
+   one second whether the engine is compiled; `python build_engine.py --clean`
+   switches it back to pure Python while you're working.
 
-2. **Y con el motor compilado, parchear una función de `engine/` desde afuera
-   tampoco hace nada** si quien la llama está en el mismo módulo: Cython
-   resuelve esas llamadas a nivel C. Cualquier script que instrumente el motor
-   por dentro tiene que correr con `--clean`. `tests.py` no lo necesita, porque
-   prueba por la API pública.
+2. **And with the compiled engine, patching a function from `engine/` externally
+   also does nothing** if the caller is in the same module: Cython resolves those
+   calls at the C level. Any script that instruments the engine internally must
+   be run with `--clean`. `tests.py` doesn't need this because it tests through
+   the public API.
 
-3. **Una preferencia nueva que no esté en `DEFAULT_SETTINGS`
-   (`engine/history.py`) se guarda bien y se pierde al reabrir.** Es una lista
-   blanca: `load_settings` descarta cualquier clave que no figure ahí.
+3. **A new preference that isn't included in `DEFAULT_SETTINGS`
+   (`engine/history.py`) will save correctly and then disappear when reopening
+   the program.** It's a whitelist: `load_settings` discards any key that isn't
+   listed there.
 
-4. **Un módulo nuevo en `engine/` tiene que agregarse a los `hiddenimports` de
-   `ChordWeaver.spec`.** Están listados a mano justamente para que un import
-   faltante rompa el build en vez del ejecutable ya entregado.
+4. **A new module in `engine/` must be added to the `hiddenimports` in
+   `ChordWeaver.spec`.** They are listed manually specifically so that a missing
+   import breaks the build instead of the already-shipped executable.
 
-5. **Cualquier script que abra la ventana tiene que pasar por
-   `uitest.Session`.** Construir `ChordWeaverApp` directo escribe sobre los
-   datos de verdad del usuario: el historial guarda las diez últimas
-   producciones, así que diez corridas de prueba lo borran entero. `Session`
-   manda todo a archivos descartables y pone `CHORDWEAVER_DATA_DIR` **antes de
-   importar `app`**.
+5. **Any script that opens the window must go through `uitest.Session`.**
+   Constructing `ChordWeaverApp` directly writes to the user's real data: the
+   history stores the last ten productions, so ten test runs can wipe it out
+   completely. `Session` sends everything to disposable files and sets
+   `CHORDWEAVER_DATA_DIR` **before importing `app`**.
 
-## Los límites del diseño
+## Design Boundaries
 
-Estos no son preferencias de estilo: son lo que hace que el proyecto sea lo que
-es. Un PR que los cruce se va a discutir aunque el código esté bien.
+These aren't style preferences: they are what makes the project what it is. A PR
+that crosses them will be discussed even if the code itself is good.
 
-- **El motor no tiene dependencias.** `engine/` es librería estándar pura.
-  MusicXML, MIDI y el audio WAV se escriben a mano para que el ejecutable quede
-  chico y sin dependencias: **no introducir `music21`, `mido`, `numpy` ni
-  ninguna librería de audio.** La única dependencia real del proyecto es
-  `customtkinter`, y es de la interfaz.
-- **Ningún módulo de `engine/` importa un toolkit gráfico.** Es lo que permite
-  correr el motor desde los tests, el CLI o la app indistintamente.
-- **El grafo de dependencias no tiene ciclos** y `engine/session.py` es la
-  fachada: la GUI y el CLI sólo hablan con ese módulo. Capacidad nueva del
-  motor, se expone ahí.
-- **Los perfiles de género sólo cambian pesos y valores por defecto, nunca la
-  mecánica.** Si una regla nueva necesita lógica distinta según el género, va
-  como peso, no como rama. Y todo switch se tiene que poder prender y apagar
-  por separado: el género define el valor inicial y nada más.
-- **Las rutas son portables.** `history.base_directory()` devuelve la carpeta
-  del `.exe` cuando está congelado y la raíz del proyecto cuando corre desde
-  fuente. Nunca escribir en el home del usuario ni en una ubicación de sistema
-  salvo que el usuario la elija en un diálogo. El arte del programa cuelga de
-  `program_directory()`, que es otra cosa.
-- **Cython es opcional y los `.py` no se tocan para complacerlo.** Los tipos
-  viven en `engine/fitness.pxd` y `engine/style.pxd`, que Python ignora por
-  completo. Reescribir una función para poder declararla sería exactamente lo
-  que esta separación existe para no hacer. Los `.pxd` **son fuente**, se
-  editan a mano, y una firma de ahí tiene que coincidir con la del `.py`.
+* **The engine has no dependencies.** `engine/` is pure standard-library Python.
+  MusicXML, MIDI, and WAV audio are written by hand so the executable stays small
+  and dependency-free: **do not introduce `music21`, `mido`, `numpy`, or any
+  audio library.** The project's only actual dependency is `customtkinter`,
+  which belongs to the interface.
+* **No module in `engine/` imports a GUI toolkit.** This is what allows the engine
+  to run from the tests, the CLI, or the application interchangeably.
+* **The dependency graph has no cycles**, and `engine/session.py` is the facade:
+  the GUI and CLI only communicate with that module. New engine capabilities
+  should be exposed there.
+* **Genre profiles only change weights and default values, never the mechanics.**
+  If a new rule needs different logic depending on the genre, it should be
+  implemented as a weight, not as a branch. Every switch must be independently
+  toggleable: the genre defines the initial value and nothing more.
+* **Paths are portable.** `history.base_directory()` returns the `.exe` folder
+  when frozen and the project root when running from source. Never write to the
+  user's home directory or a system location unless the user explicitly chooses
+  it through a dialog. The program's artwork lives under `program_directory()`,
+  which is a different thing.
+* **Cython is optional, and the `.py` files aren't modified to accommodate it.**
+  Types live in `engine/fitness.pxd` and `engine/style.pxd`, which Python ignores
+  completely. Rewriting a function just to make it easier to declare would defeat
+  the entire purpose of this separation. The `.pxd` files **are source code**:
+  edit them manually, and any signature defined there must match the one in the
+  corresponding `.py`.
 
-## Convenciones de código
+## Code Conventions
 
-- Python 3.9+. Sin formateador automático configurado: mirá el archivo que
-  estás editando y escribí como está escrito.
-- **Identificadores y docstrings en inglés; los comentarios de prosa, en
-  español.** Es lo que hay en todo el código y conviene seguirlo.
-- Los comentarios largos explican **por qué**, no qué. El código ya dice qué
-  hace.
-- Tk no es thread-safe: la búsqueda corre en un hilo de fondo y reporta por una
-  cola que el main loop drena por timer. **El worker nunca toca un widget**, y
-  un hilo de fondo tampoco puede agendar nada con `after`.
+* Python 3.9+. No automatic formatter is configured: look at the file you're
+  editing and write code in the same style.
+* **Identifiers and docstrings are in English; prose comments are in Spanish.**
+  This is how the entire codebase is written, so please follow it.
+* Long comments explain **why**, not what. The code already says what it does.
+* Tk is not thread-safe: the search runs in a background thread and reports
+  through a queue that the main loop drains on a timer. **The worker never touches
+  a widget**, and a background thread cannot schedule anything with `after` either.
 
-## Qué no se commitea
+## What Not to Commit
 
-El `.gitignore` ya los cubre, pero por si acaso: `history.json`,
-`achievements.json`, `story.json`, `eggs.json`, `visitors.json` y
-`settings.json` son **datos del usuario**, no código. Igual que `output/`,
-`build/`, `dist/` y los `engine/*.pyd`, que se regeneran.
+The `.gitignore` already covers these, but just in case: `history.json`,
+`achievements.json`, `story.json`, `eggs.json`, `visitors.json`, and
+`settings.json` are **user data**, not code. The same goes for `output/`,
+`build/`, `dist/`, and `engine/*.pyd`, which are all regenerated.
 
-## Reportar un bug
+## Reporting a Bug
 
-Contá qué esperabas y qué pasó, y agregá:
+Explain what you expected to happen and what actually happened, and include:
 
-- el modo (Organizador, Generador o Armonizador) y el género,
-- los acordes o la melodía con los que pasó,
-- **la semilla**, si la fijaste: con la misma semilla el resultado es idéntico
-  bit a bit, así que es lo que hace el bug reproducible,
-- si el motor estaba compilado (`ls engine/*.pyd`).
+* the mode (Organizer, Generator, or Harmonizer) and the genre,
+* the chords or melody that triggered it,
+* **the seed**, if you set one: with the same seed, the result is identical
+  bit-for-bit, making it the key to reproducing the bug,
+* whether the engine was compiled (`ls engine/*.pyd`).
 
-Si es un bug musical —"esto no debería sonar así"— decí qué regla creés que se
-está violando y, si podés, dónde la encontrás en `MUSIC_LOGIC.md`. Varias cosas
-que parecen errores están documentadas ahí como excepciones deliberadas.
+If it's a musical bug — "this shouldn't sound like this" — explain which rule you
+think is being violated and, if possible, where you found it in `MUSIC_LOGIC.md`.
+Several things that look like errors are documented there as deliberate exceptions.
 
-## Licencia
+## License
 
-Al contribuir aceptás que tu aporte se distribuya bajo la
-[licencia MIT](LICENSE), que es la del proyecto.
+By contributing, you agree that your contribution will be distributed under the
+[MIT license](LICENSE), which is the project's license.
