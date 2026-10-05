@@ -6,11 +6,11 @@ Your chords, your melody, or a blank sheet: a genetic algorithm turns any of the
 
 The GA **never changes the chords or their order** — it only changes the register and distribution of the notes. In the Organizer, you write the chords yourself; in the Generator, the program creates them; in the Harmonizer, it finds them underneath the melody you drew.
 
-And the other way around: the **Analyzer** takes an existing score — either written by hand or imported — and identifies what it is doing, chord by chord and step by step.
+And the other way around: the **Analyzer** takes an existing score — either written by hand or imported — and identifies what it is doing, chord by chord and step by step. The **Schoolhouse** uses that same Analyzer to mark writing exercises.
 
-![The screen that opens when the program starts: the three modes and the two tools](capturas/01-modos.png)
+![The screen that opens when the program starts: the three modes and the three tools](capturas/01-modos.png)
 
-*The three modes — they all end up in the same place, a multi-voice progression; what changes is how much you do yourself — and below them, the two tools that don't compose anything.*
+*The three modes. Each card shows what you put in, left of the arrow, and what the program writes. Below them, the three tools that don't compose anything.*
 
 ## Folder structure (IMPORTANT)
 
@@ -90,9 +90,9 @@ working mode, which determines who provides the chords:
 Each mode has its own color, and that color tints the progress rail in the header
 throughout the entire workflow.
 
-Below the three modes are two more cards that don't lead to composition:
-the **Harmonic Experimenter** and the **Analyzer**. Below those are the achievements
-and the theory book.
+Below the three modes are three more cards that don't lead to composition:
+the **Harmonic Experimenter**, the **Analyzer** and the **Schoolhouse**. Below
+those are the achievements and the theory book.
 
 ![The Harmonizer: the melody drawn on the staff](capturas/10-armonizador.png)
 
@@ -100,6 +100,14 @@ and the theory book.
 are recalculated with every key press: it's the same calculation used by the search,
 without choosing the chords yet. You can select any other note and that one will
 receive its chord.*
+
+The melody may leave the scale, and those notes are painted orange. One that
+rises a semitone to the next note is its leading tone and gets that note's
+dominant (V/x); in Baroque and jazz it sometimes gets its seventh degree
+(vii°/x). In jazz, one that falls a semitone gets the tritone substitute. Any
+other chromatic note is harmonized with a chord that contains it. A key
+signature stands for a major key and its relative minor, and the last note
+decides: a melody that ends on the relative minor is harmonized in minor.
 
 The screens that follow:
 
@@ -216,7 +224,27 @@ it highlights the exact section where it occurs on the staff.
 
 The counterpoint rules are not written twice: parallel fifths and octaves and
 hidden fifths are checked by the same evaluator used by the genetic algorithm, so
-the Analyzer cannot approve something the Generator forbids.
+the Analyzer cannot approve something the Generator forbids. They are judged by
+the style chosen in the counterpoint panel: in Baroque and chorale writing a
+parallel is a fault, in jazz and Gregorian it is noted without being flagged.
+Two voices that move on different beats don't make parallels.
+
+The staff holds four voices. A score with more is reduced moment by moment to
+the lowest note, the highest, and the two inner notes that add the most to the
+chord, so a piano piece is analyzed whole. Pickups and bars split across a
+repeat are read correctly.
+
+Measured against reference analyses of eight Bach chorales, it reads 87% of
+the chords right and gets the key of all eleven pieces it was compared with.
+
+## The Schoolhouse
+
+Five units in order (voice motion, harmonies, cadences, styles and the
+harmonic series) with 33 exercises. Each lesson explains a topic, quotes the
+theory book entry that covers it and asks you to write, choose or listen. What
+you write is marked by the Analyzer: when something is wrong it tells you in
+which bar and which voices, without giving the answer away. A lesson opens once
+the previous one is passed in full, and there is a graduation at the end.
 
 ### How to use it
 
@@ -265,6 +293,14 @@ a file first. Everything exported by the Organizer, Generator, and Harmonizer ca
 also be imported here.
 
 Opening it awards *The Beginning of the End*, and importing a score awards *I Came Prepared*.
+
+## Timbres, Voices and Languages
+
+From the gear menu you choose what everything the program plays sounds like:
+several synthesized timbres, a joke one, or a WAV saved from the Harmonic
+Experimenter. The voices screen has presets with singing and piano ranges. The
+whole program is in Spanish and English; the language is chosen the first time
+it opens and can be changed later from the gear menu.
 
 ## Tutorial and Theory Book
 
@@ -576,9 +612,8 @@ Before touching any musical logic, read [`MUSIC_LOGIC.md`](MUSIC_LOGIC.md).
 
 ## Status
 
-* Part 1 (engine): complete and tested (384 tests).
-* Part 2 (interface): complete. Tested end-to-end under both virtual display
-  (Claude) and real display.
+* Version 1.2 ALPHA. 667 tests over the engine, the Analyzer, the Schoolhouse
+  and export, plus `verify_ui.py` over the interface.
 
 ## License
 
