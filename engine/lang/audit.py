@@ -41,7 +41,8 @@ from typing import Dict, List, Optional, Set, Tuple
 #: Dónde se busca. Es el programa entero menos las pruebas y las
 #: herramientas de compilación, que no le hablan a ningún usuario.
 ROOTS = ("app.py", "analyzer.py", "spectrum.py", "staff.py", "updater.py",
-         "chooser.py", "cinematic.py", "cli.py", "engine")
+         "chooser.py", "cinematic.py", "cli.py", "school.py", "homeart.py",
+         "engine")
 
 SKIP = {"tests.py", "audit.py", "build_engine.py", "verify_ui.py",
         "uitest.py", "i18n.py"}

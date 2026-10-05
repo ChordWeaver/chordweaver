@@ -319,6 +319,16 @@ ningún viaje. La menor armónica cuenta como menor.
 - `planned_notes()` hace la misma distribución sin elegir acordes y por eso es determinista.
 - `MelodyNote.skip_harmonise` es el pedido contrario a `must_harmonise`: el usuario apagó el dorado que el programa había puesto. `drop_skipped_spots()` saca ese lugar y le da su duración a un vecino **del mismo compás** —el anterior, o el siguiente estirado hacia atrás—; un lugar sin vecino en su compás se queda, y su nota sigue dorada.
 - Las dos marcas son excluyentes en la interfaz: el click rota entre dorado y apagado, no entre tres estados.
+- **Notas fuera de la escala** (`out_of_scale`: fuera de `bar.mode` sobre `bar.tonic`). Regla, en **alturas reales** y sólo para notas de al menos `MIN_DURATION`:
+  - sube un semitono a la siguiente → la nota se marca sola y su acorde es V/x de la nota de llegada (V7/x con `with_sevenths`; V a secas si la llegada es la tónica). En `LEADING_APPROACH_GENRES` (barroco, jazz) sale en cambio vii°/x (vii°7 en jazz) con `LEADING_APPROACH_CHANCE`;
+  - baja un semitono → sólo en jazz (`TRITONE_APPROACH_GENRES`): subV7/x. En los demás estilos no hay dominante de la nota de llegada que contenga un semitono arriba de ella, así que no cumple la regla;
+  - la nota de llegada recibe su propio lugar y `RESOLUTION_REWARD` para el acorde con esa fundamental (con -140 la ventana de azar de 55 dejaba pasar la resolución engañosa una de cada tres).
+- La nota cromática que no cumple la regla no se marca sola; si cae en tiempo fuerte o el usuario la marca, se le ofrecen `chromatic_options` (dominantes aplicadas, préstamos, subV en jazz) que la **contienen**, sin el sorteo de `_borrowed_allowed`. Un acorde que la deja afuera paga `CHROMATIC_OUTSIDE`, una aplicada que no resuelve donde apunta `UNRESOLVED_APPLIED` (si no, un Si mayor saltaba a Fa por tener al mi bemol de tercera), y en gregoriano la aplicada paga `APPLIED_IN_MODAL` frente al préstamo.
+- Los nombres de esos acordes salen de `_root_name`: el que menos altera, con empate a favor de sostenidos en las dominantes y de bemoles en el subV (Ab7, no G#7; Bb, no A#).
+- **Mayor o menor lo decide la nota final** (`key_of_ending`): la armadura dice dos tonalidades y, si la melodía termina en la relativa menor, se armoniza en menor **natural**. Natural y no armónico para que naranja (fuera de la armadura) y cromático (fuera de `bar.mode`) sigan siendo lo mismo; el sol sostenido de La menor entra por la regla de arriba, y `chromatic_options` incluye la dominante de la tónica para cuando no sube. En menor `_pool_for_bar` no suma los préstamos `iv`/`bVII`: ya son de la tonalidad.
+- **La nota final lleva un solo acorde** (`harmony_spots`): partida en dos, la redonda del final recibía IV y después I, la cadencia caía un lugar antes y la pieza cerraba V, IV, I.
+- **El último acorde va con la fundamental en el bajo** (`session._close_on_the_root`, sólo tríadas): con tres voces y la melodía en la tónica no quedaba voz para la fundamental y casi todo terminaba invertido. Se fija el bajo y, si no entra, se suelta la quinta (1-3-1). `root_position_penalty` sigue eximiendo a menos de cuatro voces; esto es aparte.
+- Un préstamo se nombra con la armadura del menor paralelo (`harmony._borrowed_root`): el iv de Fa mayor es Bbm, no A#m.
 
 ## 15. Construcción de settings
 
@@ -364,7 +374,13 @@ Va al revés que todo lo demás: la música ya está escrita y lo que falta son 
 
 ### Lectura del acorde
 
-Peso de cada clase de altura = duración × peso métrico × 1,35 si es el bajo, y × `ORNAMENT_WEIGHT` si la nota **tiene forma de adorno** (entra y sale por grado conjunto, no dura más que sus vecinas) **y** alguna otra voz sostiene mientras tanto.
+Peso de cada clase de altura = duración × peso métrico × 1,35 si es el bajo, y × `ORNAMENT_WEIGHT` si la nota **tiene forma de adorno** (entra y sale por grado conjunto, no dura más que sus vecinas; o es una escapada: entra por grado, sale por salto en la dirección contraria, dura a lo sumo una corchea y cae fuera del tiempo) **y** alguna otra voz sostiene mientras tanto.
+
+También pesa como adorno la **cuarta (o segunda) suspendida que resuelve dentro del mismo tiempo** (`_suspension_inside`, `Sonority.resolving`): el tiempo es la tríada con un retardo, no un sus4. La que dura el tiempo entero y resuelve en el siguiente sigue siendo suspendida. El cifrado sí ve la nota retardada.
+
+Un tiempo cuyo acorde de séptima es la suma de **dos tríadas completas en sus dos mitades** (vi y IV6 en corcheas) se parte en dos, siempre que en la mitad cambien dos voces o alguna salte (`_two_triads`, `_changes_harmony`): una sola voz que se mueve por grado es una resolución, no un acorde nuevo.
+
+La séptima disminuida toma por fundamental la sensible del acorde al que resuelve (`_root_diminished_sevenths`), y el acorde con sexta agregada que no está sobre la tónica ni la dominante se nombra como séptima (`_read_added_sixth`: Fa6 en Do es ii6/5; Do6 en Do se queda).
 
 Puntaje de cada candidato:
 
@@ -388,6 +404,7 @@ Encima de eso, dos reglas que la deducción no puede dar:
 
 - Un acorde ajeno se escribe con la alteración con la que se lo nombra: el que se llama `bVI` va con bemol y el que se llama `#iv` con sostenido.
 - El bajo de una inversión se escribe **por su papel en el acorde**: la quinta de un Si con séptima es fa sostenido aunque la pieza vaya llena de bemoles, porque una quinta se cuenta de si a fa.
+- Un acorde aplicado se escribe **desde la letra de su destino** (`_spell_towards`): la sensible aplicada una letra abajo y la dominante aplicada cuatro arriba. Con la preferencia de la pieza sola, una armonización en Do con un la bemol leía el vii°/V como Solb disminuido con Rebb en el bajo.
 
 ### Tonalidad
 
@@ -395,7 +412,8 @@ Tres evidencias, de mayor a menor peso: la **nota de reposo** (bajo final y últ
 
 - Si el último acorde tiene una nota ajena a la escala candidata, se descuenta fuerte: la tónica de una tonalidad es diatónica por definición.
 - Si la pieza **arranca** en un acorde y **se detiene en la dominante de ese acorde**, gana esa tónica: la frase quedó en semicadencia. Sin esto, `Am - G - F - E` se analizaba en Mi.
-- La tercera de Picardía descuenta poco en menor y armónica, y mucho en los modos: un frigio que termina mayor no es un frigio con licencia, es que la tónica era otra.
+- La tercera de Picardía descuenta poco en menor y armónica, y mucho en los modos: un frigio que termina mayor no es un frigio con licencia, es que la tónica era otra. Si la pieza arrancó en esa tónica, la tercera de Picardía no paga además el descuento de "acorde final con nota ajena".
+- Una pieza que **abre y cierra en el mismo acorde mayor**, cuyo material cae claramente mejor en la menor de una quinta abajo y que por dentro resuelve su dominante en esa tónica más de una vez, está en esa menor (`_framed_by_dominant`): es el final frigio de los corales.
 - **El primer acorde pesa casi tanto como el último.** Una pieza puede empezar en cualquiera, pero la enorme mayoría empieza en el suyo: es lo que instala la tonalidad antes de que haya con qué compararla. Y empezar y terminar en el mismo acorde suma aparte.
 - **Un acorde disminuido no reposa**, así que no cobra el premio del acorde final: es el más inestable que hay y ninguna pieza termina en él como tónica. Sin esto, una armonización que se detenía en el séptimo grado se analizaba entera en locrio.
 
@@ -403,7 +421,7 @@ Candidatos: mayor, menor, menor armónica, dórico, mixolidio, frigio, lidio, lo
 
 ### Función y acordes ajenos
 
-Áreas y grados salen de `harmony.DEGREE_FUNCTION` y `harmony.BORROWED_FUNCTION`; no hay una segunda tabla. En modo menor se tolera la sensible, y **sólo** la sensible: la sexta subida es la menor melódica, y el acorde que la trae es un intercambio modal de manual.
+Áreas y grados salen de `harmony.DEGREE_FUNCTION` y `harmony.BORROWED_FUNCTION`; no hay una segunda tabla. En modo menor se tolera la sensible, y **sólo** la sensible: la sexta subida es la menor melódica, y el acorde que la trae es un intercambio modal de manual. El vii° y el vii°7 sobre la sensible son diatónicos (séptimo grado), como el V. El último acorde de una pieza en menor, si es la tónica mayor, es la tercera de Picardía (`I`), no un `V/iv`.
 
 Orden de las preguntas para un acorde que no es de la escala:
 
@@ -418,14 +436,15 @@ Varios ajenos seguidos se leen juntos: si existe una tonalidad en la que todos e
 
 ### Cadencias
 
-De dos acordes: auténtica perfecta e imperfecta (perfecta = los dos en estado fundamental), rota, plagal, semicadencia y frigia (`iv6 → V`, el bajo baja un semitono). Una cadencia necesita **el giro y el reposo**: el acorde de llegada tiene que durar más que la media o terminar la pieza. No hay semicadencia si la dominante sigue de largo hasta la tónica --- eso es preparación de una auténtica, no una cadencia propia.
+De dos acordes: auténtica perfecta e imperfecta (perfecta = los dos en estado fundamental), rota, plagal, semicadencia y frigia (`iv6 → V`, el bajo baja un semitono). Una dominante que resuelve en otro acorde que reposa (no la tónica ni la dominante de la pieza) es una auténtica **en otra tonalidad**, y el detalle lo dice. Una cadencia necesita **el giro y el reposo**: el acorde de llegada tiene que durar más que la media o terminar la pieza. No hay semicadencia si la dominante sigue de largo hasta una tónica que también reposa --- eso es preparación de una auténtica, no una cadencia propia; si la tónica pasa de largo, es la frase siguiente que arranca y la semicadencia queda.
 
-De varios acordes, leídas de `harmony.SET_PIECES` --- las mismas que el generador puede citar: **frigia** (`i - bVII - bVI - V`), **ciclo de Vivaldi** y **bajo cromático descendente**. Se prueban en las doce alturas y se avisa cuando no aparecen sobre la tónica de la pieza. La cita que **es** una línea de bajo se reconoce por el bajo y por lo que suena encima, no por el nombre del acorde: el cuarto acorde del bajo cromático se lee igual de bien como tónica con el sexto bemol debajo o como séptima mayor sobre ese sexto, y sólo una de las dos lecturas coincide con el nombre que le puso el generador.
+De varios acordes, leídas de `harmony.SET_PIECES` --- las mismas que el generador puede citar: **frigia** (`i - bVII - bVI - V`), **ciclo de Vivaldi** (`i - iv - bVII - bIII - bVI - ii° - V - i`, dentro de la tonalidad y sin séptima: la cita se escribe a tres voces; al citarla el generador pone cada fundamental en el bajo, `SetPiece.roots_in_bass`, pero acá se reconoce también con inversiones) y **bajo cromático descendente**. Se prueban en las doce alturas y se avisa cuando no aparecen sobre la tónica de la pieza. La cita que **es** una línea de bajo se reconoce por el bajo y por lo que suena encima, no por el nombre del acorde: el cuarto acorde del bajo cromático se lee igual de bien como tónica con el sexto bemol debajo o como séptima mayor sobre ese sexto, y sólo una de las dos lecturas coincide con el nombre que le puso el generador.
 
 ### Contrapunto
 
 - **Movimiento** entre cada par de voces: paralelo (misma dirección **y** mismo tamaño de intervalo), directo (misma dirección, otro tamaño), contrario, oblicuo, quieto. El directo no es el paralelo: las quintas ocultas se hacen por directo.
-- **Paralelas** y **quintas/octavas ocultas** se preguntan a `fitness.parallel_interval_violation` y `fitness.direct_perfect_violation`. Una paralela entre notas de adorno se informa como dato y no como falta.
+- **Paralelas** y **quintas/octavas ocultas** se preguntan a `fitness.parallel_interval_violation` y `fitness.direct_perfect_violation`. Una paralela entre notas de adorno se informa como dato y no como falta, y lo mismo una que el estilo elegido permite (`forbid_parallel_*` del perfil: jazz y gregoriano).
+- Dos voces que se mueven en **tiempos distintos** no hacen paralelas: cuando se mueve la segunda, la primera ya está quieta. Dentro de un mismo tiempo sí cuentan juntas, que es como se escribe un arpegio.
 - **Cruce** (dentro de una vertical) y **solapamiento** (entre dos), con las mismas definiciones de la sección 3.
 - **Salto de trítono**, voz por voz.
 - Sólo se deduplican los hallazgos de vertical: cinco quintas seguidas son cinco faltas, no una.
@@ -434,7 +453,7 @@ De varios acordes, leídas de `harmony.SET_PIECES` --- las mismas que el generad
 
 Se clasifican por **cómo se llega y cómo se sale**, que es lo único que las separa --- una nota de paso y una bordadura pueden ser la misma altura en el mismo lugar, y lo que las distingue es que una sigue de largo y la otra vuelve. Se reconocen: nota de paso y de paso acentuada, bordadura, doble bordadura, mordente (bordadura brevísima, `MORDENT_MAX`), apoyatura, escapada, cambiata, retardo y retardo ascendente, anticipación, nota pedal, grupeto y anacrusa.
 
-"Acentuada" quiere decir primer tiempo o mitad del compás, no cualquier tiempo: una nota de paso en el segundo tiempo de un cuatro por cuatro no es una nota de paso acentuada.
+"Acentuada" quiere decir primer tiempo o mitad del compás, no cualquier tiempo: una nota de paso en el segundo tiempo de un cuatro por cuatro no es una nota de paso acentuada. La mitad del compás cuenta sólo si cae en un tiempo (el tercero del 4/4, el segundo pulso del 6/8): en un compás de tres es una corchea a contratiempo.
 
 Las definiciones viven en `ORNAMENT_DEFINITIONS` y son las que se muestran en pantalla: si cambia la detección, cambia la definición.
 

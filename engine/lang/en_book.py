@@ -1525,6 +1525,31 @@ CATALOG = {
         'European theory had put nothing.',
     'No repetir, y qué gana cuando hay que elegir':
         'Not repeating, and what wins when a choice has to be made',
+    'Las notas fuera de la escala': 'The notes outside the scale',
+    'Una nota que no está en la escala —un sol sostenido en do mayor— casi siempre está diciendo adónde va. Si sube un semitono a la siguiente, es la **sensible de esa nota**, y el programa le pone debajo la dominante de la nota a la que llega: el sol sostenido que sube a la lleva mi mayor, que es el quinto grado de la.':
+        'A note that is not in the scale — a G sharp in C major — is almost '
+        'always saying where it is going. If it rises a semitone to the next '
+        'one, it is **that note’s leading tone**, and the program puts under '
+        'it the dominant of the note it lands on: the G sharp rising to A '
+        'carries E major, which is the fifth degree of A.',
+    'Esa nota se marca sola, en naranja y con el halo de las que llevan acorde, aunque no caiga en tiempo fuerte. Y la nota de llegada también recibe el suyo, con preferencia por el que la tiene de fundamental: una dominante que suena y no resuelve es una promesa que el oído escucha y que después no pasa.':
+        'That note is marked on its own, in orange and with the halo of the '
+        'notes that carry a chord, even if it does not fall on a strong beat. '
+        'And the note it lands on gets one too, preferably the chord that has '
+        'it as its root: a dominant that sounds and does not resolve is a '
+        'promise the ear hears and that then never comes true.',
+    'En barroco y en jazz a veces —menos que la dominante— sale en cambio el séptimo grado de la nota de llegada: un sol sostenido disminuido, que es el mismo trítono sin la fundamental. Y en jazz también cuenta la nota que **baja** un semitono: lleva el sustituto tritonal, la dominante que está un semitono arriba de la nota a la que cae.':
+        'In baroque and in jazz, sometimes — less often than the dominant — the '
+        'seventh degree of the landing note turns up instead: a G sharp '
+        'diminished, which is the same tritone without the root. And in jazz a '
+        'note that **falls** a semitone counts too: it carries the tritone '
+        'substitute, the dominant a semitone above the note it falls onto.',
+    'La nota fuera de la escala que no va por semitono se armoniza como cualquier otra: lleva acorde si cae en tiempo fuerte o si la marcás, y entonces el programa prefiere un acorde de afuera que la contenga —un préstamo del modo menor, una dominante aplicada— antes que meterla a la fuerza en uno de la tonalidad.':
+        'An out-of-scale note that does not move by a semitone is harmonised '
+        'like any other: it gets a chord if it falls on a strong beat or if you '
+        'mark it, and then the program prefers an outside chord that contains '
+        'it — a borrowing from the minor mode, an applied dominant — over '
+        'forcing it into one from the key.',
     'No tiene autor. Aparece en grabaciones de los años cincuenta, está en Charlie Parker, está en Coltrane, está en bandas de sonido, está en canciones pop que no tienen nada que ver con el jazz.':
         'It has no author. It turns up in recordings from the fifties, it is in '
         'Charlie Parker, it is in Coltrane, it is in film scores, it is in pop '
@@ -1815,10 +1840,10 @@ CATALOG = {
         'frequency — 440 hertz, both of them — and yet they are not confused for '
         'an instant. The only thing that separates them is **how loudly each '
         'harmonic sounds**.',
-    'Una cadena de quintas descendentes con todos los acordes mayorizados: cada uno se vuelve la dominante del siguiente y resuelve en él, ocho acordes seguidos hasta volver a casa. En la menor: Am - D - G - C - F - B - E - Am.':
-        'A chain of descending fifths with all the chords made major: each one '
-        'becomes the dominant of the next and resolves onto it, eight chords in a '
-        'row until it comes home. In A minor: Am - D - G - C - F - B - E - Am.',
+    'Una cadena de quintas descendentes dentro de la tonalidad. Cada acorde cae una quinta sobre el siguiente, ocho acordes seguidos hasta volver a casa. En la menor, Am - Dm - G - C - F - Bdim - E - Am.':
+        'A chain of descending fifths inside the key. Each chord falls a fifth '
+        'onto the next, eight chords in a row until it comes home. In A minor, '
+        'Am - Dm - G - C - F - Bdim - E - Am.',
     'Una cadencia es la manera de terminar una frase: el gesto que dice «hasta acá». Todas las que el programa sabe reconocer están acá, con la receta para que aparezcan. Cuando encuentra una en tu pieza, la marca con una estrella en la pantalla de resultados.':
         'A cadence is the way of ending a phrase: the gesture that says “this '
         'far”. Every one the program can recognize is here, with the recipe for '

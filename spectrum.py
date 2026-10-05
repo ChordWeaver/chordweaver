@@ -175,11 +175,17 @@ class Experimenter(ctk.CTkFrame):
 
     def __init__(self, master, colours: Dict[str, str],
                  on_experiment: Optional[Callable[[bool], None]] = None,
+                 on_instrument: Optional[Callable[[str], None]] = None,
                  **kwargs):
         super().__init__(master, fg_color=colours["panel"], corner_radius=12,
                          **kwargs)
         self.colours = colours
         self.on_experiment = on_experiment
+        #: A quién avisar si, después de guardar un timbre, el usuario pide
+        #: que el programa toque con él. Llega por parámetro porque este
+        #: módulo no importa la aplicación; sin nadie que escuche, guardar
+        #: no pregunta nada.
+        self.on_instrument = on_instrument
         self.spectrum = harmonics.build()
         self.preset_name = harmonics.DEFAULT_PRESET
         #: Qué armónico está elegido. Siempre hay uno: sin ninguno, los
@@ -245,17 +251,16 @@ class Experimenter(ctk.CTkFrame):
         # para sus entradillas.
         intro = ctk.CTkLabel(
             self,
-            text=tr("Ninguna cosa que suena da una frecuencia sola: da la suya y "
-                    "además sus múltiplos enteros. Cada barra es uno de esos "
-                    "múltiplos."),
+            text=tr("Todo sonido tiene una frecuencia de base y además sus "
+                    "múltiplos enteros. Cada barra es uno de esos múltiplos."),
             font=self._font(("Segoe UI", 11)), text_color=colours["muted"],
             justify="left", anchor="w")
         intro.pack(fill="x", padx=18, pady=(4, 1))
         self._wrapping(intro)
         how = ctk.CTkLabel(
             self,
-            text=tr("Arrastrala para arriba y la amplificás; para el costado, "
-                    "la corrés de su lugar exacto y la desafinás."),
+            text=tr("Arrastrá una barra hacia arriba para subirla, o hacia el "
+                    "costado para desafinarla."),
             font=self._font(("Segoe UI Semibold", 11)),
             text_color=colours["text"], justify="left", anchor="w")
         how.pack(fill="x", padx=18, pady=(0, 8))
@@ -295,7 +300,7 @@ class Experimenter(ctk.CTkFrame):
         buttons.pack(fill="x", pady=(0, 10))
         self.solo_button = self._chip(buttons, "Aislar", self.toggle_solo)
         self.mute_button = self._chip(buttons, "Silenciar", self.toggle_mute)
-        self._chip(buttons, "Centrar", self.recentre)
+        self._chip(buttons, N("Centrar"), self.recentre)
 
         self._caption(mandos, "Todos a la vez")
         recipe = ctk.CTkFrame(mandos, fg_color="transparent")
@@ -461,8 +466,9 @@ class Experimenter(ctk.CTkFrame):
                            anchor="e", fill=colours["faint"],
                            font=self._font(("Segoe UI", 9)))
         canvas.create_text(left, floor_y + 28,
-                           text=tr(hz_label(self.spectrum.fundamental)
-                              + "  y sus múltiplos"),
+                           text=trf("{frequency}  y sus múltiplos",
+                                    frequency=hz_label(
+                                        self.spectrum.fundamental)),
                            anchor="w", fill=colours["faint"],
                            font=self._font(("Segoe UI", 9)))
 
@@ -756,37 +762,36 @@ class Experimenter(ctk.CTkFrame):
         una--- la trampa: el séptimo y el undécimo no existen en el piano.
         """
         if abs(item.shift) > 0.4:
-            return (trf("Corrido {cents_label} de su múltiplo exacto. "
-                        "Contra los demás produce pulsaciones: dos "
+            return (trf("Corrido {cents_label} de su múltiplo exacto. Contra "
+                        "los demás produce pulsaciones, porque dos "
                         "frecuencias casi iguales se suman y se restan por "
-                        "turno.",
+                        "turnos.",
                         cents_label=cents_label(item.shift)))
         meanings = {
             1: "La nota que creés estar oyendo. Casi nunca es la más fuerte.",
             2: "Una octava justa arriba. Duplicar la frecuencia es la única "
                "operación que el oído no escucha como otra nota.",
-            3: "Una octava y una quinta. De acá sale la quinta, que es el "
-               "intervalo del que cuelga toda la armonía.",
-            4: "Dos octavas.",
-            5: "Dos octavas y una tercera mayor. Cae catorce cents por "
-               "debajo de la tercera del piano: por eso un acorde afinado a "
-               "oído no es el mismo que uno afinado a teclado.",
+            3: "Una octava y una quinta. De acá sale la quinta, el intervalo "
+               "sobre el que se apoya la armonía.",
+            4: N("Dos octavas."),
+            5: "Dos octavas y una tercera mayor. Cae catorce cents por debajo "
+               "de la tercera del piano, y por eso un acorde afinado de oído "
+               "no suena igual que uno afinado en un teclado.",
             6: "Dos octavas y una quinta.",
-            7: "Una séptima que **no existe** en ninguna escala: cae treinta "
-               "y un cents por debajo de la del piano. Es el sonido del "
-               "blues, y es lo que un instrumento temperado no puede tocar.",
-            8: "Tres octavas.",
-            9: "Tres octavas y una segunda mayor: la novena de los acordes.",
+            7: "Una séptima que no está en ninguna escala, treinta y un cents "
+               "más baja que la del piano. Es el sonido del blues, y un "
+               "instrumento temperado no la puede tocar.",
+            8: N("Tres octavas."),
+            9: "Tres octavas y una segunda mayor, la novena de los acordes.",
             10: "Tres octavas y una tercera mayor.",
-            11: "Ni cuarta ni tritono: queda justo en el medio de los dos. "
-                "Las trompas naturales lo tenían y sonaba desafinado a "
-                "propósito.",
+            11: "Queda justo entre la cuarta y el tritono. Las trompas "
+                "naturales lo tenían, y sonaba desafinado a propósito.",
             12: "Tres octavas y una quinta.",
         }
-        note = meanings.get(item.number, "")
+        note = tr(meanings.get(item.number, ""))
         if self.spectrum.solo == item.number:
-            note = "Aislado: es lo único que estás oyendo. " + note
-        return note.replace("**", "")
+            note = tr("Aislado, es lo único que suena. ") + note
+        return note
 
     # -- sonido -------------------------------------------------------------
 
@@ -811,11 +816,11 @@ class Experimenter(ctk.CTkFrame):
         """
         name = note_label(self.spectrum.midi).replace("♯", "s")
         path = filedialog.asksaveasfilename(
-            title="Guardar el timbre como muestra",
+            title=tr("Guardar el timbre como muestra"),
             defaultextension=".wav",
             initialfile=trf("ChordWeaver {preset_name} {name}.wav",
                             preset_name=self.preset_name, name=name),
-            filetypes=[("Muestra de sampler", "*.wav")])
+            filetypes=[(tr("Muestra de sampler"), "*.wav")])
         if not path:
             return
         self.save_button.configure(text=tr("Guardando…"), state="disabled")
@@ -832,16 +837,27 @@ class Experimenter(ctk.CTkFrame):
             except tk.TclError:
                 pass
         seconds = (end - start + 1) / harmonics.SAMPLE_RATE
-        messagebox.showinfo(
-            tr("Timbre guardado"),
-            trf("Se guardó {basename}.\n\nEl archivo dice adentro que la "
-                "muestra es un {name} y que el tramo que se repite dura "
-                "{seconds:.1f} s, así que cualquier sampler que lea WAV "
-                "—TX16Wx, Kontakt, el AudioFileProcessor de LMMS, el "
-                "Simpler de Live, Polyphone para armar un SoundFont— lo "
-                "toma afinado en todo el teclado y lo sostiene mientras la "
-                "tecla siga apretada.",
-                basename=os.path.basename(path), name=name, seconds=seconds))
+        told = trf("Se guardó {basename}.\n\n"
+                   "El archivo indica que la muestra es un {name} y que el "
+                   "bucle dura {seconds:.1f} s. Cualquier sampler que lea WAV "
+                   "(TX16Wx, Kontakt, el AudioFileProcessor de LMMS, el "
+                   "Simpler de Live o Polyphone para armar un SoundFont) lo "
+                   "va a tocar afinado en todo el teclado y sostenido "
+                   "mientras la tecla esté apretada.",
+                   basename=os.path.basename(path), name=name,
+                   seconds=seconds)
+        if self.on_instrument is None:
+            messagebox.showinfo(tr("Timbre guardado"), told)
+            return
+        # Y el sampler más a mano es este mismo programa: la misma muestra
+        # puede tocar los resultados, la melodía y el analizador. Se
+        # pregunta en el mismo cartel para no apilar dos.
+        if messagebox.askyesno(
+                tr("Timbre guardado"),
+                told + "\n\n" + tr("¿Querés que el programa use este timbre "
+                                   "para todo lo que toca? Lo podés cambiar "
+                                   "cuando quieras desde el engranaje.")):
+            self.on_instrument(path)
 
     def play(self) -> None:
         """Tocar lo que se está viendo."""

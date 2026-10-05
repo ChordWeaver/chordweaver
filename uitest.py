@@ -44,6 +44,50 @@ import app as A
 from engine import visitors
 
 
+def _placed(geometry: str) -> str:
+    """
+    La geometría de la ventana de prueba, fuera de la pantalla principal.
+
+    Una suite abre decenas de ventanas, y cada una se le ponía encima a quien
+    estaba trabajando en la computadora. Si la geometría ya trae lugar, se
+    respeta; si no, va a `CHORDWEAVER_TEST_ORIGIN` (por ejemplo
+    ``+-1910+470``) o, sin esa variable, a la primera pantalla que no sea la
+    principal. Con una sola pantalla queda donde Tk la ponga, como siempre.
+    """
+    if "+" in geometry or "-" in geometry.split("x")[-1]:
+        return geometry
+    origin = os.environ.get("CHORDWEAVER_TEST_ORIGIN", "")
+    if origin:
+        return geometry + origin
+    try:
+        import ctypes
+        from ctypes import wintypes
+        found = []
+
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                        ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+
+        def each(monitor, _dc, _rect, _data):
+            info = MONITORINFO()
+            info.cbSize = ctypes.sizeof(MONITORINFO)
+            ctypes.windll.user32.GetMonitorInfoW(monitor, ctypes.byref(info))
+            if not info.dwFlags & 1:            # MONITORINFOF_PRIMARY
+                found.append((info.rcWork.left, info.rcWork.top))
+            return True
+
+        callback = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p,
+                                      ctypes.c_void_p, ctypes.c_void_p,
+                                      ctypes.c_ssize_t)(each)
+        ctypes.windll.user32.EnumDisplayMonitors(None, None, callback, 0)
+    except Exception:                                       # noqa: BLE001
+        return geometry
+    if not found:
+        return geometry
+    left, top = found[0]
+    return f"{geometry}+{left + 10}+{top + 10}"
+
+
 class Session:
     """One run through the app, from the first screen to the results."""
 
@@ -55,7 +99,7 @@ class Session:
         # cuando le corresponde.
         self.win.settings["tutorial_seen"] = True
         if getattr(self.win, "tutorial", None) is not None:
-            self.win.tutorial._clear()
+            self.win.tutorial.close()
             self.win.tutorial = None
         # Y las guías de pantalla, por lo mismo: se abren solas la primera
         # vez que se llega a los acordes, al pentagrama o a las reglas, y son
@@ -118,7 +162,15 @@ class Session:
         self.win.visits.seen = {key: "uitest" for key in visitors.VISITS}
         self.win.visits.path = os.path.join(tempfile.gettempdir(),
                                             "chordweaver-uitest-visitors.json")
-        self.win.geometry(geometry)
+        # La escuelita, igual: lo que el arnés apruebe no lo aprobó el
+        # usuario, y una graduación jugada por una prueba le gastaría la
+        # escena. Se empieza de cero y se guarda en un descartable.
+        self.win.school.path = os.path.join(scratch,
+                                            "chordweaver-uitest-school.json")
+        self.win.school.passed = {}
+        self.win.school.graduated = ""
+        self.win.school_memory.clear()
+        self.win.geometry(_placed(geometry))
         self.win.update()
 
     # -- navigation ---------------------------------------------------------
@@ -255,9 +307,32 @@ class Session:
         if outcome is None or not outcome.succeeded:
             return []
         texts = self.labels()
+        # La vista de partitura no tiene etiquetas: los cifrados son texto
+        # del lienzo. Se leen de lo que se le pasó a cada sistema.
+        for grand in self._staves():
+            texts.extend(symbol for _onset, symbol, _figure
+                         in grand.annotations)
         # Headers are short and start with a note letter.
         return [t for t in texts
                 if t and t[0] in "ABCDEFG" and len(t) < 16]
+
+    def _staves(self) -> List:
+        """Los sistemas de dos pentagramas que hay en la pantalla."""
+        import staff as _staff
+        found: List = []
+
+        def walk(widget) -> None:
+            try:
+                children = widget.winfo_children()
+            except Exception:                               # noqa: BLE001
+                return
+            for child in children:
+                if isinstance(child, _staff.GrandStaff):
+                    found.append(child)
+                walk(child)
+
+        walk(self.win.body)
+        return found
 
     def tinted(self) -> int:
         """How many chord headers are painted with the flourish colour."""
@@ -279,6 +354,10 @@ class Session:
                 walk(child)
 
         walk(self.win.body)
+        # En la partitura, el tinte de la tabla es el color del cifrado.
+        for grand in self._staves():
+            count += sum(1 for colour in grand.symbol_colours.values()
+                         if colour == A.SET_PIECE_TEXT)
         return count
 
 

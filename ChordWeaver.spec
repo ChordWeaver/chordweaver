@@ -9,7 +9,7 @@ A one-folder build is used rather than --onefile on purpose: the application
 is supposed to keep its history and output next to the executable, and a
 one-file build unpacks to a temporary directory where nothing would persist.
 
-Sobre `engine/*.pyd`: si antes se corrió `python build_engine.py`, tres
+Sobre `engine/*.pyd`: si antes se corrió `python build_engine.py`, seis
 módulos del motor están compilados con Cython y PyInstaller se los lleva
 solos --- los encuentra por los mismos `hiddenimports` de siempre, porque
 `engine.fitness` resuelve al `.pyd` antes que al `.py`. **No hace falta
@@ -31,10 +31,10 @@ a = Analysis(
     ['app.py'],
     pathex=[PROJECT_DIR],
     binaries=[],
-    # Los recortes de los personajes del modo historia. Es lo único que el
-    # programa lee de disco además de sus propios datos, y va como carpeta
-    # entera: agregar una pose nueva es dejar el PNG ahí y nombrarlo en
-    # `cinematic.POSES`, sin tocar el build.
+    # Todo lo que el programa trae puesto: los recortes del modo historia,
+    # la fuente musical Bravura y la partitura de ejemplo del analizador. Va
+    # como carpeta entera: agregar una pose nueva es dejar el PNG ahí y
+    # nombrarlo en `cinematic.POSES`, sin tocar el build.
     datas=[('assets', 'assets')],
     # engine/* is a local package: PyInstaller follows the imports from
     # app.py, but listing the submodules explicitly means a missed import
@@ -74,6 +74,9 @@ a = Analysis(
         # `cinematic` y `staff`, `spectrum` no vive en `engine/` y se importa
         # igual desde `app.py`.
         'engine.harmonics',
+        # Los timbres de reproduccion y el lector de muestras WAV. Lo importa
+        # `engine.audio`: sin el, no suena ninguna nota del programa.
+        'engine.timbre',
         # El analizador: la lectura de la partitura y su pantalla. `analyzer`
         # tampoco vive en `engine/` --- como `spectrum` y `staff` --- y se
         # importa desde `app.py` igual que ellos.
@@ -83,6 +86,11 @@ a = Analysis(
         # `staff` y `analyzer` --- y se importa desde `app.py` igual que
         # ellos. Sin estos dos, el ejecutable arranca y nunca avisa nada.
         'engine.updates',
+        # Adonde va lo que se escribe en la consola cuando no hay consola.
+        # Se importa antes que customtkinter: sin esto, el primer aviso de
+        # una libreria mataba el ejecutable al arrancar.
+        'engine.console',
+        'engine.shortpath',
         # Los dos idiomas: el motor de traduccion y los catalogos. Los
         # catalogos se importan por nombre desde `engine.lang.PARTS`, o sea
         # que PyInstaller no los ve siguiendo los imports --- sin listarlos,
@@ -97,12 +105,20 @@ a = Analysis(
         'engine.lang.en_engine',
         'engine.lang.en_story',
         'engine.lang.en_book',
+        # La escuelita: lo que se enseña y cómo se corrige (`engine.school`,
+        # puro), su catálogo de traducción ---que se importa por nombre,
+        # como los otros--- y la pantalla, que tampoco vive en `engine/`.
+        'engine.school',
+        'engine.lang.en_school',
+        'school',
         'cinematic',
         'spectrum',
         'staff',
         'analyzer',
         'updater',
         'chooser',
+        # Los dibujos de las tarjetas de la pantalla inicial.
+        'homeart',
     ],
     hookspath=[],
     hooksconfig={},

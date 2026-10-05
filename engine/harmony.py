@@ -25,7 +25,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from .theory import Chord, ChordTone, ROLE_FIFTH, ROLE_ROOT, ROLE_SEVENTH, ROLE_THIRD
-from .theory import FLAT_NAMES, SHARP_NAMES, ChordParseError, parse_chord
+from .theory import (FLAT_NAMES, SHARP_NAMES, ChordParseError, parse_chord,
+                     spell_in_key)
 from engine.i18n import tr, trf, trs
 
 # ---------------------------------------------------------------------------
@@ -59,6 +60,52 @@ MODES: Dict[str, Mode] = {
     # nombres distintos.
     "locrian":    Mode("locrian", "Locrio", (0, 1, 3, 5, 6, 8, 10)),
 }
+
+#: La armadura de cada tónica mayor, en quintas: la de menos alteraciones,
+#: y Fa sostenido antes que Sol bemol.
+_MAJOR_FIFTHS = {0: 0, 7: 1, 2: 2, 9: 3, 4: 4, 11: 5, 6: 6,
+                 1: -5, 5: -1, 10: -2, 3: -3, 8: -4}
+
+#: Cuántos semitonos arriba de su mayor relativa empieza cada modo.
+_RELATIVE_MAJOR = {"major": 0, "dorian": 2, "phrygian": 4, "lydian": 5,
+                   "mixolydian": 7, "minor": 9, "harmonic": 9, "locrian": 11}
+
+
+def key_fifths(tonic_pc: int, mode: Mode) -> int:
+    """
+    La armadura de una tonalidad: la de la mayor que comparte sus notas.
+
+    Es lo que decide con qué letra se nombra cada fundamental. Nombrándolas
+    siempre con sostenidos, el Si bemol de Fa mayor salía La sostenido, y
+    su acorde se escribía La sostenido, Do doble sostenido y Mi sostenido:
+    las alturas eran las correctas y cualquier editor lo leía como un error.
+    """
+    relative = (tonic_pc - _RELATIVE_MAJOR.get(mode.key, 0)) % 12
+    return _MAJOR_FIFTHS[relative]
+
+
+def root_name(root_pc: int, fifths: int) -> str:
+    """El nombre de una fundamental en una armadura: ``Bb`` en Fa mayor."""
+    letter, alteration, _octave = spell_in_key(60 + root_pc, fifths)
+    return letter + ("#" * alteration if alteration > 0 else "b" * -alteration)
+
+
+_LETTERS = "CDEFGAB"
+_LETTER_PC = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+
+
+def fifth_above_name(target: str, root_pc: int) -> str:
+    """
+    El nombre del dominante de ``target``: cuatro letras más arriba.
+
+    Buscado suelto en la armadura, el dominante de Mi sostenido salía Do y
+    no Si sostenido. Una quinta es siempre cuatro letras, así que la letra
+    sale del grado al que apunta y la alteración, de la altura.
+    """
+    letter = _LETTERS[(_LETTERS.index(target[0]) + 4) % 7]
+    alteration = (root_pc - _LETTER_PC[letter] + 6) % 12 - 6
+    return letter + ("#" * alteration if alteration > 0 else "b" * -alteration)
+
 
 #: Modes whose seventh degree is a semitone below the tonic, i.e. a real
 #: leading tone. Modal writing without one cannot form a dominant cadence,
@@ -147,12 +194,17 @@ def diatonic_options(
 ) -> List[ChordOption]:
     """Every triad (or seventh chord) native to the key."""
     scale = mode.pitch_classes(tonic_pc)
+    fifths = key_fifths(tonic_pc, mode)
     options: List[ChordOption] = []
     for degree_index in range(7):
         chord = _build_chord_from_scale(scale, degree_index, with_sevenths)
+        # La letra sale de la armadura: cada grado lleva la suya, y de ella
+        # sale también cómo se escriben las notas del acorde al exportar.
+        name = root_name(chord.root_pc, fifths)
+        chord.root_letter = name[0]
         option = ChordOption(
             chord=chord,
-            label=_symbol_for(chord),
+            label=_symbol_for(chord, root=name),
             roman=_roman_for(degree_index, chord),
             scale_degree=degree_index + 1,
             root_pc=chord.root_pc,
@@ -174,7 +226,8 @@ def _roman_for(degree_index: int, chord: Chord) -> str:
     return text
 
 
-def _symbol_for(chord: Chord, prefer_flats: bool = False) -> str:
+def _symbol_for(chord: Chord, prefer_flats: bool = False,
+                root: Optional[str] = None) -> str:
     """
     American symbol for a chord built from scale degrees.
 
@@ -182,7 +235,7 @@ def _symbol_for(chord: Chord, prefer_flats: bool = False) -> str:
     their names say: the Neapolitan of A minor is bII, and writing it A#
     rather than Bb makes the label contradict the numeral beside it.
     """
-    root = (FLAT_NAMES if prefer_flats else SHARP_NAMES)[chord.root_pc]
+    root = root or (FLAT_NAMES if prefer_flats else SHARP_NAMES)[chord.root_pc]
     third = next((t for t in chord.tones if t.role == ROLE_THIRD), None)
     fifth = next((t for t in chord.tones if t.role == ROLE_FIFTH), None)
     seventh = next((t for t in chord.tones if t.role == ROLE_SEVENTH), None)
@@ -190,7 +243,10 @@ def _symbol_for(chord: Chord, prefer_flats: bool = False) -> str:
     minor = third is not None and third.semitones == 3
     quality = ""
     if minor and fifth is not None and fifth.semitones == 6:
-        quality = "m7b5" if seventh else "dim"
+        # El séptimo grado del menor armónico lleva séptima disminuida: un
+        # G#dim7 rotulado G#m7b5 era otro acorde, con fa sostenido.
+        quality = ("dim" if seventh is None else
+                   "dim7" if seventh.semitones == 9 else "m7b5")
     elif minor:
         quality = "m7" if (seventh and seventh.semitones == 10) else ("mmaj7" if seventh else "m")
     elif fifth is not None and fifth.semitones == 8:
@@ -298,6 +354,27 @@ _BORROWED_SEVENTH = {
 }
 
 
+def _borrowed_root(root_pc: int, tonic_pc: int) -> Optional[str]:
+    """
+    Cómo se llama la fundamental de un préstamo: como en el menor paralelo.
+
+    De ahí se toma el acorde, así que de ahí sale el nombre. Decidiendo
+    sólo por el grado ---bemol si el número lo lleva---, el iv de Fa mayor
+    salía A#m y no Bbm. Lo que no está en el menor paralelo (la napolitana,
+    la sustitución tritonal) vuelve a la regla de antes, que devuelve None
+    acá. El menor paralelo de Reb mayor tendría ocho bemoles: ahí se nombra
+    con bemoles y listo, que es lo que hace cualquiera en Reb.
+    """
+    major = key_fifths(tonic_pc, MODES["major"])
+    fifths = major - 3
+    if root_pc % 12 not in MODES["minor"].pitch_classes(tonic_pc):
+        return None
+    if not -7 <= fifths <= 7:
+        return FLAT_NAMES[root_pc % 12] if major < 0 else None
+    name = root_name(root_pc, fifths)
+    return None if "bb" in name or "##" in name else name
+
+
 def borrowed_options(tonic_pc: int, enabled: Sequence[str],
                      with_sevenths: bool = False) -> List[ChordOption]:
     """
@@ -331,7 +408,12 @@ def borrowed_options(tonic_pc: int, enabled: Sequence[str],
         # Every borrowed degree in the table is a lowered one, so they are
         # all written flat.
         chord.symbol = _symbol_for(chord, prefer_flats=spec.roman.startswith("b")
-                                   or spec.roman in ("N6", "subV"))
+                                   or spec.roman in ("N6", "subV"),
+                                   root=_borrowed_root(root_pc, tonic_pc))
+        # La letra con la que se escriben sus notas es la del nombre: el
+        # bVII de Do se llama Bb y se escribía La sostenido, Do doble
+        # sostenido y Mi sostenido.
+        chord.root_letter = chord.symbol[0]
         forced_bass = None
         if spec.forced_first_inversion:
             forced_bass = (root_pc + 4) % 12       # the major third
@@ -373,6 +455,7 @@ def secondary_dominants(
     belongs there, and the rest of the chain is a jazz habit.
     """
     scale = mode.pitch_classes(tonic_pc)
+    fifths = key_fifths(tonic_pc, mode)
     wanted = tuple(degrees) if degrees is not None else tuple(range(1, 7))
     options: List[ChordOption] = []
     for degree_index in range(1, 7):          # every degree but the tonic
@@ -387,9 +470,10 @@ def secondary_dominants(
         ]
         if with_sevenths:
             tones.append(ChordTone(10, ROLE_SEVENTH, "b7"))
+        name = fifth_above_name(root_name(target_pc, fifths), root_pc)
         chord = Chord(symbol="", root_pc=root_pc,
-                      root_letter=SHARP_NAMES[root_pc][0], tones=tones)
-        chord.symbol = _symbol_for(chord)
+                      root_letter=name[0], tones=tones)
+        chord.symbol = _symbol_for(chord, root=name)
         numeral = _ROMAN[degree_index]
         third = None
         # Name it after where it points: V/ii, V/iii and so on.
@@ -820,6 +904,18 @@ def function_of(option: "ChordOption") -> str:
     justo antes de la dominante a la que apunta.
     """
     if option.is_borrowed:
+        # El séptimo grado y la sustitución tritonal que arma el Armonizador
+        # para una nota cromática ---«vii°7/vi», «subV/ii», o sin barra
+        # cuando apuntan a la tónica--- viajan como préstamos con una cifra
+        # que la tabla no tiene, y caían en subdominante: el vii° de la
+        # tónica no cobraba el premio de la dominante antes del reposo y la
+        # gramática los leía como si prepararan en vez de resolver. No pasan
+        # por `is_applied_dominant`, que es sólo para el «V/», así que nada
+        # les cobra aparte la obligación de resolver: lo que los define es
+        # el trítono que empuja hacia la nota de llegada, y eso es una
+        # dominante.
+        if option.roman.startswith(("vii°", "subV")):
+            return DOMINANT
         return BORROWED_FUNCTION.get(option.roman, SUBDOMINANT)
     return DEGREE_FUNCTION.get(option.scale_degree, SUBDOMINANT)
 
@@ -1535,6 +1631,11 @@ class SetPiece:
     #: chords are inversions over a moving bass rather than root position,
     #: and the symbols are written with a slash.
     bass_line: Tuple[int, ...] = ()
+    #: Cada acorde con su fundamental en el bajo. Es lo que hace a una
+    #: cadena de quintas: el bajo cayendo por quintas es lo que se reconoce,
+    #: y librado a la búsqueda salía invertido casi entero. Se pide sólo al
+    #: escribirla; el analizador la reconoce igual con inversiones.
+    roots_in_bass: bool = False
 
     def __len__(self) -> int:
         return len(self.chords)
@@ -1556,19 +1657,25 @@ PHRYGIAN_CADENCE = SetPiece(
     chords=((0, "minor"), (10, "major"), (8, "major"), (7, "major")),
 )
 
-#: Vivaldi's cycle: roots falling by fifths all the way around, the chords
-#: majorised into a chain of secondary dominants, landing on the dominant and
-#: then home. In A minor that is Am, D, G, C, F, B, E, Am.
+#: El ciclo de Vivaldi: las fundamentales bajan por quintas sin salir de la
+#: tonalidad hasta la dominante, y de ahí a casa. En La menor: Am, Dm, G, C,
+#: F, Bdim, E, Am. El cuarto grado es menor y el segundo disminuido, que es
+#: lo que suenan en el menor: con los dos mayorizados la cadena se iba de la
+#: tonalidad, y de F a B mayor no hay quinta sino trítono con falsa
+#: relación. El único paso que no es de quinta justa es justamente ése, F a
+#: Bdim, y es la quinta disminuida que tiene que estar para seguir en el
+#: tono. Sin séptima: la cita se escribe a tres voces y no le entra.
 VIVALDI_CADENCE = SetPiece(
     key="vivaldi",
     label="Ciclo de Vivaldi",
     description=(
-        "Una cadena de quintas descendentes con los acordes mayorizados, "
-        "como una hilera de dominantes que se resuelven una en otra hasta "
-        "llegar a la dominante y volver a casa."
+        "Una cadena de quintas descendentes dentro de la tonalidad. Cada "
+        "acorde baja una quinta al siguiente hasta llegar a la dominante y "
+        "volver a casa."
     ),
-    chords=((0, "minor"), (5, "major"), (10, "major"), (3, "major"),
-            (8, "major"), (2, "major"), (7, "major"), (0, "minor")),
+    chords=((0, "minor"), (5, "minor"), (10, "major"), (3, "major"),
+            (8, "major"), (2, "dim"), (7, "major"), (0, "minor")),
+    roots_in_bass=True,
 )
 
 #: Degrees written the way a musician reads them, rather than as a semitone
@@ -1688,10 +1795,31 @@ def set_piece_options(piece: SetPiece, tonic_pc: int) -> List[ChordOption]:
 
         options.append(ChordOption(
             chord=chord, label=chord.symbol,
-            roman=_SET_PIECE_ROMANS.get(offset, f"+{offset}"),
+            roman=_quality_numeral(_SET_PIECE_ROMANS.get(offset, f"+{offset}"),
+                                   quality),
             scale_degree=0, root_pc=root_pc,
         ))
     return options
+
+
+def _quality_numeral(roman: str, quality: str) -> str:
+    """
+    El numeral escrito con la calidad que el acorde tiene en la cita.
+
+    La tabla nombra cada grado como suena en el menor natural, pero una
+    cita puede traer otra calidad, y el numeral tiene que decir la que suena.
+    """
+    accidental = roman[0] if roman[:1] in ("b", "#") else ""
+    core = roman[len(accidental):].rstrip("°")
+    if quality in ("major", "dominant"):
+        return accidental + core.upper()
+    if quality == "dim":
+        return accidental + core.lower() + "°"
+    if quality == "halfdim":
+        return accidental + core.lower() + "ø7"
+    if quality == "minor":
+        return accidental + core.lower()
+    return roman
 
 
 #: What each style starts with. These are the textures the idioms actually

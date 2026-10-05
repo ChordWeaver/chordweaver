@@ -27,7 +27,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 import customtkinter as ctk
 
 from engine import analysis, audio, history, importer, session
-from engine.i18n import tr, trf, trs
+from engine.i18n import N, tr, trf, trs
 from engine import i18n
 from staff import (DURATIONS, GRAND_VOICE_COUNT, GRAND_VOICES, LETTERS,
                    VOICE_COLOURS, GrandStaff, pitch_at)
@@ -77,16 +77,16 @@ MOTION_COLOURS = {
 #: por encima, que es donde hace falta y donde no ocupa lugar.
 MOTION_NOTES = {
     analysis.MOTION_CONTRARY:
-        "las dos voces se mueven en direcciones opuestas: es lo que las "
-        "mantiene independientes",
+        "las dos voces van en direcciones opuestas, lo que las mantiene "
+        "independientes",
     analysis.MOTION_OBLIQUE:
         "una se queda quieta y la otra se mueve",
     analysis.MOTION_PARALLEL:
-        "las dos en la misma dirección y con el intervalo del mismo tamaño: "
-        "es lo que funde dos voces en una",
+        "las dos en la misma dirección y con el mismo intervalo, lo que funde "
+        "dos voces en una",
     analysis.MOTION_SIMILAR:
-        "las dos en la misma dirección pero cambiando de intervalo; es por "
-        "acá que se hacen las quintas ocultas",
+        "las dos en la misma dirección pero con otro intervalo. De acá salen "
+        "las quintas ocultas",
     analysis.MOTION_STATIC:
         "ninguna de las dos se movió",
 }
@@ -96,6 +96,12 @@ MOTION_NOTES = {
 #: que nombrar, y ponerse a nombrarlo igual ---como hacía antes--- llenaba la
 #: pantalla de acordes, grados y funciones deducidos de una sola nota.
 MIN_VOICES = 3
+
+#: Contra qué estilo se juzga el contrapunto: nombre visible y clave de
+#: `GENRE_PROFILES`. El barroco y el coral prohíben las paralelas; el jazz y
+#: el gregoriano las usan, y ahí se anotan sin marcarlas como falta.
+STYLES = ((N("Barroco"), "classical"), (N("Coral"), "chorale"),
+          (N("Jazz"), "jazz"), (N("Gregoriano"), "gregorian"))
 
 
 def spanish_pitch(index: int, fifths: int, accidental=None) -> str:
@@ -142,9 +148,9 @@ class Analyzer(ctk.CTkFrame):
         self.key_signatures = list(key_signatures) or [("Do mayor / La menor", 0)]
 
         #: Lo que dice el renglón de lectura cuando no hay nada que leer.
-        self._resting = ("Pasá el mouse por una nota y acá dice cuál es. "
-                         "Click escribe, botón derecho borra; Tab cambia de "
-                         "voz y Ctrl+Z deshace.")
+        self._resting = ("Pasá el mouse por una nota para ver cuál es. Click "
+                         "escribe, click derecho borra, Tab cambia de voz y "
+                         "Ctrl+Z deshace.")
         self.result = None
         self._pending = None
         self._playing = None
@@ -235,7 +241,7 @@ class Analyzer(ctk.CTkFrame):
         self.voice_menu.set(tr(GRAND_VOICES[0]))
         self.voice_menu.pack(side="left")
 
-        for text, command in (("Exportar…", self._export),
+        for text, command in ((N("Exportar…"), self._export),
                               ("Importar…", self._import)):
             ctk.CTkButton(
                 bar, text=tr(text), width=104, height=30,
@@ -418,9 +424,9 @@ class Analyzer(ctk.CTkFrame):
         key = self.result.key
         left = ctk.CTkFrame(row, fg_color="transparent")
         left.pack(side="left")
-        confidence = ("lectura clara" if key.confidence >= 0.6
-                      else "lectura probable" if key.confidence >= 0.3
-                      else "lectura dudosa")
+        confidence = (N("lectura clara") if key.confidence >= 0.6
+                      else N("lectura probable") if key.confidence >= 0.3
+                      else N("lectura dudosa"))
         title = ctk.CTkLabel(left, text=tr(key.label),
                              font=self.font(("Segoe UI Semibold", 18)),
                              anchor="w")
@@ -504,20 +510,43 @@ class Analyzer(ctk.CTkFrame):
         panels.grid_rowconfigure(0, weight=1)
 
         self.harmony_panel = self._panel(panels, 0, "Acordes, uno por uno")
-        self.counterpoint_panel = self._panel(panels, 1, "Contrapunto")
+        self.counterpoint_panel = self._panel(panels, 1, N("Contrapunto"),
+                                              extra=self._style_menu)
         self.ornament_panel = self._panel(panels, 2, "Adornos melódicos")
 
-    def _panel(self, master, column: int, title: str):
+    def _panel(self, master, column: int, title: str, extra=None):
         holder = ctk.CTkFrame(master, fg_color=self.colours["panel"],
                               corner_radius=12)
         holder.grid(row=0, column=column, sticky="nsew",
                     padx=(0 if column == 0 else 5, 0 if column == 2 else 5))
-        ctk.CTkLabel(holder, text=tr(title),
+        head = ctk.CTkFrame(holder, fg_color="transparent")
+        head.pack(fill="x", padx=14, pady=(10, 4))
+        ctk.CTkLabel(head, text=tr(title),
                      font=self.font(("Segoe UI Semibold", 14)),
-                     anchor="w").pack(fill="x", padx=14, pady=(10, 4))
+                     anchor="w").pack(side="left")
+        if extra is not None:
+            extra(head)
         body = ctk.CTkScrollableFrame(holder, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=6, pady=(0, 8))
         return body
+
+    def _style_menu(self, head) -> None:
+        """El estilo contra el que se juzga el contrapunto, en su panel."""
+        self.style_menu = self._menu(head, [name for name, _key in STYLES],
+                                     112, lambda _v: self._analyse())
+        self.style_menu.configure(height=26)
+        self.style_menu.set(tr(STYLES[0][0]))
+        self.style_menu.pack(side="right")
+        self._label(head, "juzgado como").pack(side="right", padx=(0, 6))
+
+    def genre(self) -> str:
+        """La clave del estilo elegido para juzgar el contrapunto."""
+        menu = getattr(self, "style_menu", None)
+        if menu is None:
+            return STYLES[0][1]
+        label = i18n.untr(menu.get())
+        return next((key for name, key in STYLES if name == label),
+                    STYLES[0][1])
 
     # -- estado -------------------------------------------------------------
 
@@ -630,8 +659,7 @@ class Analyzer(ctk.CTkFrame):
     def _clear(self) -> None:
         if not self.staff.is_empty() and not messagebox.askyesno(
                 tr("Borrar todo"),
-                tr("Esto saca del pentagrama todo lo que hay escrito. "
-                   "¿Seguimos?")):
+                tr("Se borra todo lo escrito. ¿Seguimos?")):
             return
         self._pickup = 0.0
         self.staff.clear()
@@ -706,7 +734,7 @@ class Analyzer(ctk.CTkFrame):
             self.staff.redraw()
             self._render_empty()
             return
-        self.result = analysis.analyse(self.score())
+        self.result = analysis.analyse(self.score(), genre=self.genre())
         if self.on_analysed is not None:
             self.on_analysed(self.result)
         # `score()` dejó la correspondencia en orden de carril, pero el
@@ -767,28 +795,25 @@ class Analyzer(ctk.CTkFrame):
             # Las dos formas enteras: «falta/faltan» y «voz/voces» son
             # concordancias del castellano, y una terminación suelta no se
             # puede traducir.
-            first = (trf("Falta {missing} voz: un acorde son tres notas "
-                         "sonando, así que hasta que no haya tres voces "
-                         "escritas no hay nada que nombrar.", missing=missing)
+            first = (trf("Falta {missing} voz. Para nombrar acordes hacen "
+                         "falta al menos tres voces escritas.", missing=missing)
                      if missing == 1 else
-                     trf("Faltan {missing} voces: un acorde son tres notas "
-                         "sonando, así que hasta que no haya tres voces "
-                         "escritas no hay nada que nombrar.", missing=missing))
+                     trf("Faltan {missing} voces. Para nombrar acordes hacen "
+                         "falta al menos tres voces escritas.", missing=missing))
         else:
             first = ("Escribí las voces en el sistema o importá una "
-                     "partitura. Con tres voces escritas aparece acá la "
-                     "tonalidad, los acordes y lo que hace cada uno.\n\n"
-                     "Si no tenés ninguna a mano, «Importar…» abre en la "
-                     "carpeta de ejemplos: ahí está el Preludio en Do mayor "
-                     "de Bach.")
+                     "partitura. Con tres voces escritas, acá aparecen la "
+                     "tonalidad y los acordes.\n\n"
+                     "«Importar…» abre la carpeta de ejemplos, donde está el "
+                     "Preludio en Do mayor de Bach.")
         for panel, text in (
                 (self.harmony_panel, first),
                 (self.counterpoint_panel,
-                 "Acá van los movimientos entre voces y lo que convenga "
-                 "mirar: paralelas, saltos difíciles, cruces."),
+                 "Acá aparecen los movimientos entre voces y lo que conviene "
+                 "revisar, como paralelas, saltos difíciles o cruces."),
                 (self.ornament_panel,
-                 "Y acá, los adornos melódicos: las notas que no pertenecen "
-                 "al acorde, con el nombre que les corresponde.")):
+                 "Y acá, las notas que no pertenecen al acorde, cada una con "
+                 "su nombre.")):
             self._wipe(panel)
             ctk.CTkLabel(panel, text=tr(text), font=self.font(("Segoe UI", 12)),
                          text_color=self.colours["muted"], wraplength=250,
@@ -916,9 +941,8 @@ class Analyzer(ctk.CTkFrame):
         self._note(panel, "Movimiento entre voces", self.colours["muted"], 11,
                    (4, 2), bold=True)
         self._note(panel,
-                   "Tocá uno y se marcan sobre el sistema: un trazo une "
-                   "las dos voces del par y una flecha dice adónde va cada "
-                   "una.",
+                   "Tocá uno para marcarlo en el sistema. Un trazo une las "
+                   "dos voces y una flecha muestra adónde va cada una.",
                    self.colours["faint"], 10, (0, 4))
         self._motion_rows = {}
         for kind in (analysis.MOTION_CONTRARY, analysis.MOTION_OBLIQUE,
@@ -937,8 +961,7 @@ class Analyzer(ctk.CTkFrame):
                    + (trf(", {graves} grave(s)", graves=len(graves)) if graves else ""),
                    self.colours["muted"], 11, (10, 4), bold=True)
         if not result.findings:
-            self._note(panel, "Ni paralelas, ni cruces, ni saltos difíciles: "
-                              "el contrapunto está limpio.",
+            self._note(panel, "No hay paralelas, cruces ni saltos difíciles.",
                        self.colours["muted"], 11, (0, 6))
         for finding in result.findings:
             self._finding_row(panel, finding)
@@ -1054,16 +1077,15 @@ class Analyzer(ctk.CTkFrame):
         self._wipe(panel)
         result = self.result
         if not result.ornaments:
-            self._note(panel, "Ninguna nota se sale del acorde: toda la "
-                              "escritura es de notas reales.",
+            self._note(panel, "Todas las notas pertenecen a su acorde.",
                        self.colours["muted"], 11, (4, 6))
             return
         self._note(panel, trf("{ornaments} adorno(s) melódico(s)",
                               ornaments=len(result.ornaments)),
                    self.colours["muted"], 11, (4, 2), bold=True)
         self._note(panel,
-                   "Pasá el mouse por uno y abajo dice qué es; tocalo y se "
-                   "marca en el sistema.",
+                   "Pasá el mouse por uno para ver qué es, y tocalo para "
+                   "marcarlo en el sistema.",
                    self.colours["faint"], 10, (0, 4))
         for ornament in result.ornaments:
             self._ornament_row(panel, ornament)
@@ -1203,8 +1225,8 @@ class Analyzer(ctk.CTkFrame):
         if not events:
             messagebox.showinfo(
                 tr("Nada que escuchar"),
-                tr("Todavía no hay ninguna nota escrita. Poné algunas en el "
-                   "sistema o importá una partitura."))
+                tr("Todavía no hay notas. Escribí algunas en el sistema o "
+                   "importá una partitura."))
             return
         self.play_button.configure(text=tr("♪  Sonando…"), state="disabled")
         self._playing = audio.play_chords([], [], voices=events)
@@ -1244,10 +1266,10 @@ class Analyzer(ctk.CTkFrame):
 
     def _import(self) -> None:
         path = filedialog.askopenfilename(
-            title="Elegí una partitura",
+            title=tr("Elegí una partitura"),
             initialdir=self.examples_directory() or None,
-            filetypes=[("Partituras", "*.musicxml *.xml *.mxl"),
-                       ("Todos los archivos", "*.*")])
+            filetypes=[(tr("Partituras"), "*.musicxml *.xml *.mxl"),
+                       (tr("Todos los archivos"), "*.*")])
         if not path:
             return
         try:
@@ -1261,8 +1283,8 @@ class Analyzer(ctk.CTkFrame):
                                      exc=exc))
             return
 
-        trimmed = max(0, len(score.parts) - MAX_VOICES)
-        parts = score.parts[:MAX_VOICES]
+        written = len(score.parts)
+        parts = importer.kept_voices(score.parts, MAX_VOICES)
         # Cuántas voces hay lo dice la partitura. El compás también, y sus
         # cambios: una pieza que arranca en cuatro por cuatro y pasa a tres
         # se escribía entera en cuatro, y con las barras corridas se corría
@@ -1279,6 +1301,7 @@ class Analyzer(ctk.CTkFrame):
             self.key_menu.set(label)
         self._pickup = score.pickup_quarters
         self.staff.set_key(score.fifths, score.beats, score.beat_type)
+        self.staff.pickup = score.pickup_quarters
         # Las voces se acomodan de grave a aguda contra los carriles del
         # sistema, que es el orden en el que el pentagrama las escribe.
         self.staff.load([importer.written_line(part) for part in parts])
@@ -1289,12 +1312,12 @@ class Analyzer(ctk.CTkFrame):
         names = ", ".join(list(reversed(GRAND_VOICES))[:len(parts)])
         message = trf("Se leyeron {parts} voces: {lower}.",
                       parts=len(parts), lower=names.lower())
-        if trimmed:
-            message += (trf("\n\nLa partitura traía {trimmed} voz/voces más. "
-                            "El sistema de dos pentagramas escribe hasta "
-                            "cuatro, así que se conservaron las cuatro más "
-                            "graves.",
-                            trimmed=trimmed))
+        if written > MAX_VOICES:
+            message += "\n\n" + trf(
+                "La partitura tiene {voices} voces y el sistema admite "
+                "cuatro. En cada momento quedan la nota más grave, la más "
+                "aguda y las dos del medio que más le agregan al acorde.",
+                voices=written)
         messagebox.showinfo(tr("Partitura importada"), message)
 
     def _export(self) -> None:
@@ -1303,7 +1326,7 @@ class Analyzer(ctk.CTkFrame):
                                 tr("Escribí o importá una partitura primero."))
             return
         folder = filedialog.askdirectory(
-            title="Elegí dónde guardar la partitura")
+            title=tr("Elegí dónde guardar la partitura"))
         if not folder:
             return
         try:

@@ -34,9 +34,11 @@ anima color y posición de cosas ``place``-adas.
 
 from __future__ import annotations
 
+import base64
 import math
 import os
 import random
+import sys
 import time
 import tkinter as tk
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
@@ -292,16 +294,44 @@ def _load_image(name: Optional[str], step: int, blur: int = 1):
     key = (name, step, blur)
     if key in _IMAGES:
         return _IMAGES[key]
+    image = _read_picture(os.path.join(assets_directory(), name))
+    if image is None:
+        return None
     try:
-        image = tk.PhotoImage(file=os.path.join(assets_directory(), name))
         if step * blur > 1:
             image = image.subsample(step * blur)
         if blur > 1:
             image = image.zoom(blur)
-    except tk.TclError:
+    except tk.TclError as error:
+        sys.stderr.write("cinematic: could not scale %s: %s\n" % (name, error))
         return None
     _IMAGES[key] = image
     return image
+
+
+def _read_picture(path: str):
+    """
+    El PNG como `PhotoImage`, o `None` dejando dicho por qué.
+
+    Primero por la ruta, que es lo de siempre. Si Tcl no puede abrirla, se
+    lee el archivo desde Python y se le pasa a Tk ya leído: Tcl y Python no
+    abren archivos igual --- largo de ruta, carpetas sincronizadas, nombres
+    raros --- y el programa publicado llegó a abrir sin un solo personaje
+    sin dejar rastro de por qué. Ahora, si las dos fallan, queda escrito en
+    el registro (ver `engine.console`).
+    """
+    try:
+        return tk.PhotoImage(file=path)
+    except tk.TclError as error:
+        first = error
+    try:
+        with open(path, "rb") as handle:
+            data = base64.b64encode(handle.read())
+        return tk.PhotoImage(data=data)
+    except (OSError, tk.TclError) as error:
+        sys.stderr.write("cinematic: could not load %s (%s; %s)\n"
+                         % (path, first, error))
+        return None
 
 
 class Portrait:

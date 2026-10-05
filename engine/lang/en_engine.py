@@ -79,10 +79,9 @@ CATALOG = {
         'Major subtonic. It replaces the dominant without a leading tone, and '
         'it is the mark of rock and of the mixolydian mode.',
     'Supertónica menor (ii)': 'Minor supertonic (ii)',
-    'Una cadena de quintas descendentes con los acordes mayorizados, como una hilera de dominantes que se resuelven una en otra hasta llegar a la dominante y volver a casa.':
-        'A chain of descending fifths with the chords made major, like a row of '
-        'dominants resolving into one another until they reach the dominant and '
-        'come home.',
+    'Una cadena de quintas descendentes dentro de la tonalidad. Cada acorde baja una quinta al siguiente hasta llegar a la dominante y volver a casa.':
+        'A chain of descending fifths inside the key. Each chord falls a fifth '
+        'to the next until it reaches the dominant and comes home.',
     'i - bVII - bVI - V. El nombre viene del modo frigio: entre el bVI y el V hay sólo un semitono, y esa sensible descendente es la que le da el color.':
         'i - bVII - bVI - V. The name comes from the phrygian mode: between bVI '
         'and V there is only a semitone, and that descending leading tone is '
@@ -109,8 +108,10 @@ CATALOG = {
         'This melody could not be harmonized.',
     'Sexta en lugar de quinta': 'Sixth in place of a fifth',
 
-    # -- la importación de partituras ---------------------------------------
+    # -- las voces (`theory.VOICE_CATALOG`) y la importación de partituras ---
+    'Bajo': 'Bass',
     'Barítono': 'Baritone',
+    'Mezzosoprano': 'Mezzo-soprano',
     'El archivo comprimido no contiene una partitura.':
         'The compressed file does not contain a score.',
     'La partitura no tiene la misma cantidad de voces en todos los acordes (van de {value} a {value2}). Se completará o recortará según las voces que elijas.':
@@ -172,25 +173,25 @@ CATALOG = {
         '{{subject}} leaves {name} outside its range.',
 
     # -- las citas de época --------------------------------------------------
-    'El V con su quinta en el bajo, la fundamental encima y la tercera arriba: la fórmula que anuncia la cadencia y retrasa un momento la resolución.':
+    'El V con la quinta en el bajo, la fundamental encima y la tercera arriba. Anuncia la cadencia y demora un momento la resolución.':
         'The V with its fifth in the bass, the root above it and the third on '
-        'top: the formula that announces the cadence and delays the resolution '
-        'for a moment.',
-    'El V prepara la tónica y cae en el sexto grado: la resolución se posterga y la frase sigue.':
-        'The V prepares the tonic and lands on the sixth degree: the resolution '
-        'is put off and the phrase goes on.',
-    'El giro que sostiene casi todo el repertorio: la subdominante prepara la dominante y ésta resuelve.':
-        'The turn that holds up almost the whole repertoire: the subdominant '
-        'prepares the dominant and the dominant resolves.',
-    'El mismo giro de siempre, pero apuntado a otro grado: toma prestada la dominante de donde va y aterriza ahí.':
-        'The same old turn, but aimed at another degree: it borrows the '
-        'dominant of where it is going and lands there.',
+        'top. It announces the cadence and holds off the resolution for a '
+        'moment.',
+    'El V anuncia la tónica pero va al sexto grado, y la frase sigue.':
+        'The V sets up the tonic but goes to the sixth degree instead, and '
+        'the phrase keeps going.',
+    'La subdominante prepara la dominante, que resuelve en la tónica. Es la base de casi todo el repertorio de jazz.':
+        'The subdominant sets up the dominant, which resolves to the tonic. '
+        'It’s the backbone of most of the jazz repertoire.',
+    'Un ii-V que apunta a otro grado. Toma prestada la dominante del acorde de llegada y resuelve en él.':
+        'A ii-V aimed at another degree. It borrows the dominant of the '
+        'target chord and resolves to it.',
     'La subdominante cierra directamente sobre la tónica, sin pasar por la dominante.':
         'The subdominant closes straight onto the tonic, without passing '
         'through the dominant.',
-    'La subdominante menor cierra sobre la tónica: el mismo gesto que el plagal mayor, más oscuro.':
-        'The minor subdominant closes onto the tonic: the same gesture as the '
-        'major plagal, darker.',
+    'La subdominante menor cierra sobre la tónica. Es la cadencia plagal con un color más oscuro.':
+        'The minor subdominant closes onto the tonic. It’s the plagal cadence '
+        'with a darker color.',
     'Un dominante a un semitono por encima reemplaza al V y resuelve deslizándose hacia abajo.':
         'A dominant a semitone above replaces the V and resolves by sliding '
         'downward.',
@@ -296,9 +297,6 @@ CATALOG = {
     'las voces extremas llegan por movimiento directo a una consonancia perfecta, y la superior llega por salto':
         'the outer voices arrive at a perfect consonance by direct motion, and '
         'the upper one arrives by leap',
-    'las dos en la misma dirección pero cambiando de intervalo; es por acá que se hacen las quintas ocultas':
-        'both in the same direction but changing interval; this is where hidden '
-        'fifths come from',
     'misma fundamental': 'same root',
 
     # -- el analizador: movimiento -------------------------------------------
@@ -328,6 +326,8 @@ CATALOG = {
     'La tonalidad no está clara: {label} es la lectura más probable, pero hay otras cerca.':
         'The key is not clear: {label} is the most likely reading, but there '
         'are others close behind.',
+    'abre y cierra sobre su dominante y cadencia en ella por dentro':
+        'it opens and closes on its dominant and cadences on it in between',
     'arranca desde la tónica en el bajo':
         'it starts from the tonic in the bass',
     'arranca en la tónica': 'it starts on the tonic',
@@ -373,6 +373,9 @@ CATALOG = {
         'stays a suspended sonority',
     'la dominante promete la tónica y entrega el sexto grado':
         'the dominant promises the tonic and delivers the sixth degree',
+    'la dominante de {name} resuelve en él: la frase cierra en {name}, fuera de la tonalidad de la pieza':
+        'the dominant of {name} resolves to it: the phrase closes in {name}, '
+        'outside the key of the piece',
     'la dominante resuelve en la tónica':
         'the dominant resolves onto the tonic',
     'la frase se detiene sobre la dominante':
@@ -427,6 +430,8 @@ CATALOG = {
     'sensible aplicada: está un semitono debajo de {spanish_note} y ':
         'applied leading tone: it sits a semitone below {spanish_note} and ',
     'termina con tercera de Picardía': 'it ends with a Picardy third',
+    'tercera de Picardía: la pieza en menor termina en la tónica mayor':
+        'Picardy third: the minor-key piece ends on the major tonic',
     'tonicización de ': 'tonicization of ',
     'tónica': 'tonic',
     'usa exactamente las notas de la armadura':
@@ -437,7 +442,47 @@ CATALOG = {
         'it carries over from the previous chord and steps up',
     '{degree}º grado de {label}': 'degree {degree} of {label}',
     '{symbol} resuelve en {symbol2}': '{symbol} resolves onto {symbol2}',
-    'las dos en la misma dirección y con el intervalo del mismo tamaño: es lo que funde dos voces en una':
-        'both in the same direction and keeping the interval the same size: it '
-        'is what melts two voices into one',
+
+    # -- los timbres de reproducción (engine/timbre.py) ----------------------
+    'Cuerda pulsada': 'Plucked string',
+    'Clave': 'Harpsichord',
+    'Coro «aah»': '“Aah” choir',
+    'Cuerdas frotadas': 'Bowed strings',
+    'Flauta dulce de la escuela': 'School recorder',
+    'Muestra cargada (WAV)': 'Loaded sample (WAV)',
+    'El de siempre: tres armónicos y una caída. Seco a propósito, para seguir las voces de oído.':
+        'The usual one: three harmonics and a decay. Dry on purpose, so the '
+        'voices can be followed by ear.',
+    'Un registro lleno de tubos: la nota y sus octavas, sostenida sin caer. Deja oír cada voz entera hasta el acorde siguiente.':
+        'A full stop of pipes: the note and its octaves, held without '
+        'fading. Every voice can be heard whole until the next chord.',
+    'Una fila de cuerdas con arco: entrada suave, vibrato que llega tarde y dos instrumentos apenas desafinados entre sí.':
+        'A section of bowed strings: a soft entry, vibrato that arrives late '
+        'and two instruments slightly out of tune with each other.',
+    'Una cuerda pellizcada cerca del borde: brillo al atacar que se apaga rápido y un cuerpo que sigue sonando.':
+        'A string plucked near its end: a bright attack that dies quickly and '
+        'a body that keeps ringing.',
+    'Tres cantantes por voz cantando una «a»: la vocal la dan los formantes, zonas fijas del espectro que refuerza la garganta.':
+        'Three singers per voice singing an “ah”: the vowel comes from the '
+        'formants, fixed regions of the spectrum that the throat reinforces.',
+    'Soplada de más, desafinada y con algún chillido. No sirve para nada y es exactamente así como sonaba.':
+        'Overblown, out of tune and with the odd squeak. It is good for '
+        'nothing, and that is exactly how it used to sound.',
+    'Un timbre guardado desde el experimentador de armónicos, o cualquier WAV: se lo lleva a cada nota y se repite su bucle mientras la nota dure.':
+        'A timbre saved from the harmonics experimenter, or any WAV: it is '
+        'shifted to every note and its loop repeats for as long as the note '
+        'lasts.',
+    'Todavía no se cargó ningún WAV.': 'No WAV has been loaded yet.',
+    'No se pudo abrir {name}: {reason}': 'Could not open {name}: {reason}',
+    '{name} no es un archivo WAV.': '{name} is not a WAV file.',
+    '{name} no trae sonido que se pueda leer.':
+        '{name} has no sound that can be read.',
+    '{name} tiene un encabezado que no tiene sentido.':
+        '{name} has a header that makes no sense.',
+    '{name} es demasiado corto para sacarle un timbre.':
+        '{name} is too short to get a timbre out of it.',
+    '{name} está en silencio.': '{name} is silent.',
+    'El WAV está en un formato que no se puede leer ({bits} bits, codificación {tag}). Guardalo como PCM de 16 o 24 bits.':
+        'The WAV is in a format that cannot be read ({bits} bits, encoding '
+        '{tag}). Save it as 16- or 24-bit PCM.',
 }

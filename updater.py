@@ -147,9 +147,9 @@ def notice(release: updates.Release, colours: Dict[str, str],
                                                       pady=(0, 10))
 
     ctk.CTkLabel(caja,
-                 text=tr("Tu progreso no se pierde: los logros, el libro, el "
-                         "sendero y el historial se copian a la carpeta nueva. "
-                         "La página explica cómo."),
+                 text=tr("No perdés tu progreso. Los logros, el libro, el "
+                         "sendero y el historial se pasan a la carpeta nueva, "
+                         "y la página explica cómo."),
                  justify="left", anchor="w", wraplength=WIDTH - 90,
                  font=fuente(("Segoe UI", 12)),
                  text_color=colours["muted"]).pack(anchor="w", padx=26,
@@ -159,13 +159,18 @@ def notice(release: updates.Release, colours: Dict[str, str],
     botones.pack(fill="x", padx=26, pady=(0, 22))
 
     def cerrar() -> None:
+        # Primero se esconde: es lo que el usuario ve, y tiene que pasar
+        # aunque lo que sigue falle. Con todo en un mismo `try`, un error en
+        # `quit()` salteaba el `destroy()` y el cartel quedaba en pantalla al
+        # lado del programa, que se abría igual: dos ventanas.
+        try:
+            cartel.withdraw()
+        except Exception:                                   # noqa: BLE001
+            pass
         # `quit()` antes de `destroy()`: el primero termina el bucle y el
         # segundo desarma la ventana. Sólo con `destroy()`, un `after` que
         # quedara pendiente se ejecutaría sobre widgets que ya no están.
-        #
-        # Y las dos entre `try`: si algo ya la cerró ---la cruz de la ventana
-        # y un botón, en ese orden--- lo único que queda por hacer es seguir,
-        # y no hay a quién avisarle de un error acá.
+        # Cada uno en su `try`, por lo mismo.
         try:
             # Los `after` que quedan puestos ---los de customtkinter, que se
             # reagendan solos--- se cancelan antes de destruir la ventana. Si
@@ -178,11 +183,11 @@ def notice(release: updates.Release, colours: Dict[str, str],
                     continue
         except Exception:                                   # noqa: BLE001
             pass
-        try:
-            cartel.quit()
-            cartel.destroy()
-        except Exception:                                   # noqa: BLE001
-            pass
+        for paso in (cartel.quit, cartel.destroy):
+            try:
+                paso()
+            except Exception:                               # noqa: BLE001
+                continue
 
     def quedarse() -> None:
         seguir["valor"] = True
@@ -236,8 +241,17 @@ def notice(release: updates.Release, colours: Dict[str, str],
     # arranque y le deja la ventana destruida abajo de los pies.
     if on_ready is not None:
         cartel.after(READY_DELAY_MS, lambda: on_ready(cartel))
-    cartel.mainloop()
-    _hand_back_the_scaling_loop()
+    try:
+        cartel.mainloop()
+    finally:
+        # Salga como salga el bucle ---un botón, la cruz, un error---, el
+        # cartel no se queda: si no, el programa se abre con él al lado.
+        try:
+            if cartel.winfo_exists():
+                cartel.destroy()
+        except Exception:                                   # noqa: BLE001
+            pass
+        _hand_back_the_scaling_loop()
     return seguir["valor"]
 
 

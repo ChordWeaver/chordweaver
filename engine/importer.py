@@ -452,8 +452,12 @@ def read_voices(path: str):
     #: su propio reloj, un compás mal cerrado correría a esa parte respecto
     #: de las otras desde ahí hasta el final.
     bar_starts: List[float] = []
+    #: Cuánto dura de verdad cada compás leído y a qué compás de la pieza
+    #: pertenece. Ver :func:`_plan_bars`.
+    lengths, metre_from, odd_metres = _plan_bars(root)
     pickup = 0.0
-    #: Los cambios de compás, por número de compás leído. Una pieza puede
+    #: Los cambios de compás, por número de compás en la pieza (el que le
+    #: pone `_plan_bars`, no el orden en el archivo). Una pieza puede
     #: cambiar de compás en el medio, y forzarla al primero corre todas las
     #: barras que vienen después --- y con ellas los tiempos fuertes, que es
     #: de donde sale la lectura de acordes.
@@ -474,9 +478,9 @@ def read_voices(path: str):
                     local_beats = int(_text(time_node.find("beats"), "4") or 4)
                     local_beat_type = int(
                         _text(time_node.find("beat-type"), "4") or 4)
-                    if part_index == 0:
-                        metre_changes[bar_index] = (local_beats,
-                                                    local_beat_type)
+                    if part_index == 0 and bar_index < len(metre_from):
+                        metre_changes[metre_from[bar_index]] = (
+                            local_beats, local_beat_type)
                     if not read_signature:
                         beats, beat_type = local_beats, local_beat_type
                 key_node = attributes.find("key")
@@ -495,7 +499,6 @@ def read_voices(path: str):
             #: Cuántas notas lleva el acorde que se está escribiendo, para
             #: saber a qué línea va la siguiente.
             chord_depth = 0
-            written = 0.0
 
             for element in measure:
                 if element.tag == "backup":
@@ -538,14 +541,18 @@ def read_voices(path: str):
                                 pitch=midi, onset=cursor, duration=duration))
                 cursor += duration
                 previous = duration
-                written = max(written, cursor - start_of_bar)
 
             if part_index == 0:
-                if bar_index == 0 and 0 < written < per_bar - 1e-6:
+                length = (lengths[bar_index] if bar_index < len(lengths)
+                          else None)
+                if (bar_index == 0 and length is not None
+                        and 0 < length < per_bar - 1e-6):
                     # Primer compás incompleto: es una anacrusa, y de ahí
                     # sale la grilla de tiempos fuertes de toda la pieza.
-                    pickup = written
-                    cursor = start_of_bar + written
+                    pickup = length
+                    cursor = start_of_bar + length
+                elif length is not None:
+                    cursor = start_of_bar + length
                 else:
                     cursor = start_of_bar + per_bar
                 if bar_index + 1 >= len(bar_starts):
@@ -563,15 +570,254 @@ def read_voices(path: str):
     for name, part in zip(voice_names(len(parts)), parts):
         part.name = name
 
-    # El compás de la anacrusa es el 0, así que el primer compás completo
-    # es el 1 y los que le siguen se corren con él.
-    shift = 0 if pickup > 1e-6 else 1
-    metres = tuple(sorted((index + shift, count, figure)
-                          for index, (count, figure) in metre_changes.items()
-                          if index + shift >= 1))
+    # Los compases ya vienen numerados como en la partitura (`_plan_bars`):
+    # el de la anacrusa es el 0 y el primer compás completo es el 1. Un
+    # compás suelto más corto que el resto entra como un compás propio con
+    # su medida, y el que le sigue vuelve a la de antes salvo que el archivo
+    # diga otra cosa.
+    forced, restored = odd_metres
+    for number, metre in restored.items():
+        metre_changes.setdefault(number, metre)
+    metre_changes.update(forced)
+    metres = tuple(sorted((number, count, figure)
+                          for number, (count, figure) in metre_changes.items()
+                          if number >= 1))
     return analysis.Score(parts=parts, fifths=fifths, beats=beats,
                           beat_type=beat_type, title=title,
                           pickup_quarters=pickup, metres=metres)
+
+
+def _measure_reach(measure: ET.Element, divisions: float) -> float:
+    """Hasta dónde llega lo escrito en un compás, en negras desde su comienzo.
+
+    Se recorre igual que al leer las notas ---los <backup> y <forward>
+    mueven el cursor---, y se queda con el punto más lejano: un compás
+    escrito a dos voces vuelve atrás para escribir la segunda, y lo que
+    mide es la más larga.
+    """
+    cursor = reach = previous = 0.0
+    for element in measure:
+        if element.tag in ("backup", "forward"):
+            step = float(_text(element.find("duration"), "0") or 0) / divisions
+            cursor += -step if element.tag == "backup" else step
+            previous = 0.0
+        elif element.tag == "note":
+            duration = float(_text(element.find("duration"), "0") or 0) / divisions
+            if element.find("chord") is not None:
+                cursor -= previous
+            cursor += duration
+            previous = duration
+        else:
+            continue
+        reach = max(reach, cursor)
+    return reach
+
+
+def _metre_for(quarters: float, beat_type: int) -> Optional[Tuple[int, int]]:
+    """La medida que escribe un compás de esa duración: (tiempos, figura)."""
+    for figure in (beat_type, 8, 16, 32):
+        count = quarters * figure / 4.0
+        if count >= 1 - 1e-6 and abs(count - round(count)) <= 1e-6:
+            return int(round(count)), figure
+    return None
+
+
+def _plan_bars(root: ET.Element):
+    """
+    Cuánto dura cada compás del archivo y con qué número se lo cita.
+
+    Un compás se mide por lo que **todas** las partes escriben en él, no por
+    el compás que rige. Casi siempre es lo mismo, pero no siempre: un coral
+    con la repetición en medio de un compás lo escribe partido en dos ---el
+    7 de dos tiempos y el 7a del tercero---, y estirando cada mitad hasta un
+    compás entero aparecían tres tiempos de silencio que la pieza no tiene.
+    Todo lo que venía después quedaba corrido: los acordes caían a
+    contratiempo, las cadencias en el compás equivocado, y la mitad del
+    análisis de un coral salía mal.
+
+    Tres casos, y en ninguno se toca la grilla de tiempos fuertes:
+
+    * el primer compás incompleto es la **anacrusa**, como siempre;
+    * dos compases cortos seguidos que juntos hacen uno entero son **las
+      dos mitades** de ese compás: suenan pegadas y llevan el mismo número;
+    * un compás corto suelto en el medio ---la anacrusa de una sección que
+      cambia de compás--- es **un compás con su propia medida**, y el
+      siguiente vuelve a la de antes.
+
+    El último compás, si está incompleto, se deja como estaba: completa la
+    anacrusa y después no viene nada que pueda correrse.
+
+    Devuelve tres cosas: la duración de cada compás leído, el número de
+    compás de la pieza desde el que rige un cambio de compás escrito en él,
+    y los cambios de medida que agregan los compases sueltos ---(los que se
+    imponen, los que se ponen si el archivo no dice otro)---.
+    """
+    nominal: List[float] = []
+    metres_at: List[Tuple[int, int]] = []
+    reach: List[float] = []
+    for part_index, part in enumerate(root.iter("part")):
+        divisions = 1.0
+        beats, beat_type = 4, 4
+        for index, measure in enumerate(part.iter("measure")):
+            attributes = measure.find("attributes")
+            if attributes is not None:
+                node = attributes.find("divisions")
+                if node is not None:
+                    divisions = float(_text(node, "1") or 1)
+                time_node = attributes.find("time")
+                if time_node is not None:
+                    beats = int(_text(time_node.find("beats"), "4") or 4)
+                    beat_type = int(_text(time_node.find("beat-type"), "4") or 4)
+            if part_index == 0:
+                nominal.append(beats * 4.0 / beat_type)
+                metres_at.append((beats, beat_type))
+            while len(reach) <= index:
+                reach.append(0.0)
+            reach[index] = max(reach[index], _measure_reach(measure, divisions))
+
+    count = len(nominal)
+    lengths = list(nominal)
+    short = [0.0 < reach[i] < nominal[i] - 1e-6 for i in range(count)]
+    joined = [False] * count
+    odd: Dict[int, Tuple[int, int]] = {}
+    index = 0
+    while index < count:
+        if not short[index]:
+            index += 1
+            continue
+        lengths[index] = reach[index]
+        following = index + 1
+        if index == 0:
+            index += 1                          # la anacrusa
+            continue
+        # Las dos mitades suman el compás de la primera. La segunda puede
+        # traer ya el compás que sigue: en BWV 41.6 el 14 tiene tres tiempos
+        # de cuatro por cuatro y el 14a es la anacrusa de la sección en tres.
+        if (following < count and short[following]
+                and abs(reach[index] + reach[following]
+                        - nominal[index]) <= 1e-6):
+            lengths[following] = reach[following]
+            joined[following] = True
+            index += 2
+            continue
+        metre = _metre_for(reach[index], metres_at[index][1])
+        if following >= count or metre is None:
+            lengths[index] = nominal[index]     # el último, o una medida rara
+        else:
+            odd[index] = metre
+        index += 1
+
+    numbers: List[int] = []
+    number = 0 if (count and short[0]) else 1
+    for index in range(count):
+        if index > 0 and not joined[index]:
+            number += 1
+        numbers.append(number)
+    forced = {numbers[index]: metre for index, metre in odd.items()}
+    restored = {numbers[index + 1]: metres_at[index + 1] for index in odd}
+    # Un cambio de compás escrito en la segunda mitad de un compás partido
+    # rige desde el compás siguiente: esa mitad todavía completa el de antes.
+    starts = [numbers[index] + (1 if joined[index] else 0)
+              for index in range(count)]
+    return lengths, starts, (forced, restored)
+
+
+def kept_voices(parts: Sequence, count: int) -> List:
+    """
+    Las voces que entran cuando la partitura tiene más de las que caben.
+
+    Se eligen **momento a momento** y no línea por línea: en cada tramo entre
+    dos ataques va al primer carril la nota más grave que suena, al último
+    la más aguda, y a los del medio las que más clases de altura nuevas
+    agregan. Antes quedaban las cuatro líneas más graves, y en una partitura
+    de piano eso tiraba la melodía. Eligiendo líneas enteras tampoco
+    alcanzaba: un acorde de piano se lee como una línea por nota y ninguna
+    es el bajo todo el tiempo. Medido contra un análisis de referencia, el
+    preludio de Chopin en do menor pasó de 37 % de acordes bien leídos a lo
+    mismo que leyendo todas sus voces.
+
+    Una nota que sigue sonando en el mismo carril sigue siendo la misma nota:
+    partirla en cada tramo inventaba ataques que no están escritos, y de los
+    ataques salen los adornos y el contrapunto.
+
+    `parts` viene de grave a aguda; las voces que vuelven también.
+    """
+    from . import analysis
+    parts = list(parts)
+    if len(parts) <= count or count < 2:
+        return parts[:max(1, count)] if count < 2 else parts
+    notes = sorted((note for part in parts for note in part.notes),
+                   key=lambda note: (note.onset, note.pitch))
+    bounds = sorted({note.onset for note in notes}
+                    | {note.onset + note.duration for note in notes})
+    lanes: List[list] = [[] for _ in range(count)]
+    held: List[Optional[Tuple[object, object]]] = [None] * count
+    active: List = []
+    position = 0
+    for start, end in zip(bounds, bounds[1:]):
+        if end - start < 1e-6:
+            continue
+        while position < len(notes) and notes[position].onset <= start + 1e-6:
+            active.append(notes[position])
+            position += 1
+        active = [note for note in active
+                  if note.onset + note.duration > start + 1e-6]
+        sounding = sorted(active, key=lambda note: (note.pitch, note.onset))
+        picks = _pick_lanes(sounding, count, held)
+        for lane, note in enumerate(picks):
+            current = held[lane]
+            if note is None:
+                held[lane] = None
+                continue
+            if current is not None and current[0] is note:
+                written = current[1]
+                written.duration = end - written.onset
+                continue
+            written = analysis.Note(pitch=note.pitch, onset=start,
+                                    duration=end - start)
+            lanes[lane].append(written)
+            held[lane] = (note, written)
+    kept = [analysis.Part(name=name, notes=lane)
+            for name, lane in zip(voice_names(count), lanes)]
+    return [part for part in kept if part.notes] or kept
+
+
+def _pick_lanes(sounding: List, count: int,
+                held: List[Optional[Tuple[object, object]]]) -> List:
+    """Qué nota va a cada carril en un tramo. None es un silencio."""
+    picks: List = [None] * count
+    if not sounding:
+        return picks
+    previous = {id(entry[0]): lane for lane, entry in enumerate(held)
+                if entry is not None}
+    if len(sounding) == 1:
+        note = sounding[0]
+        lane = previous.get(id(note))
+        if lane is None:
+            lane = 0 if note.pitch < 60 else count - 1
+        picks[lane] = note
+        return picks
+    bass, top = sounding[0], sounding[-1]
+    picks[0], picks[-1] = bass, top
+    inner = sounding[1:-1]
+    room = count - 2
+    if len(inner) > room:
+        taken = {bass.pitch % 12, top.pitch % 12}
+        chosen: List = []
+        for _ in range(room):
+            best = max(inner, key=lambda note: (
+                note.pitch % 12 not in taken,
+                id(note) in previous,
+                -abs(note.pitch - (bass.pitch + top.pitch) / 2.0)))
+            chosen.append(best)
+            taken.add(best.pitch % 12)
+            inner = [note for note in inner if note is not best]
+        inner = sorted(chosen, key=lambda note: note.pitch)
+    # Los del medio, en los carriles del medio de abajo hacia arriba; si
+    # sobran carriles, el que queda vacío es el más cercano al bajo.
+    for offset, note in enumerate(inner):
+        picks[count - 1 - len(inner) + offset] = note
+    return picks
 
 
 def written_line(part) -> List[Tuple[Optional[int], float]]:

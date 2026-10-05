@@ -20,14 +20,82 @@ import threading
 import time
 import tkinter as tk
 import traceback
+from types import SimpleNamespace
 from tkinter import filedialog, messagebox
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
+
+# Antes que customtkinter, y antes que cualquier módulo que lo importe: sin
+# consola, el primer aviso de una librería mataba el ejecutable. Ver
+# `engine.console`.
+from engine import console
+console.guard_streams()
+
+# Pillow, que customtkinter importa enseguida, también trae módulos
+# compilados, y con el programa en una carpeta profunda Windows no los
+# carga. Desde una ruta corta, igual que el motor (`engine.shortpath`).
+try:
+    import PIL
+    from engine import __version__ as _VERSION, shortpath
+    shortpath.relocate(PIL.__path__, "PIL", _VERSION)
+except Exception:                                           # noqa: BLE001
+    pass
 
 import customtkinter as ctk
+
+
+def _rescue_widget_fonts() -> None:
+    """
+    Volver a cargar las fuentes de customtkinter desde una ruta corta.
+
+    customtkinter las carga al importarse desde su propia carpeta, y Windows
+    no carga una fuente cuya ruta pase los 260 caracteres. Sin la de formas,
+    customtkinter dibuja los bordes redondeados con círculos y lo avisa:
+    «The rendering quality will be bad!». Pasa en cuanto el programa se
+    descomprime un par de carpetas adentro, así que se copian las tres a la
+    carpeta temporal y se cargan desde ahí.
+    """
+    import sys
+    import shutil
+    import tempfile
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        from customtkinter.windows.widgets.core_rendering import DrawEngine
+        from customtkinter.windows.widgets.font import FontManager
+    except ImportError:
+        return
+    if DrawEngine.preferred_drawing_method != "circle_shapes":
+        return
+    source = os.path.join(os.path.dirname(ctk.__file__), "assets", "fonts")
+    target = os.path.join(tempfile.gettempdir(), "ChordWeaver-fonts")
+    loaded = {}
+    for name in ("CustomTkinter_shapes_font.otf",
+                 os.path.join("Roboto", "Roboto-Regular.ttf"),
+                 os.path.join("Roboto", "Roboto-Medium.ttf")):
+        short = os.path.join(target, os.path.basename(name))
+        try:
+            os.makedirs(target, exist_ok=True)
+            original = os.path.join(source, name)
+            # Por tamaño y no sólo por existencia: una copia cortada a medias
+            # ---dos programas abiertos a la vez--- o de otra versión de
+            # customtkinter dejaba los bordes con círculos para siempre.
+            if (not os.path.exists(short)
+                    or os.path.getsize(short) != os.path.getsize(original)):
+                shutil.copyfile(original, short)
+            loaded[name] = FontManager.load_font(short)
+        except OSError:
+            loaded[name] = False
+    if loaded.get("CustomTkinter_shapes_font.otf"):
+        DrawEngine.preferred_drawing_method = "font_shapes"
+
+
+_rescue_widget_fonts()
 
 import analyzer
 import chooser
 import cinematic
+import homeart
+import school
 import spectrum
 import updater
 from engine import __version__ as APP_VERSION
@@ -38,11 +106,18 @@ from engine.export import TimeSignature
 from engine import (achievements, ambience, audio, book, eggs, harmonize,
                     harmony, importer, passing, story, updates, visitors,
                     voicing)
+from engine import timbre as timbres
+from engine import school as curriculum
 from staff import (
+    CHROMATIC_COLOUR,
     DURATIONS,
+    GRAND_VOICE_COUNT,
+    GrandStaff,
+    VOICE_COLOURS,
     MelodyPiano,
     StaffEditor,
-    index_to_pitch as staff_pitch,
+    legend_swatch,
+    pitch_at as staff_pitch,
 )
 from engine.fitness import GENRE_PROFILES
 from engine.ga import GAConfig, resolve_worker_count
@@ -308,15 +383,52 @@ TIME_SIGNATURES = ["4/4", "3/4", "2/4", "6/8", "9/8", "12/8", "5/4", "2/2"]
 #: melodía dibujada y no pregunta nada de esto.
 MAX_BARS = 32
 
+#: Palabras de la interfaz que llegan a `tr()` desde una tabla o una
+#: variable y no llevan ninguna marca del castellano: sin esto el auditor no
+#: las ve, nadie les escribe la traducción y con la interfaz en inglés
+#: salían en castellano ---los nombres de tres de los modos, las figuras, el
+#: estilo coral---.
+UI_WORDS = (
+    N("Organizador"), N("Generador"), N("Armonizador"), N("Experimentador"),
+    N("Coral"), N("Historial · detalle"),
+    N("Redonda"), N("Blanca"), N("Negra c/punto"), N("Negra"),
+    N("Corchea c/punto"), N("Corchea"),
+    N("Redonda (4)"), N("Blanca (2)"), N("Negra c/punto (1½)"), N("Negra (1)"),
+    N("Corchea (1/2)"),
+    N("Silencio Redonda (4)"), N("Silencio Blanca (2)"),
+    N("Silencio Negra c/punto (1½)"), N("Silencio Negra (1)"),
+    N("Silencio Corchea (1/2)"),
+    # Los meses del historial (`ProductionRecord.MONTHS`).
+    N("ene"), N("feb"), N("mar"), N("abr"), N("may"), N("jun"),
+    N("jul"), N("ago"), N("sep"), N("oct"), N("nov"), N("dic"),
+)
+
+#: Los nombres de `theory.VOICE_CATALOG` que no llevan ninguna marca del
+#: castellano. `theory` no importa nada del proyecto y no puede marcarlos él;
+#: sin esto el auditor no los reconoce y su traducción figura como sobrante.
+VOICE_NAMES = (N("Bajo"), N("Mezzosoprano"))
+
+#: El fondo hundido de una ficha de acorde, entre el de la ventana y el de
+#: la tarjeta del compás.
+CHIP = "#202228"
+
+#: El ancho del medidor de tiempos de cada compás, en píxeles.
+METER_WIDTH = 92
+
+#: Cuántos compases por renglón en la pantalla de compases, y el ancho de
+#: la fila de puntos que dibuja sus tiempos (doce corcheas de un 12/8).
+BAR_TILES = 6
+BEAT_DOTS_WIDTH = 100
+
 GENRE_BLURBS = {
-    "classical": "El contrapunto de la práctica común: el de los corales y "
-                 "las invenciones. Es el más reglado de los tres, y el único "
-                 "que se puede apretar todavía más.",
+    "classical": "El contrapunto de los corales y las invenciones de Bach. Es "
+                 "el más estricto de los tres, y con el modo coral se "
+                 "endurece todavía más.",
     "gregorian": "Escritura modal, anterior a la tonalidad. Casi todo el "
                  "movimiento es por grado conjunto y el resultado suena a "
                  "canto llano más que a armonía.",
-    "jazz": "Armonía extendida. Lo que manda no es el bajo sino cómo se "
-            "encadenan la tercera y la séptima de un acorde al siguiente.",
+    "jazz": "Armonía extendida. Lo que importa es cómo pasan la tercera y la "
+            "séptima de cada acorde al siguiente.",
 }
 
 #: Lo que cada estilo hace distinto, en tres o cuatro líneas. Van como lista
@@ -326,7 +438,7 @@ GENRE_POINTS = {
     "classical": ("Sin quintas ni octavas paralelas",
                   "Premia el movimiento contrario",
                   "Castiga saltos de tritono y de séptima",
-                  "Trae adentro el modo coral, más severo"),
+                  "Incluye el modo coral, más estricto"),
     "gregorian": ("Evita el tritono, saltado y entre voces",
                   "Tolera las paralelas perfectas",
                   "Permite organum a la 4ta, la 5ta y la 8va"),
@@ -352,34 +464,16 @@ GENRE_THEMES = {
 #: Los tres modos de trabajo: clave interna, nombre, bajada, descripción,
 #: los pasos que va a pedir, color e icono. El nombre es lo único que el
 #: usuario ve; la clave es la que el resto del programa consulta y no cambia.
-#: Los pasos están porque la pregunta real de esta pantalla no es "¿cuál te
-#: gusta más?" sino "¿qué me va a pedir cada uno?", y eso antes sólo se
-#: descubría eligiendo y avanzando.
+#: La pregunta real de esta pantalla no es "¿cuál te gusta más?" sino "¿qué
+#: me va a pedir cada uno?", y la contesta el dibujo de cada tarjeta
+#: (`homeart.draw_flow`): lo que ponés vos, una flecha y lo que escribe el
+#: programa. Con un párrafo y tres pasos numerados había que leer las tres
+#: tarjetas para ver la diferencia. El icono ya no va en la tarjeta; lo usa
+#: el historial.
 MODE_CARDS = [
-    ("manual", "Organizador", "Vos ponés los acordes",
-     "Escribís la progresión en cifrado americano —o importás una "
-     "partitura— y el programa decide qué nota canta cada voz y en qué "
-     "octava. No toca ni los acordes ni su orden: reparte y registra.",
-     ("Escribís el cifrado, compás por compás",
-      "Podés fijar un acorde con el candado",
-      "El programa reparte las voces"),
-     "#5B8FD6", "◧"),
-    ("random", "Generador", "Pone todo el programa",
-     "Elegís tonalidad, modo y qué acordes prestados permitís. El programa "
-     "arma la progresión entera y después la escribe a varias voces. Puede "
-     "agregar notas de paso y gestos de época.",
-     ("Elegís tonalidad, modo y largo",
-      "Marcás qué préstamos y adornos permitís",
-      "El programa arma progresión y voces"),
-     "#B07FD6", "✧"),
-    ("harmonise", "Armonizador", "Vos ponés la melodía",
-     "Dibujás una línea en el pentagrama o la traés de una partitura, y el "
-     "programa busca los acordes que la sostienen. Elegís qué voz "
-     "escribiste y él arma las demás alrededor.",
-     ("Dibujás la melodía y su armadura",
-      "Decís qué voz escribiste",
-      "El programa elige acordes y voces"),
-     "#4FAE96", "♪"),
+    ("manual", "Organizador", "Vos ponés los acordes", "#5B8FD6", "◧"),
+    ("random", "Generador", "El programa pone los acordes", "#B07FD6", "✧"),
+    ("harmonise", "Armonizador", "Vos ponés la melodía", "#4FAE96", "♪"),
 ]
 
 #: Lo que todavía se está terminando ---modos y herramientas---. El aviso va
@@ -388,36 +482,36 @@ MODE_CARDS = [
 MODE_FLAGS = {"analysis": "BETA"}
 
 
-#: Las dos herramientas que no componen nada, con la misma forma que las
-#: tres de arriba pero más bajas.
-#:
-#: Más bajas a propósito: son tarjetas completas ---icono, bajada y lo que
-#: hay adentro--- y no resúmenes de una línea, porque cada una es un lugar
-#: entero del programa y merecía decirse igual que los modos. Pero la
-#: pantalla tiene que seguir entrando: debajo van los logros, el libro y el
-#: cartel del sendero, y ese último es el que se cae afuera primero. Con dos
-#: viñetas en vez de tres pasos y una bajada de dos renglones quedan en
-#: cuatro quintos del alto de las de arriba, que es lo que hace que todo
-#: entre.
+#: Las tres herramientas que no componen nada. Tarjetas del mismo tamaño que
+#: las de los modos, con su dibujo (`homeart.draw_tool`) y una oración:
+#: más chicas, se leían como algo menor, y cada una es un lugar entero del
+#: programa.
 #:
 #: Colores propios, distintos de los tres modos: no son una cuarta y una
 #: quinta manera de trabajar, y el riel de progreso no se tiñe con ellos.
 TOOL_CARDS = [
     ("lab", "Experimentador", "De qué está hecha una nota",
-     "Una nota no es una frecuencia sola: es la suya y además múltiplos "
-     "enteros de la suya. Acá se los apaga, se los amplifica y se los corre "
-     "de lugar, de a uno, para escuchar qué queda.",
-     ("El dibujo y el sonido leen la misma lista",
-      "Las recetas clásicas, para desarmarlas"),
+     "Encendé, apagá y mové los armónicos de una nota y escuchá cómo cambia.",
      "#C9954F", "≈"),
     ("analysis", "Analizador", "Vos traés la partitura",
-     "Escribís la música en un sistema de dos pentagramas o la traés de un "
-     "archivo, y el programa dice qué es cada acorde, qué hace en la "
-     "tonalidad y qué está pasando entre las voces.",
-     ("Cifrado, grado y área funcional",
-      "Paralelas, cruces y notas de adorno"),
+     "Traés una partitura y te dice qué acorde es cada uno, qué función "
+     "cumple y qué hacen las voces.",
      "#B5705F", "𝄞"),
+    # La escuelita es la tercera: no compone nada y usa al analizador de
+    # base ---el alumno escribe, el analizador corrige---, así que es una
+    # herramienta y no un modo. Rosa de tiza: ninguno de los otros cinco
+    # colores, y lejos del rojo con el que la corrección marca lo que está
+    # mal.
+    ("school", "Escuelita", "Aprender escribiendo",
+     "Cinco unidades con ejercicios de escritura que corrige el analizador.",
+     "#D3809F", "✎"),
 ]
+
+#: La fila de la pantalla inicial donde va el estante de logros y libro:
+#: debajo de los modos, el título de las herramientas y las herramientas.
+#: La siguiente es la del sendero, y la que sigue queda vacía y es la que se
+#: estira, así lo que sobra de alto cae abajo de todo.
+HOME_SHELF_ROW = 3
 
 
 # ---------------------------------------------------------------------------
@@ -889,6 +983,38 @@ def bind_deeply(widgets, sequence: str, callback) -> None:
         widget.bind(sequence, callback, add="+")
 
 
+def unbind_one(widget, sequence: str, funcid: Optional[str]) -> None:
+    """
+    Desatar un enlace hecho con ``add="+"`` y dejar los demás donde están.
+
+    Hasta Python 3.12, ``unbind(secuencia, funcid)`` borra **todos** los
+    enlaces de la secuencia y no sólo el pedido. Sobre la ventana eso se
+    llevaba puesto el `<Configure>` de customtkinter, que es con el que la
+    ventana sigue su propio tamaño. Se hace a mano lo que hace 3.13: sacar
+    del guion de Tcl sólo los renglones de este enlace y soltar su comando.
+    """
+    if not funcid:
+        return
+    try:
+        script = str(widget.tk.call("bind", widget._w, sequence))
+        mine = 'if {"[%s ' % funcid
+        kept: List[str] = []
+        for line in script.split("\n"):
+            if line.startswith(mine):
+                # Y el renglón en blanco que Tk pone antes al sumar con
+                # "+": si no, el guion queda distinto del que había.
+                if kept and not kept[-1]:
+                    kept.pop()
+                continue
+            kept.append(line)
+        keep = "\n".join(kept)
+        widget.tk.call("bind", widget._w, sequence,
+                       keep if keep.strip() else "")
+        widget.deletecommand(funcid)
+    except tk.TclError:
+        pass
+
+
 class Hoverable:
     """
     Mixin: saber si el mouse está sobre un panel entero, hijos incluidos.
@@ -954,7 +1080,10 @@ class Card(ctk.CTkFrame, Hoverable):
     def __init__(self, master, title: str, body: str, command, *,
                  accent: Optional[str] = None, icon: str = "◆",
                  tagline: str = "", subtitle: str = "", steps=(), points=(),
-                 wraplength: int = 300, flag: str = "", **kwargs):
+                 wraplength: int = 300, flag: str = "",
+                 picture: Optional[Callable[[tk.Canvas, int], None]] = None,
+                 picture_height: int = 0, badge: bool = True,
+                 serif: bool = False, **kwargs):
         # Resuelto acá y no en la firma: el valor por defecto de un argumento
         # se congela al definir la clase, y `ACCENT` cambia con el modo.
         accent = accent or ACCENT
@@ -966,19 +1095,31 @@ class Card(ctk.CTkFrame, Hoverable):
         self._hovered = False
 
         head = ctk.CTkFrame(self, fg_color="transparent")
-        head.pack(fill="x", padx=20, pady=(20, 10))
-        self.badge = ctk.CTkLabel(head, text=icon, width=44, height=44,
-                                  corner_radius=13,
-                                  fg_color=mix(SURFACE_LIGHT, accent, 0.16),
-                                  text_color=accent, font=scaled(FONT_ICON))
-        self.badge.pack(side="left")
+        # Las de dibujo, con menos aire arriba y abajo del título: son seis
+        # en la pantalla inicial, con el estante y el sendero debajo, y en la
+        # ventana más chica cada renglón cuenta.
+        head.pack(fill="x", padx=20,
+                  pady=(16, 6) if picture is not None else (20, 10))
+        # Las tarjetas con dibujo no llevan icono: el dibujo ya dice qué hay
+        # adentro, y el cuadradito con un signo era lo que hacía que todas
+        # las tarjetas del programa se vieran iguales.
+        self.badge = None
+        if badge:
+            self.badge = ctk.CTkLabel(head, text=icon, width=44, height=44,
+                                      corner_radius=13,
+                                      fg_color=mix(SURFACE_LIGHT, accent, 0.16),
+                                      text_color=accent, font=scaled(FONT_ICON))
+            self.badge.pack(side="left")
 
         names = ctk.CTkFrame(head, fg_color="transparent")
-        names.pack(side="left", padx=(13, 0), fill="x", expand=True)
+        names.pack(side="left", padx=(13 if badge else 0, 0), fill="x",
+                   expand=True)
         titles = ctk.CTkFrame(names, fg_color="transparent")
         titles.pack(anchor="w", fill="x")
         self.title_label = ctk.CTkLabel(
-            titles, text=tr(title), font=scaled(("Segoe UI Semibold", 19)),
+            titles, text=tr(title),
+            font=scaled(("Georgia", 20, "bold") if serif
+                        else ("Segoe UI Semibold", 19)),
             anchor="w", justify="left")
         self.title_label.pack(side="left")
         # El aviso de que algo todavía se está haciendo. Va pegado al
@@ -998,12 +1139,43 @@ class Card(ctk.CTkFrame, Hoverable):
                 anchor="w", justify="left")
             self.subtitle_label.pack(anchor="w", pady=(1, 0))
 
+        # El dibujo va en un lienzo de Tk y no en uno de customtkinter: no
+        # tiene fondo transparente, así que `_apply` le copia el de la
+        # tarjeta en cada cuadro de la animación.
+        #
+        # Se vuelve a dibujar con el ancho que le toca de verdad: el de
+        # `wraplength` es el que se calculó al armar la pantalla, y con la
+        # ventana agrandada o maximizada después el dibujo quedaba corto,
+        # con media tarjeta vacía a la derecha. Cambiar lo dibujado no
+        # cambia el tamaño del lienzo, así que redibujar en su `<Configure>`
+        # no se realimenta.
+        self.picture_canvas = None
+        if picture is not None:
+            canvas = tk.Canvas(self, width=wraplength + 20,
+                               height=picture_height, highlightthickness=0,
+                               bd=0, bg=SURFACE_LIGHT)
+            drawn = [wraplength + 20]
+            picture(canvas, drawn[0])
+
+            def redraw(event, canvas=canvas, drawn=drawn) -> None:
+                if abs(event.width - drawn[0]) < 2:
+                    return
+                drawn[0] = event.width
+                canvas.delete("all")
+                picture(canvas, event.width)
+
+            canvas.bind("<Configure>", redraw, add="+")
+            canvas.pack(fill="x", padx=20, pady=(2, 6 if body else 14))
+            self.picture_canvas = canvas
+
         self.body_label = ctk.CTkLabel(self, text=tr(body),
                                        font=scaled(("Segoe UI", 13)),
                                        text_color=TEXT_MUTED,
                                        wraplength=wraplength,
                                        justify="left", anchor="w")
-        self.body_label.pack(anchor="w", fill="x", padx=20, pady=(0, 12))
+        if body:
+            self.body_label.pack(anchor="w", fill="x", padx=20,
+                                 pady=(0, 14 if picture is not None else 12))
 
         # Los pasos van numerados y las características con viñeta: en un caso
         # el orden significa algo -- es lo que la pantalla va a ir pidiendo --
@@ -1079,8 +1251,12 @@ class Card(ctk.CTkFrame, Hoverable):
             if fill != self._fill_shown:
                 self.configure(fg_color=fill)
                 self._fill_shown = fill
+                if self.picture_canvas is not None:
+                    self.picture_canvas.configure(bg=fill)
             self.configure(border_color=border)
-            self.badge.configure(fg_color=badge_fill, text_color=badge_text)
+            if self.badge is not None:
+                self.badge.configure(fg_color=badge_fill,
+                                     text_color=badge_text)
         except tk.TclError:
             pass
 
@@ -1438,50 +1614,61 @@ class Toast(ctk.CTkFrame):
     trabajando. Se va solo, y un clic lo saca antes.
     """
 
-    WIDTH = 330
+    WIDTH = 300
     LIFETIME_MS = 6500
 
     def __init__(self, master, achievement: achievements.Achievement,
                  on_close, heading_text: str = "", **kwargs):
         gold = achievement.legendary
         super().__init__(master, fg_color=SURFACE_LIGHT, corner_radius=10,
-                         border_width=2,
+                         border_width=1,
                          border_color=GOLD if gold else ACCENT,
                          width=self.WIDTH, **kwargs)
         self.on_close = on_close
         self._closed = False
+        colour = GOLD if gold else ACCENT
 
-        heading = ctk.CTkLabel(
-            self, text=tr(heading_text) or (tr("¡Logro completado!") if not gold
-                                            else tr("¡Logro legendario!")),
-            font=scaled(("Segoe UI Semibold", 13)),
-            text_color=GOLD if gold else ACCENT, anchor="w")
-        heading.pack(anchor="w", padx=14, pady=(10, 2))
+        # Más bajo que antes: el rótulo y las estrellas comparten renglón y
+        # la descripción va en uno o dos. Cuatro avisos del alto viejo
+        # tapaban media pantalla durante seis segundos.
+        # El ancho lo fija un separador invisible y no el texto: si no, cada
+        # aviso medía lo que su descripción y la pila quedaba despareja.
+        tk.Frame(self, width=self.WIDTH - 4, height=1,
+                 bg=SURFACE_LIGHT).pack()
+        top = tk.Frame(self, bg=SURFACE_LIGHT)
+        top.pack(fill="x", padx=12, pady=(9, 0))
+        heading = tk.Label(
+            top, text=tr(heading_text) or (tr("¡Logro completado!") if not gold
+                                           else tr("¡Logro legendario!")),
+            font=scaled(("Segoe UI Semibold", 10)), fg=colour,
+            bg=SURFACE_LIGHT, anchor="w")
+        heading.pack(side="left")
         if gold:
-            start_shimmer(heading)
-
-        name = ctk.CTkLabel(self, text=tr(achievement.name),
-                            font=scaled(("Segoe UI Semibold", 15)),
-                            anchor="w", justify="left",
-                            wraplength=self.WIDTH - 34)
-        name.pack(anchor="w", padx=14)
+            start_shimmer(heading, option="fg")
         # La estrella sólo se anuncia cuando el aviso es de un logro de
         # verdad. El modo historia reusa este cartel para sus avisos, y ahí
         # un renglón que dijera "Legendario" mentiría.
         if achievement.key:
-            ctk.CTkLabel(self, text=tr(achievement.star_label), font=FONT_SMALL,
-                         text_color=GOLD if gold else TEXT_MUTED, anchor="w"
-                         ).pack(anchor="w", padx=14, pady=(2, 0))
+            tk.Label(top, text=tr(achievement.star_label),
+                     font=scaled(("Segoe UI", 10)), bg=SURFACE_LIGHT,
+                     fg=GOLD if gold or achievement.star else TEXT_MUTED
+                     ).pack(side="right")
+
+        tk.Label(self, text=tr(achievement.name),
+                 font=scaled(("Segoe UI Semibold", 13)), fg=TEXT_NORMAL,
+                 bg=SURFACE_LIGHT, anchor="w", justify="left",
+                 wraplength=self.WIDTH - 28).pack(anchor="w", padx=12,
+                                                  pady=(1, 0))
         # La descripción de un legendario va en itálica y no explica nada:
         # es parte del logro que no se sepa cómo se consiguió.
-        ctk.CTkLabel(self, text=tr(achievements.plain(achievement.description)),
-                     font=scaled(("Segoe UI", 11, "italic")) if gold
-                     else FONT_SMALL,
-                     text_color=TEXT_MUTED, wraplength=self.WIDTH - 34,
-                     justify="left", anchor="w"
-                     ).pack(anchor="w", padx=14, pady=(2, 12))
+        tk.Label(self, text=tr(achievements.plain(achievement.description)),
+                 font=scaled(("Segoe UI", 10, "italic")) if gold
+                 else scaled(("Segoe UI", 10)),
+                 fg=TEXT_MUTED, bg=SURFACE_LIGHT, wraplength=self.WIDTH - 28,
+                 justify="left", anchor="w").pack(anchor="w", padx=12,
+                                                  pady=(1, 10))
 
-        for widget in (self,) + tuple(self.winfo_children()):
+        for widget in descendants(self):
             widget.bind("<Button-1>", lambda _event: self.close())
         self.after(self.LIFETIME_MS, self.close)
 
@@ -1509,77 +1696,80 @@ class Toast(ctk.CTkFrame):
 #: sabido y ninguna frase usa una palabra que no se haya explicado antes.
 TUTORIAL_STEPS: Tuple[dict, ...] = (
     dict(screen=0, target=None,
-         title="Esto escribe música a varias voces",
+         title="Qué hace ChordWeaver",
          body="Una progresión de acordes dice qué notas suenan juntas, pero "
-              "no dice quién canta cuál. ChordWeaver se ocupa de eso: reparte "
-              "las notas de cada acorde entre las voces de manera que cada "
-              "una se mueva lo menos posible y que ninguna choque con las "
-              "otras.\n\nEste recorrido dura un minuto y te muestra dónde "
-              "está cada cosa. Podés saltearlo cuando quieras."),
+              "no qué voz canta cada una. ChordWeaver reparte las notas de "
+              "cada acorde entre las voces para que se muevan lo menos "
+              "posible y no choquen entre sí.\n\n"
+              "Este recorrido dura un minuto. Podés saltearlo cuando "
+              "quieras."),
     dict(screen=0, target=lambda app: app.mode_cards["manual"],
          title="Organizador",
-         body="Elegilo si ya tenés la progresión escrita: esos símbolos como "
-              "C, Am, F, G. El programa no los toca ni los reordena — sólo "
+         body="Para cuando ya tenés la progresión escrita en cifrado, como C, "
+              "Am, F, G. El programa no cambia los acordes ni su orden. Sólo "
               "decide qué nota canta cada voz."),
     dict(screen=0, target=lambda app: app.mode_cards["random"],
          title="Generador",
-         body="Elegilo si no tenés nada todavía. Vos ponés la tonalidad y "
-              "cuánto querés que se anime; el programa inventa la progresión "
-              "entera y después la escribe. Es por donde conviene empezar si "
-              "nunca escribiste armonía."),
+         body="Para cuando no tenés nada todavía. Elegís la tonalidad y "
+              "cuánto se puede arriesgar, y el programa inventa la progresión "
+              "y la escribe. Si nunca escribiste armonía, conviene empezar "
+              "por acá."),
     dict(screen=0, target=lambda app: app.mode_cards["harmonise"],
          title="Armonizador",
-         body="Elegilo si lo que tenés es una melodía. La dibujás en un "
-              "pentagrama, decís qué voz la canta, y el programa busca los "
-              "acordes que la sostienen y escribe las demás voces alrededor."),
+         body="Para cuando tenés una melodía. La escribís en el pentagrama, "
+              "decís qué voz la canta y el programa busca los acordes y "
+              "escribe las otras voces."),
+    dict(screen=0, target=lambda app: app.tool_row,
+         title="Herramientas",
+         body="Tres lugares que no componen nada. El experimentador desarma "
+              "una nota en sus armónicos, el analizador lee una partitura "
+              "que traés y la escuelita te enseña con ejercicios que corrige "
+              "el analizador."),
     dict(screen=0, target=lambda app: app.achievement_banner,
-         title="Los logros se ganan solos",
-         body="No hay que buscarlos: se desbloquean mientras trabajás, y cada "
-              "uno señala algo que acabás de hacer sin darte cuenta. Son "
-              "cuarenta y tres, repartidos en tres estrellas."),
+         title="Logros",
+         body="Se desbloquean solos mientras trabajás, muchas veces por algo "
+              "que hiciste sin darte cuenta. Valen de una a tres estrellas "
+              "según la dificultad."),
     dict(screen=0, target=lambda app: app.book_banner,
-         title="Y si algo no se entiende, está en el libro",
-         body="Qué es un acorde, qué es una voz, qué es una cadencia y por "
-              "qué unas suenan a final y otras no. Está escrito desde cero, "
-              "y se va llenando solo: cada cosa que descubrís usando el "
-              "programa queda anotada ahí."),
+         title="Libro de teoría",
+         body="Si algo no se entiende, ahí está explicado desde cero, desde "
+              "qué es un acorde hasta por qué una cadencia suena a final. Se "
+              "va completando a medida que usás el programa."),
     dict(screen=1, target=lambda app: app.genre_cards["classical"],
          title="Barroco",
-         body="El estilo no cambia los acordes: cambia cómo se pasa de uno "
-              "al siguiente.\n\nEl barroco es el más reglado de los tres — el "
-              "lenguaje de Bach. Prohíbe que dos voces se muevan en paralelo "
-              "a ciertas distancias y premia que vayan en direcciones "
-              "contrarias. Si estás empezando, es el que más se nota cuando "
-              "algo sale mal."),
+         body="El estilo decide cómo se pasa de un acorde al siguiente. Los "
+              "acordes no cambian.\n\n"
+              "El barroco es el lenguaje de Bach y el más estricto de los "
+              "tres. Prohíbe que dos voces se muevan en paralelo a ciertas "
+              "distancias y premia que vayan en direcciones contrarias. Si "
+              "estás empezando, es donde mejor se oye cuando algo sale mal."),
     dict(screen=1, target=lambda app: app.genre_cards["gregorian"],
          title="Gregoriano",
-         body="Es anterior a la armonía como la conocemos. Las voces se "
-              "mueven casi siempre a la nota de al lado, evitan el intervalo "
-              "más tenso que existe, y en cambio sí se permiten los "
-              "paralelos: el canto medieval se basaba justamente en eso."),
+         body="Es anterior a la armonía tal como la conocemos. Las voces se "
+              "mueven casi siempre a la nota vecina y evitan el tritono, el "
+              "intervalo más tenso. Las paralelas sí se permiten, porque el "
+              "canto medieval se basaba en ellas."),
     dict(screen=1, target=lambda app: app.genre_cards["jazz"],
          title="Jazz",
-         body="Acá lo que manda es cómo se encadenan dos notas concretas de "
-              "cada acorde, las que definen su color. El programa las conecta "
-              "por el camino más corto y deja pasar cosas que el barroco "
+         body="Lo que importa es cómo pasan al acorde siguiente las dos notas "
+              "que definen el color de cada acorde. El programa las conecta "
+              "por el camino más corto y permite cosas que el barroco "
               "prohíbe. Los acordes son más densos y suenan más modernos."),
     dict(screen=1, target=lambda app: app.rail,
-         title="Esta barra dice cuánto falta",
-         body="El recorrido son siete pantallas: modo, estilo, voces, "
-              "compases, los acordes, las reglas y el resultado. La barra se "
-              "va llenando a medida que avanzás, y toma el color del modo que "
-              "elegiste."),
+         title="La barra de progreso",
+         body="Son siete pantallas: modo, estilo, voces, compases, acordes, "
+              "reglas y resultado. La barra se llena a medida que avanzás y "
+              "toma el color del modo que elegiste."),
     dict(screen=1, target=lambda app: app.footer,
          title="Avanzar, volver y configurar",
-         body="Con Siguiente avanzás y con Atrás volvés sin perder nada de lo "
-              "que hayas cargado: podés ir y venir todas las veces que "
-              "quieras.\n\nEl engranaje guarda la configuración, el tamaño de "
-              "letra — y ahí mismo está el botón para volver a ver este "
-              "tutorial cuando lo necesites."),
+         body="«Siguiente» avanza y «Atrás» vuelve sin perder nada de lo que "
+              "cargaste.\n\n"
+              "En el engranaje están la configuración, el tamaño de letra y "
+              "el botón para volver a ver este tutorial."),
     dict(screen=0, target=None,
          title="Listo",
-         body="Eso es todo lo que hace falta para empezar. Te llevo a la "
-              "pantalla de logros: acabás de ganarte el primero."),
+         body="Eso es todo para empezar. Ahora vamos a los logros, porque "
+              "acabás de ganar el primero."),
 )
 
 
@@ -1606,207 +1796,196 @@ TUTORIAL_STEPS: Tuple[dict, ...] = (
 CHORDS_GUIDE: Tuple[dict, ...] = (
     dict(target=None,
          title="Acá se escribe la progresión",
-         body="Ésta es la pantalla del Organizador: vos ponés los acordes y "
-              "el programa no los toca ni los reordena. Lo único que decide "
-              "es qué nota de cada acorde canta cada voz y en qué "
-              "octava.\n\nTe muestro en medio minuto qué hace cada cosa. "
-              "Podés omitirlo."),
+         body="Vos ponés los acordes y el programa decide qué nota canta cada "
+              "voz y en qué octava. Los acordes y su orden no se tocan.\n\n"
+              "Te muestro qué hace cada cosa en medio minuto. Podés "
+              "omitirlo."),
     dict(target=lambda app: app.chord_rows[0]["entries"][0]["entry"],
          title="El cifrado va acá",
-         body="En cifrado americano, que es el que usan los músicos para "
-              "escribir acordes rápido: la letra es la nota de base —C es "
-              "do, D re, E mi, F fa, G sol, A la, B si— y lo que sigue dice "
-              "de qué tipo es.\n\nC es do mayor, Cm do menor, C7 con "
-              "séptima, Cmaj7 con séptima mayor, C/G do mayor pero con el "
-              "sol abajo de todo. Se valida mientras escribís: al costado "
-              "aparece qué notas tiene o qué está mal."),
+         body="Se escribe en cifrado americano. La letra es la nota de base "
+              "(C es do, D re, E mi, F fa, G sol, A la, B si) y lo que sigue "
+              "dice de qué tipo es el acorde.\n\n"
+              "C es do mayor, Cm do menor, C7 lleva séptima, Cmaj7 séptima "
+              "mayor y C/G es do mayor con el sol en el bajo. Mientras "
+              "escribís, debajo aparecen las notas del acorde o qué está "
+              "mal."),
     dict(target=lambda app: app.chord_rows[0]["entries"][0]["duration"],
          title="Cuánto dura cada uno",
-         body="Al lado de cada acorde va su duración. Y también los "
-              "silencios: cualquier duración con «Silencio» adelante deja "
-              "ese lugar sonando a nada, y el programa lo respeta —no lo "
-              "rellena ni lo saltea."),
+         body="Al lado de cada acorde va su duración. Las opciones que "
+              "empiezan con «Silencio» dejan ese lugar sin sonar, y el "
+              "programa lo respeta."),
     dict(target=lambda app: app.chord_rows[0]["fill_label"],
          title="El compás tiene que cerrar exacto",
-         body="Acá dice cuánto llevás puesto y cuánto entra. Si sobra o "
-              "falta, el programa no puede escribir la partitura: un compás "
-              "que no suma lo que dice su cifra lo rechaza cualquier editor "
-              "de música.\n\nCon «+ acorde» agregás otro a ese compás, y con "
-              "la ✕ sacás el que no querés."),
+         body="Acá ves cuánto llevás puesto y cuánto entra. Si sobra o falta, "
+              "no se puede escribir la partitura, porque ningún editor de "
+              "música acepta un compás que no suma lo que dice su cifra.\n\n"
+              "«+ acorde» agrega otro acorde al compás y la ✕ lo saca."),
     dict(target=lambda app: app.chord_rows[0]["entries"][0]["lock_button"],
          title="El candado fija las voces",
-         body="Normalmente el programa elige el reparto de cada acorde. Con "
-              "el candado le decís exactamente qué nota canta cada voz en "
-              "ése, y ya no lo cambia.\n\nSirve cuando querés un acorde "
-              "puntual sonando de una manera concreta. Los acordes de al "
-              "lado se siguen acomodando alrededor del que fijaste."),
+         body="Con el candado le decís qué nota canta cada voz en ese acorde, "
+              "y el programa ya no lo cambia. Los acordes vecinos se acomodan "
+              "alrededor del que fijaste."),
     dict(target=lambda app: app.chord_rows[0]["entries"][0]["piano_button"],
-         title="Y el piano, para lo que no tiene nombre",
-         body="El botón «piano» de cada casilla abre un teclado donde armás "
-              "el acorde nota por nota. Es la salida para los que el cifrado "
-              "no sabe nombrar: un acorde de cuartas, un cluster, cualquier "
-              "cosa que se te ocurra.\n\nY arriba a la izquierda, «Importar "
-              "partitura» lee un MusicXML y carga sus acordes con su ritmo."),
+         title="El piano, para acordes sin nombre",
+         body="El botón «piano» de cada casilla abre un teclado para armar el "
+              "acorde nota por nota. Sirve para los que el cifrado no puede "
+              "nombrar, como un acorde por cuartas o un cluster.\n\n"
+              "Arriba a la izquierda, «Importar partitura» carga los acordes "
+              "de un MusicXML con su ritmo."),
 )
 
 #: El Armonizador, en la pantalla del pentagrama y el piano.
 MELODY_GUIDE: Tuple[dict, ...] = (
     dict(target=None,
          title="Acá se dibuja la melodía",
-         body="Ésta es la pantalla del Armonizador, y funciona al revés que "
-              "las otras dos: no partís de acordes sino de una línea. Vos "
-              "escribís la melodía y el programa busca qué acordes pueden "
-              "sostenerla, sin tocarle ni una nota.\n\nTe muestro en medio "
-              "minuto qué hace cada cosa. Podés omitirlo."),
+         body="En el Armonizador se parte de una melodía y no de acordes. Vos "
+              "la escribís y el programa busca acordes que le queden, sin "
+              "cambiarle ninguna nota.\n\n"
+              "Te muestro qué hace cada cosa en medio minuto. Podés "
+              "omitirlo."),
     dict(target=lambda app: app.staff,
          title="Click en el pentagrama",
          body="Cada click pone una nota donde apuntaste. El pentagrama está "
-              "en clave de sol: la línea de abajo es mi, y cuanto más arriba "
-              "escribís, más agudo suena.\n\nLa nota que aparece sale de la "
-              "armadura: en una armadura con fa sostenido, un click en la "
-              "posición del fa escribe fa sostenido y no fa natural."),
+              "en clave de sol, así que la línea de abajo es mi y cuanto más "
+              "arriba, más agudo.\n\n"
+              "La nota respeta la armadura. Si la armadura tiene fa "
+              "sostenido, un click en el fa escribe fa sostenido."),
     dict(target=lambda app: app.melody_controls,
          title="Qué figura estás escribiendo",
-         body="Antes de hacer click, elegí acá cuánto dura la nota. Redonda "
-              "es la más larga y corchea la más corta; las que dicen «c/"
-              "punto» duran una vez y media.\n\n«Deshacer» borra la última "
-              "—también con Ctrl+Z— y «Borrar todo» empieza de cero. "
-              "«Escuchar» reproduce lo que llevás escrito, sin acordes "
-              "todavía."),
+         body="Antes de hacer click, elegí acá cuánto dura la nota. La "
+              "redonda es la más larga y la corchea la más corta. Las que "
+              "dicen «c/punto» duran una vez y media.\n\n"
+              "«Deshacer» (o Ctrl+Z) borra la última nota y «Borrar todo» "
+              "empieza de cero. «Escuchar» toca lo que llevás escrito, "
+              "todavía sin acordes."),
     dict(target=lambda app: app.melody_piano,
          title="O el piano, si el pentagrama te cuesta",
-         body="Hace exactamente lo mismo que el click: agrega una nota al "
-              "final de la línea, con la figura que tengas elegida arriba. "
-              "Sirve sobre todo para las notas alteradas y para las que caen "
-              "lejos de las cinco líneas."),
+         body="Hace lo mismo que el click y agrega una nota al final de la "
+              "línea, con la figura elegida arriba. Es más cómodo para las "
+              "notas alteradas y las que quedan lejos del pentagrama."),
     dict(target=lambda app: app.mark_button,
          title="Las notas doradas llevan acorde",
-         body="El programa pone los acordes en los tiempos fuertes, y dora "
-              "las notas que caen ahí. Lo que queda entre dos doradas se "
-              "escucha contra el acorde que ya está sonando: así es como "
-              "suena una melodía de verdad.\n\nSi querés un acorde en otra "
-              "nota, prendé «Marcar notas» y tocala —o hacele click derecho. "
-              "Y si hay uno que te sobra, el mismo gesto se lo saca."),
+         body="El programa pone los acordes en los tiempos fuertes y dora las "
+              "notas que caen ahí. Las notas que quedan en el medio suenan "
+              "sobre el acorde anterior.\n\n"
+              "Para poner un acorde en otra nota, prendé «Marcar notas» y "
+              "tocala, o hacele click derecho. Lo mismo sirve para sacar uno "
+              "que sobra."),
     dict(target=lambda app: app.key_menu,
-         title="Armadura, compás y qué voz sos",
-         body="La armadura decide en qué tonalidad estás y qué notas van "
-              "alteradas. El compás agrupa los tiempos, y es lo que decide "
-              "dónde caen los acordes.\n\n«Mi voz es» dice cuál de las voces "
-              "escribiste: normalmente la más aguda, pero si la melodía va "
-              "por abajo elegí el bajo y el programa escribe las otras por "
-              "encima."),
+         title="Armadura, compás y voz",
+         body="La armadura fija la tonalidad y qué notas van alteradas. El "
+              "compás agrupa los tiempos y decide dónde caen los acordes.\n\n"
+              "En «Mi voz es» elegís qué voz escribiste. Suele ser la más "
+              "aguda, pero si la melodía va abajo elegí el bajo y el programa "
+              "escribe las otras encima."),
 )
 
 #: El Generador, en la pantalla de la tonalidad: de dónde salen los acordes.
 HARMONY_GUIDE: Tuple[dict, ...] = (
     dict(target=None,
          title="Acá se elige el material",
-         body="Ésta es la pantalla del Generador, y es donde vos hacés tu "
-              "trabajo: no escribís acordes, decidís de qué caja los puede "
-              "sacar el programa.\n\nTodo viene con lo que suele usar el "
-              "estilo que elegiste, así que si tocás sólo la tonalidad ya "
-              "sale algo que suena. Te muestro qué hace cada cosa. Podés "
-              "omitirlo."),
+         body="En el Generador no escribís acordes. Elegís de dónde los puede "
+              "sacar el programa.\n\n"
+              "Todo arranca con lo que suele usar el estilo elegido, así que "
+              "cambiando sólo la tonalidad ya sale algo que suena bien. Te "
+              "muestro qué hace cada cosa. Podés omitirlo."),
     dict(target=lambda app: app.tonic_menu.master,
          title="Tonalidad y modo",
-         body="La tonalidad es la nota que manda: la que suena a casa, la "
-              "que el oído espera al final. El modo dice qué escala se arma "
-              "sobre ella, y de la escala salen los siete acordes que el "
-              "programa tiene permitido usar.\n\nJónico es el mayor de toda "
-              "la vida y eólico el menor. Los otros cinco cambian una o dos "
-              "notas de la escala y suenan a otra cosa: el dórico a folk, el "
-              "frigio a español, el lidio a banda de sonido."),
+         body="La tónica es la nota que suena a casa, la que el oído espera "
+              "al final. El modo dice qué escala se arma sobre ella, y de esa "
+              "escala salen los siete acordes que puede usar el programa.\n\n"
+              "Jónico es el mayor de siempre y eólico el menor. Los otros "
+              "cinco cambian una o dos notas de la escala. El dórico suena a "
+              "folk, el frigio a música española y el lidio a banda de "
+              "sonido."),
     dict(target=lambda app: app.start_roman_entry.master,
          title="Con qué empieza y con qué termina",
-         body="En números romanos: I es el acorde de la tónica, V el quinto "
-              "grado, vi el sexto. Las minúsculas son los acordes menores de "
-              "la escala.\n\nEmpezar y terminar en I es lo que hace que una "
-              "pieza suene cerrada. Terminar en V la deja colgada a "
-              "propósito, como una pregunta. «Obligatorio» no se negocia; "
-              "«preferirlo» lo pesa contra todo lo demás, y «libre» deja "
-              "elegir al programa."),
+         body="Se escriben en números romanos. I es el acorde de la tónica, V "
+              "el del quinto grado y vi el del sexto. Las minúsculas son "
+              "acordes menores.\n\n"
+              "Empezar y terminar en I hace que la pieza suene cerrada. "
+              "Terminar en V la deja abierta, como una pregunta. "
+              "«Obligatorio» se cumple siempre, «Preferido» se pesa contra "
+              "todo lo demás y «Libre» deja elegir al programa."),
     dict(target=lambda app: app.passing_density,
          title="Las notas de paso",
-         body="Cuando una voz salta una tercera, queda un escalón vacío en "
-              "el medio. Una nota de paso lo rellena: en vez de saltar de do "
-              "a mi, la voz camina do-re-mi.\n\nElegí qué voces pueden "
-              "usarlas y cuántas querés. Se agregan **después** de que el "
-              "programa resolvió el reparto, sobre la solución ya elegida: "
-              "son un adorno encima de algo que ya está bien escrito."),
+         body="Cuando una voz salta una tercera, queda una nota libre en el "
+              "medio. La nota de paso la ocupa, y en vez de saltar de do a mi "
+              "la voz hace do-re-mi.\n\n"
+              "Elegí qué voces pueden usarlas y cuántas. Se agregan "
+              "**después** de repartir las voces, sobre la solución ya "
+              "elegida."),
     dict(target=lambda app: app.borrowed_panel,
          title="Los acordes prestados",
-         body="Los siete grados de la escala son el material de base. Un "
-              "intercambio modal es traer un acorde del modo paralelo —el "
-              "menor de la misma tónica, o al revés— sin cambiar de "
-              "tonalidad.\n\nEs de donde sale casi todo lo que suena a "
-              "moderno: un cuarto menor en medio de una pieza mayor, un "
-              "séptimo bemol antes del cierre. El deslizador de abajo dice "
-              "con cuánta ganas los busca."),
+         body="Los siete grados de la escala son el material básico. Un "
+              "intercambio modal trae un acorde del modo paralelo (el menor "
+              "sobre la misma tónica, o al revés) sin cambiar de tonalidad.\n"
+              "\nDe ahí salen muchos colores modernos, como un cuarto grado "
+              "menor en una pieza mayor o un séptimo bemol antes del final. "
+              "El deslizador de abajo regula cuánto los usa."),
     dict(target=lambda app: app.modulation_block,
-         title="Y modular es cambiarse de casa",
-         body="Modular es irse a otra tonalidad en el medio de la pieza y "
-              "volver antes del final. No es un préstamo: la pieza pasa a "
-              "girar de verdad alrededor de otra nota, y después regresa.\n\n"
-              "Hace falta lugar para irse y volver, así que con menos de "
-              "ocho compases queda apagado y dice por qué. El deslizador de "
-              "abajo dice cuánto se aleja."),
+         title="Modulaciones",
+         body="Modular es pasar a otra tonalidad en el medio de la pieza y "
+              "volver antes del final. A diferencia de un préstamo, por un "
+              "rato la pieza gira alrededor de otra nota.\n\n"
+              "Para ir y volver hace falta espacio, así que con menos de ocho "
+              "compases queda desactivado. El deslizador de abajo regula "
+              "cuánto se aleja."),
     dict(target=lambda app: app.harmony_slider,
-         title="Y cuánto se le hace caso al estilo",
-         body="La progresión se arma pesando dos cosas: lo que el estilo "
-              "pide y lo que le conviene al movimiento de las voces. Este "
-              "dial dice cuánto manda el estilo.\n\nHacia «estricto» sale "
-              "una progresión más de manual, con las funciones en su lugar. "
-              "Hacia «flexible» el programa se permite giros que el estilo "
-              "no usaría, y aparecen cosas más raras."),
+         title="Cuánto manda el estilo",
+         body="La progresión se arma pesando lo que pide el estilo y lo que "
+              "le conviene al movimiento de las voces. Este deslizador decide "
+              "cuánto pesa el estilo.\n\n"
+              "Hacia «estricto» sale una progresión de manual, con cada "
+              "función en su lugar. Hacia «flexible» aparecen giros que el "
+              "estilo no usaría."),
 )
 
 #: El Generador, en la pantalla de reglas: la última antes de buscar.
 PARAMETER_GUIDE: Tuple[dict, ...] = (
     dict(target=None,
-         title="Y acá se decide cómo suena",
-         body="Ésta es la última pantalla antes de que el programa se ponga "
-              "a buscar. Los acordes ya están; lo que se elige acá es con "
-              "qué criterio se reparten entre las voces.\n\nTodo viene con "
-              "los valores que deja el estilo que elegiste, así que si no "
+         title="La última pantalla antes de buscar",
+         body="Los acordes ya están. Acá elegís con qué criterio se reparten "
+              "entre las voces.\n\n"
+              "Todo arranca con los valores del estilo elegido, así que si no "
               "tocás nada igual sale bien. Te muestro qué hace cada cosa."),
     dict(target=lambda app: app.rules_panel,
-         title="Las de la izquierda son duras",
-         body="Prendida, una regla de éstas no se negocia: cualquier reparto "
-              "que la rompa se descarta entero, por bueno que sea en todo lo "
-              "demás. Por eso una regla prendida nunca aparece violada en el "
-              "resultado.\n\nPasá el mouse por cada una para ver qué "
-              "significa."),
+         title="Reglas duras",
+         body="Las reglas de la izquierda son duras. Si una está prendida, se "
+              "descarta cualquier reparto que la rompa, aunque sea bueno en "
+              "todo lo demás. Por eso una regla prendida nunca aparece rota "
+              "en el resultado.\n\n"
+              "Pasá el mouse por cada una para ver qué significa."),
     dict(target=lambda app: app.switch_widgets["forbid_parallel_fifths"],
          title="Por ejemplo, las quintas paralelas",
-         body="Dos voces que van a distancia de quinta y se mueven juntas en "
-              "la misma dirección manteniendo esa distancia. Es la "
-              "prohibición más famosa del contrapunto, y el motivo es "
-              "concreto: cuando pasa, las dos líneas dejan de escucharse "
-              "como dos y se funden en una sola engrosada.\n\nApagarla no "
-              "rompe nada. Hay estilos enteros construidos sobre eso —el "
-              "gregoriano, sin ir más lejos."),
+         body="Son dos voces a distancia de quinta que se mueven juntas en la "
+              "misma dirección y mantienen esa distancia. Es la prohibición "
+              "más famosa del contrapunto, porque las dos líneas dejan de "
+              "oírse como dos y se funden en una.\n\n"
+              "Apagarla no rompe nada. Hay estilos enteros que se basan en "
+              "eso, como el gregoriano."),
     dict(target=lambda app: app.balance_slider,
-         title="Y esto es lo único que se negocia",
-         body="Todo lo que no es una regla dura se pesa entre sí, y este "
-              "dial decide el balance.\n\nHacia la izquierda importa que las "
-              "voces se muevan lo menos posible: sale suave y previsible. "
-              "Hacia la derecha importa el estilo —espaciado, movimiento "
-              "contrario, tesitura— y el programa acepta mover más las voces "
-              "a cambio de escribir más idiomático. En el medio pesan igual."),
+         title="Balance",
+         body="Todo lo que no es una regla dura se compara entre sí, y este "
+              "deslizador decide el balance.\n\n"
+              "Hacia la izquierda pesa que las voces se muevan lo menos "
+              "posible, y el resultado sale suave y previsible. Hacia la "
+              "derecha pesa el estilo (espaciado, movimiento contrario, "
+              "tesitura), y las voces se mueven más a cambio de sonar más "
+              "idiomáticas. En el medio pesan igual."),
     dict(target=lambda app: app.cadence_menu,
          title="Cuánto cierra el final",
-         body="Un acorde de reposo suena cerrado cuando los intervalos "
-              "contra el bajo son consonantes. Acá elegís cuánto le importa "
-              "eso al programa: desde ignorarlo hasta exigirlo, que lo "
-              "convierte en una regla dura más.\n\nSi las piezas te terminan "
-              "sonando abiertas, subilo."),
+         body="Un acorde de reposo suena cerrado cuando sus intervalos con el "
+              "bajo son consonantes. Acá elegís cuánto le importa eso al "
+              "programa, desde ignorarlo hasta exigirlo como regla dura.\n\n"
+              "Si los finales te suenan abiertos, subilo."),
     dict(target=lambda app: app.next_button,
-         title="Y con eso ya se puede buscar",
-         body="Al tocar «Generar» arrancan doscientas soluciones al azar que "
-              "se van cruzando y mejorando trescientas veces. Tarda unos "
-              "segundos y se puede cancelar.\n\nAl final te muestra las tres "
-              "mejores: como el azar interviene, dos corridas con la misma "
-              "entrada dan resultados parecidos pero no idénticos."),
+         title="Generar",
+         body="Al apretar «Generar» arrancan doscientas soluciones al azar "
+              "que se cruzan y mejoran durante trescientas generaciones. "
+              "Tarda unos segundos y se puede cancelar.\n\n"
+              "Al final ves las mejores. Como interviene el azar, dos "
+              "corridas iguales dan resultados parecidos pero no idénticos."),
 )
 
 #: Qué guía va en cada lugar. La clave es lo que se anota en las preferencias
@@ -1841,6 +2020,10 @@ class Tutorial:
     GAP = 18
     #: Ancho del cartel.
     CARD = 430
+    #: Cuánto se espera a que la ventana deje de cambiar de tamaño antes de
+    #: volver a dibujar el paso. Arrastrando el borde llegan decenas de
+    #: avisos por segundo y cada dibujo rearma el cartel entero.
+    RESIZE_MS = 120
 
     def __init__(self, app: "ChordWeaverApp", steps=TUTORIAL_STEPS,
                  on_finish=None, last_label: str = "Ir a los logros"):
@@ -1867,7 +2050,13 @@ class Tutorial:
         self.parts: List[tk.Widget] = []
         self.card: Optional[ctk.CTkFrame] = None
         self.veil = mix(SURFACE, VEIL, 0.5)
-        self._bound = False
+        #: Los enlaces puestos en la ventana, para desatar justo ésos.
+        self._escape_id: Optional[str] = None
+        self._resize_id: Optional[str] = None
+        #: El redibujado pendiente por un cambio de tamaño, y el tamaño
+        #: contra el que se dibujó el paso que está a la vista.
+        self._resize_job: Optional[str] = None
+        self._size: Tuple[int, int] = (0, 0)
         self._done = False
 
     # -- ciclo de vida ------------------------------------------------------
@@ -1879,24 +2068,48 @@ class Tutorial:
             app.index = 0
             app._render()
         self.index = 0
-        if not self._bound:
-            app.bind("<Escape>", lambda _e: self.skip(), add="+")
-            self._bound = True
+        if self._escape_id is None:
+            self._escape_id = app.bind("<Escape>", lambda _e: self.skip(),
+                                       add="+")
+            self._resize_id = app.bind("<Configure>", self._on_configure,
+                                       add="+")
         app.after(80, self._show)
 
     def skip(self) -> None:
         self._finish()
 
-    def _finish(self) -> None:
-        # Una sola vez. El Escape sigue atado a la ventana después de que el
-        # recorrido termina --- se ata con ``add="+"`` y no se puede
-        # desatar sin desatar los demás ---, así que apretarlo un rato
-        # después volvía a correr todo esto: el recorrido de bienvenida
-        # saltaba de nuevo a los logros desde donde estuvieras.
-        if self._done:
-            return
+    def close(self) -> None:
+        """
+        Sacar el recorrido de la ventana: el dibujo, los enlaces y el
+        redibujado pendiente. Vale llamarla de más.
+
+        `_clear` sólo borra el dibujo, y se usa entre un paso y otro. Esto
+        es para cuando el recorrido se va del todo: si quedaba atado, cada
+        guía que se abría dejaba un Escape y un `<Configure>` más colgados
+        de la ventana.
+        """
+        # Cerrado es para siempre: un paso que todavía esperaba su `after`
+        # ya no se dibuja. Si no, una guía cerrada por un rearmado en sus
+        # primeras décimas tapaba la pantalla nueva con sus velos.
         self._done = True
         self._clear()
+        if self._resize_job is not None:
+            try:
+                self.app.after_cancel(self._resize_job)
+            except tk.TclError:
+                pass
+            self._resize_job = None
+        unbind_one(self.app, "<Configure>", self._resize_id)
+        unbind_one(self.app, "<Escape>", self._escape_id)
+        self._resize_id = self._escape_id = None
+
+    def _finish(self) -> None:
+        # Una sola vez, y nunca después de `close`: el recorrido de
+        # bienvenida que terminara dos veces entregaría el logro y saltaría
+        # a los logros dos veces.
+        if self._done:
+            return
+        self.close()
         if self.on_finish is not None:
             self.on_finish()
             return
@@ -1921,6 +2134,53 @@ class Tutorial:
                 pass
             self.card = None
 
+    # -- el tamaño de la ventana ---------------------------------------------
+    #
+    # Los velos, el marco y el cartel se colocan en píxeles contra el tamaño
+    # que tenía la ventana al dibujar el paso. Maximizada después, la
+    # pantalla de abajo se reacomodaba y el recorrido se quedaba donde
+    # estaba: un velo del tamaño viejo, y un hueco señalando el lugar donde
+    # ya no estaba el widget.
+
+    def _on_configure(self, event) -> None:
+        # Atado a la ventana, `<Configure>` llega también por cada widget de
+        # adentro ---todos llevan la ventana entre sus etiquetas---, los
+        # velos de este mismo recorrido incluidos. Sólo cuenta el de la
+        # ventana, y sólo si cambió el tamaño: moverla también lo manda.
+        if event.widget is not self.app:
+            return
+        if (event.width, event.height) == self._size:
+            return
+        # Se agrupan: cada aviso nuevo corre la espera, y se dibuja una vez
+        # cuando la ventana se queda quieta.
+        try:
+            if self._resize_job is not None:
+                self.app.after_cancel(self._resize_job)
+            self._resize_job = self.app.after(self.RESIZE_MS,
+                                              self._follow_resize)
+        except tk.TclError:
+            self._resize_job = None
+
+    def _follow_resize(self) -> None:
+        self._resize_job = None
+        # Sin cartel no hay nada a la vista: o el recorrido se cerró, o un
+        # paso está esperando que la pantalla nueva se acomode y se va a
+        # dibujar solo, ya con el tamaño nuevo.
+        if self._done or self.card is None:
+            return
+        app = self.app
+        if getattr(app, "_rendering", False):
+            # A mitad de un rearmado. Dibujando ahora, `_render` subiría la
+            # pantalla nueva por encima de los velos al terminar.
+            self._resize_job = app.after(self.RESIZE_MS, self._follow_resize)
+            return
+        try:
+            size = (app.winfo_width(), app.winfo_height())
+        except tk.TclError:
+            return
+        if size != self._size:
+            self._draw()
+
     # -- pasos --------------------------------------------------------------
 
     def _advance(self) -> None:
@@ -1931,6 +2191,8 @@ class Tutorial:
         self._show()
 
     def _show(self) -> None:
+        if self._done:
+            return
         app = self.app
         step = self.steps[self.index]
         if self.navigates and app.index != step["screen"]:
@@ -2007,6 +2269,8 @@ class Tutorial:
 
     def _draw(self) -> None:
         app = self.app
+        if self._done:
+            return
         try:
             if not app.winfo_exists():
                 return
@@ -2016,6 +2280,7 @@ class Tutorial:
         step = self.steps[self.index]
         raw = self._target_box(step)
         width, height = app.winfo_width(), app.winfo_height()
+        self._size = (width, height)
         self.veil = mix(SURFACE, VEIL, 0.5)
 
         # El hueco se calcula UNA vez, con su margen incluido, y de acá en
@@ -2150,6 +2415,11 @@ class ChordWeaverApp(ctk.CTk):
         self.geometry("1440x1010")
         self.minsize(1180, 880)
         self.configure(fg_color=SURFACE)
+        # El inicio se arma la primera vez antes de que la ventana tenga su
+        # tamaño, y sus dibujos dependen de él (`_home_signature`). Cuando
+        # la ventana cambia de tamaño estando ahí, se rearma si hace falta.
+        self._refit_id = None
+        self.bind("<Configure>", self._window_resized, add="+")
 
         # --- state ---------------------------------------------------------
         self.genre_key: str = "classical"
@@ -2200,6 +2470,13 @@ class ChordWeaverApp(ctk.CTk):
         #: armar `ChordWeaverApp` a mano ---un script, el arnés de pruebas---
         #: hable el mismo idioma que el programa abierto normalmente.
         i18n.set_language(str(self.settings.get("language", "") or i18n.DEFAULT))
+        # El timbre de las reproducciones, antes de que nada pueda sonar.
+        # Si el WAV elegido ya no está, suena el de siempre y el panel de
+        # configuración cuenta por qué; abrir el programa no es momento de
+        # un cartel de error por algo que no se pidió.
+        self._timbre_problem = self._apply_timbre(
+            str(self.settings.get("timbre", "") or timbres.DEFAULT),
+            str(self.settings.get("timbre_path", "") or ""))
         # Los logros viven al lado del programa, igual que el historial.
         self.achievements = achievements.Tracker.load()
         # Y los huevos de pascua en su propio archivo, por la misma razón por
@@ -2208,10 +2485,18 @@ class ChordWeaverApp(ctk.CTk):
         # Las visitas, en el suyo: cuántas partituras van de cada género,
         # quién ya se apareció y si la visión ya ocurrió.
         self.visits = visitors.Ledger.load()
+        # La escuelita, en el suyo: qué ejercicios están aprobados y si la
+        # graduación ya se vio. Lo que se está escribiendo en cada ejercicio
+        # va aparte y sólo en memoria: tiene que sobrevivir a ir al libro y
+        # volver, no a cerrar el programa.
+        self.school = curriculum.Progress.load()
+        self.school_memory: dict = {}
         #: Si la última corrida del generador salió con todo al máximo. Se
         #: decide al dejar la pantalla de armonía y se cobra al terminar.
         self._blast_armed = False
         self.toasts: List[Toast] = []
+        #: Los avisos que esperan lugar. Ver `MAX_TOASTS`.
+        self._toast_backlog: List[Tuple[object, str]] = []
         #: El recorrido guiado, mientras esté corriendo.
         self.tutorial: Optional["Tutorial"] = None
         #: La guía de la pantalla en curso, mientras esté abierta. Es el
@@ -2316,7 +2601,7 @@ class ChordWeaverApp(ctk.CTk):
     def _start_tutorial(self) -> None:
         """Arrancar el recorrido guiado, o reiniciarlo si ya estaba abierto."""
         if getattr(self, "tutorial", None) is not None:
-            self.tutorial._clear()
+            self.tutorial.close()
         self._close_guide()
         # Reiniciar el recorrido reinicia **todo** lo que se explica: las
         # guías de pantalla son la otra mitad de lo mismo, y quien viene a
@@ -2392,7 +2677,7 @@ class ChordWeaverApp(ctk.CTk):
         """Cerrar la guía abierta, si hay una. Vale llamarla de más."""
         guide, self.guide = getattr(self, "guide", None), None
         if guide is not None:
-            guide._clear()
+            guide.close()
 
     def _rescale_fonts(self) -> None:
         """Recompute every font constant from the current scale."""
@@ -2450,66 +2735,245 @@ class ChordWeaverApp(ctk.CTk):
     # -- screen 0: mode -----------------------------------------------------
 
     def _screen_mode(self) -> None:
-        # La bajada de esta pantalla va corta: las tres tarjetas ya explican
-        # cada modo con su propio texto, y lo que se gana en alto es lo que
-        # necesita el cartel del sendero para entrar sin empujar nada afuera.
-        self._heading(
-            tr("¿Quién elige los acordes?"),
-            tr("Las tres terminan en lo mismo: una progresión escrita a varias "
-               "voces. Cambia cuánto ponés vos."))
+        if self._reusing_home:
+            self._refresh_home()
+            return
+        # Sin bajada: el dibujo de cada tarjeta ya dice qué ponés vos y qué
+        # escribe el programa, y ese renglón es el que necesita el cartel
+        # del sendero para entrar abajo en la ventana más chica.
+        self._heading(tr("Elegí un modo"), "")
 
         grid = ctk.CTkFrame(self.body, fg_color="transparent")
-        grid.pack(fill="both", expand=True, pady=(0, 6))
+        grid.pack(fill="both", expand=True, pady=(10, 6))
         grid.grid_columnconfigure((0, 1, 2), weight=1, uniform="mode")
         # La fila de las tarjetas mide lo que mide la más alta y las otras dos
         # se estiran hasta ahí: quedan parejas sin dejar el hueco enorme que
         # dejaba estirar la fila hasta el pie de la ventana. El aire sobrante
         # cae en la fila de abajo, así el contenido queda arrimado arriba
         # como en todas las demás pantallas.
-        grid.grid_rowconfigure(3, weight=1)
+        grid.grid_rowconfigure(HOME_SHELF_ROW + 2, weight=1)
 
+        art = self._home_art_colours()
+        grow = self._home_grow()
         self.mode_cards: Dict[str, Card] = {}
+        wrap = self._card_wrap()
         for column, entry in enumerate(MODE_CARDS):
-            key, name, subtitle, body, steps, accent, icon = entry
-            card = Card(grid, name, body,
+            key, name, subtitle, accent, _icon = entry
+            card = Card(grid, name, "",
                         command=lambda k=key: self._select_mode(k),
-                        accent=accent, icon=icon, subtitle=subtitle,
-                        steps=steps, flag=MODE_FLAGS.get(key, ""))
+                        accent=accent, subtitle=subtitle,
+                        flag=MODE_FLAGS.get(key, ""), wraplength=wrap,
+                        badge=False, serif=True,
+                        picture=lambda canvas, width, k=key, a=accent:
+                        homeart.draw_flow(canvas, k, a, art, width),
+                        picture_height=int(homeart.FLOW_HEIGHT * grow))
             card.grid(row=0, column=column, sticky="nsew", padx=8, pady=(4, 10))
             self.mode_cards[key] = card
         # Sin animar: la pantalla recién se está armando y las tres
         # tarjetas arrancan y terminan en el mismo estado.
         self._select_mode(self.mode, animated=False)
 
-        # Debajo de las tres van dos filas de a dos, cada una tan ancha como
-        # las tres juntas. Arriba, las dos herramientas que no componen nada
-        # --- el experimentador desarma una nota, el analizador desarma una
-        # partitura ---; abajo, los dos lugares donde se mira lo que uno ya
-        # hizo o lo que hay para leer.
+        # Debajo, las tres herramientas que no componen nada ---el
+        # experimentador desarma una nota, el analizador desarma una
+        # partitura, la escuelita enseña a escribir una--- con su título,
+        # del mismo tamaño que los modos y en las mismas tres columnas. Y
+        # abajo de todo, los dos lugares donde se mira lo que uno ya hizo o
+        # lo que hay para leer, mitad y mitad.
         #
-        # Cada par va en su propia grilla de dos columnas y no en las tres de
-        # las tarjetas: tres no se parten en dos, y con `columnspan` una de
-        # las dos quedaba al doble de la otra.
+        # Cada fila va en su propia grilla y no en la de las tarjetas: el
+        # estante es de dos, y tres no se parten en dos --- con `columnspan`
+        # una de las dos quedaba al doble de la otra.
+        ctk.CTkLabel(grid, text=tr("Herramientas"),
+                     font=scaled(("Georgia", 16, "bold")),
+                     text_color=TEXT_MUTED).grid(row=1, column=0, sticky="w",
+                                                padx=10, pady=(0, 2))
         tools = ctk.CTkFrame(grid, fg_color="transparent")
-        tools.grid(row=1, column=0, columnspan=3, sticky="ew", padx=0,
-                   pady=(2, 6))
-        tools.grid_columnconfigure((0, 1), weight=1, uniform="herramienta")
+        tools.grid(row=2, column=0, columnspan=3, sticky="ew", padx=0,
+                   pady=(0, 8))
+        tools.grid_columnconfigure(tuple(range(len(TOOL_CARDS))), weight=1,
+                                   uniform="herramienta")
+        tools.grid_rowconfigure(0, weight=1)
+        self.tool_row = tools
         self.tool_cards: Dict[str, Card] = {}
         for column, entry in enumerate(TOOL_CARDS):
-            key, name, subtitle, body, points, accent, icon = entry
+            key, name, subtitle, body, accent, _icon = entry
             card = Card(tools, name, body,
                         command=lambda k=key: self._open_detour(k,
                                                                 replace=True),
-                        accent=accent, icon=icon, subtitle=subtitle,
-                        points=points, wraplength=560,
-                        flag=MODE_FLAGS.get(key, ""))
-            card.grid(row=0, column=column, sticky="nsew",
-                      padx=(8, 5) if column == 0 else (5, 8))
+                        accent=accent, subtitle=subtitle,
+                        flag=MODE_FLAGS.get(key, ""), wraplength=wrap,
+                        badge=False, serif=True,
+                        picture=lambda canvas, width, k=key, a=accent:
+                        homeart.draw_tool(canvas, k, a, art, width),
+                        picture_height=int(homeart.TOOL_HEIGHT * grow))
+            # El mismo margen que los modos, así cada herramienta queda
+            # exactamente debajo de un modo y la pantalla se lee en columnas.
+            card.grid(row=0, column=column, sticky="nsew", padx=8)
             self.tool_cards[key] = card
 
+        self._home_grid = grid
+        self._home_lower = self._build_home_lower(grid)
+        self._cascade(self.mode_cards.values())
+        self._cascade(self.tool_cards.values(), step=40)
+        self._home_body = self.body
+        self._home_key = self._home_signature()
+
+    def _home_signature(self) -> Tuple:
+        """Lo que, si cambia, obliga a rearmar la pantalla inicial entera."""
+        return (i18n.language(), FONT_SCALE, len(MODE_CARDS), len(TOOL_CARDS),
+                self._card_wrap(), self._home_grow())
+
+    def _card_wrap(self) -> int:
+        """
+        Dónde cortan los renglones de las tarjetas del inicio, en píxeles.
+
+        Según el ancho de la ventana, de a escalones de cuarenta para que
+        agrandarla un poco no obligue a rearmar la pantalla. Con el corte
+        fijo en 300, en una ventana ancha el texto ocupaba la mitad
+        izquierda de cada tarjeta y la otra mitad quedaba vacía.
+        """
+        try:
+            width = self.winfo_width()
+        except tk.TclError:
+            width = 1
+        if width < 600:
+            return 300
+        return max(300, min(460, ((width - 104) // 3 - 64) // 40 * 40))
+
+    def bring_to_front(self) -> None:
+        """Dejar la ventana a la vista: sin minimizar, adelante y con foco."""
+        try:
+            if self.state() in ("iconic", "withdrawn"):
+                self.deiconify()
+            self.lift()
+            # `-topmost` un instante: es lo único que Windows deja hacer para
+            # traer adelante una ventana cuando el foco lo tiene otro
+            # programa. Se saca enseguida para no quedar encima de todo.
+            self.attributes("-topmost", True)
+            self.after(250, lambda: self.attributes("-topmost", False))
+            self.focus_force()
+        except tk.TclError:
+            pass
+
+    def _window_resized(self, event) -> None:
+        """La ventana cambió de tamaño: mirar, con espera, si el inicio sirve."""
+        if event.widget is not self:
+            return
+        if self._refit_id is not None:
+            try:
+                self.after_cancel(self._refit_id)
+            except tk.TclError:
+                pass
+        self._refit_id = self.after(250, self._refit_home)
+
+    def _refit_home(self) -> None:
+        """
+        Rearmar el inicio si el tamaño nuevo de la ventana lo pide.
+
+        Sólo si es la pantalla que se ve y no hay nada encima: un recorrido o
+        una guía señalan tarjetas del inicio, una escena o un cartel lo
+        tapan, y rearmar debajo de ellos les cambiaba los widgets.
+        """
+        self._refit_id = None
+        try:
+            if (self.detour or self._rendering
+                    or self.screens[self.index] != self._screen_mode):
+                return
+        except (AttributeError, IndexError):
+            return
+        tutorial = getattr(self, "tutorial", None)
+        if tutorial is not None and not getattr(tutorial, "_done", True):
+            return
+        if (getattr(self, "guide", None) is not None
+                or getattr(self, "scene", None) is not None
+                or getattr(self, "overlay", None) is not None):
+            return
+        if getattr(self, "_home_key", None) == self._home_signature():
+            return
+        self._render()
+
+    def _home_grow(self) -> float:
+        """
+        Cuánto crecen los dibujos de las tarjetas con el alto de la ventana.
+
+        La medida de los dibujos es la que entra en la ventana más chica.
+        En la de arranque, más alta, sobraba un cuarto de pantalla vacío
+        abajo; agrandar los pentagramas lo aprovecha y en una pantalla
+        grande se leen mejor. De a décimos, para que estirar un poco la
+        ventana no obligue a rearmar la pantalla.
+        """
+        try:
+            height = self.winfo_height()
+        except tk.TclError:
+            height = 1
+        if height < 400:
+            return 1.0
+        return round(min(1.4, max(1.0, 1.0 + (height - 900) / 300)), 1)
+
+    @staticmethod
+    def _home_art_colours() -> Dict[str, object]:
+        """La paleta y las letras de los dibujos de las tarjetas (`homeart`)."""
+        return {
+            "text": TEXT_NORMAL, "muted": TEXT_MUTED,
+            "faint": mix(SURFACE_LIGHT, TEXT_MUTED, 0.45),
+            "chip": mix(SURFACE_LIGHT, TEXT_NORMAL, 0.07),
+            "card": SURFACE_LIGHT, "surface": SURFACE,
+            "gold": mix(TEXT_MUTED, GOLD, 0.6),
+            "font_caption": scaled(("Segoe UI Semibold", 8)),
+            "font_symbol": scaled(("Segoe UI Semibold", 10)),
+            "font_chip": scaled(("Segoe UI Semibold", 13)),
+            "font_option": scaled(("Segoe UI Semibold", 10)),
+            "font_tiny": scaled(("Segoe UI", 8)),
+            "font_roman": scaled(("Georgia", 11, "bold")),
+        }
+
+    def _home_reusable(self) -> bool:
+        """
+        Si la pantalla que viene es la inicial y la guardada todavía sirve.
+
+        Es la pantalla con más tarjetas y la que más se visita: armarla
+        costaba más de medio segundo, casi todo de customtkinter dibujando
+        bordes redondeados, y se pagaba cada vez que se volvía al principio.
+        Las tarjetas no cambian; lo que cambia ---los logros, el libro, el
+        sendero--- se rehace en `_refresh_home`.
+        """
+        body = self._home_body
+        if body is None or self.detour:
+            return False
+        if self.screens[self.index] != self._screen_mode:
+            return False
+        try:
+            if not body.winfo_exists():
+                return False
+        except tk.TclError:
+            return False
+        return self._home_key == self._home_signature()
+
+    def _refresh_home(self) -> None:
+        """Poner al día la pantalla inicial guardada."""
+        for widget in self._home_lower:
+            try:
+                widget.destroy()
+            except tk.TclError:
+                pass
+        self._home_lower = self._build_home_lower(self._home_grid)
+        # El mouse pudo haberse ido con una tarjeta encendida: al esconder
+        # la pantalla no llega ningún `<Leave>`.
+        cards = list(self.mode_cards.values()) + list(self.tool_cards.values())
+        for card in cards:
+            card._hovered = False
+        self._select_mode(self.mode, animated=False)
+        for card in self.tool_cards.values():
+            try:
+                card._paint(animated=False)
+            except tk.TclError:
+                pass
+
+    def _build_home_lower(self, grid) -> List[tk.Misc]:
+        """Los logros, el libro y el sendero: la parte del inicio que cambia."""
         shelf = ctk.CTkFrame(grid, fg_color="transparent")
-        shelf.grid(row=2, column=0, columnspan=3, sticky="ew", padx=0,
-                   pady=(0, 6))
+        shelf.grid(row=HOME_SHELF_ROW, column=0, columnspan=3, sticky="ew",
+                   padx=0, pady=(0, 6))
         shelf.grid_columnconfigure((0, 1), weight=1, uniform="estante")
         # Las dos se estiran hasta el alto de la más alta. Los logros llevan
         # cinco estrellas de cuerpo 26 y el libro no, así que sin esto la
@@ -2525,18 +2989,20 @@ class ChordWeaverApp(ctk.CTk):
             shelf, written, total, len(self._fresh_notes()),
             command=lambda: self._open_detour("book", replace=True))
         self.book_banner.grid(row=0, column=1, sticky="nsew", padx=(5, 8))
+        built: List[tk.Misc] = [shelf]
         # El recordatorio del sendero, cuando hay uno. Va debajo de todo:
         # es una capa encima del programa, no una cuarta forma de trabajar.
-        if self.story.path is not None:
+        if self.story.path is not None or getattr(self, "_story_knocking",
+                                                  False):
             holder = ctk.CTkFrame(grid, fg_color="transparent")
-            holder.grid(row=3, column=0, columnspan=3, sticky="new")
-            self._story_banner(holder)
-        elif getattr(self, "_story_knocking", False):
-            holder = ctk.CTkFrame(grid, fg_color="transparent")
-            holder.grid(row=3, column=0, columnspan=3, sticky="new")
-            self._story_knock(holder)
-        self._cascade(self.mode_cards.values())
-        self._cascade(self.tool_cards.values(), step=40)
+            holder.grid(row=HOME_SHELF_ROW + 1, column=0, columnspan=3,
+                        sticky="new")
+            if self.story.path is not None:
+                self._story_banner(holder)
+            else:
+                self._story_knock(holder)
+            built.append(holder)
+        return built
 
     @staticmethod
     def _cascade(cards, step: int = 32) -> None:
@@ -2559,8 +3025,12 @@ class ChordWeaverApp(ctk.CTk):
         márgenes apenas distintos, y esas diferencias de dos píxeles eran
         buena parte de lo que hacía que el programa se viera desprolijo.
         """
+        # En Georgia, la letra del libro: con todo en Segoe UI el programa
+        # se leía como un formulario cualquiera. La serif en los títulos es
+        # lo que hace una partitura editada, y el cuerpo sigue en Segoe para
+        # que los controles se lean de corrido.
         ctk.CTkLabel(self.body, text=tr(title),
-                     font=scaled(("Segoe UI Semibold", 20)),
+                     font=scaled(("Georgia", 22, "bold")),
                      anchor="w", justify="left").pack(anchor="w")
         if blurb:
             ctk.CTkLabel(self.body, text=tr(blurb), font=scaled(("Segoe UI", 12)),
@@ -2690,8 +3160,8 @@ class ChordWeaverApp(ctk.CTk):
                                hover_color=SURFACE_LIGHT,
                                command=self._open_donate)
         donate.pack(side="left", padx=(0, 10))
-        Tooltip(donate, tr("El programa es gratis. Si querés bancarlo, acá está "
-                           "cómo."))
+        Tooltip(donate, tr("El programa es gratis. Si querés bancarlo, acá te "
+                           "digo cómo."))
 
         self.back_button = ctk.CTkButton(footer, text=tr("←  Atrás"), width=140,
                                          height=42, corner_radius=11,
@@ -2716,8 +3186,7 @@ class ChordWeaverApp(ctk.CTk):
                                           hover_color=SURFACE_LIGHT,
                                           command=self._reset_harmony)
         Tooltip(self.reset_button,
-                tr("Vuelve esta pantalla a la configuración con la que arranca "
-                   "el estilo elegido."))
+                tr("Vuelve esta pantalla a los valores del estilo elegido."))
         self.next_button = ctk.CTkButton(footer, text=tr("Siguiente"), width=180,
                                          height=42, corner_radius=11,
                                          font=scaled(("Segoe UI Semibold", 13)),
@@ -2755,15 +3224,27 @@ class ChordWeaverApp(ctk.CTk):
         # Qué había sin leer la última vez que se miró: ver
         # `_refresh_note_flag`.
         self._notes_known = None
-        self.body = ctk.CTkFrame(self, fg_color="transparent")
-        self.body.pack(fill="both", expand=True, padx=28, pady=8)
-        self.body.pack_propagate(False)
+        # El escenario ocupa el lugar de la pantalla y no cambia nunca; la
+        # pantalla es un marco `place`-ado adentro, y `_render` arma la nueva
+        # en otro marco escondido debajo de la vieja. Ver `_render`.
+        self.stage = ctk.CTkFrame(self, fg_color="transparent")
+        self.stage.pack(fill="both", expand=True, padx=28, pady=8)
+        self.body = self._fresh_body()
+        self.body.place(x=0, y=0, relwidth=1.0, relheight=1.0)
+        self._rendering = False
+        self._render_again = False
+        # La pantalla inicial armada y guardada, y con qué idioma y escala
+        # se armó. Ver `_home_reusable`.
+        self._home_body = None
+        self._home_key = None
+        self._home_lower: List[tk.Misc] = []
+        self._reusing_home = False
         #: Los cuatro marcos que cuelgan de la ventana, anotados para poder
         #: desarmarlos: cambiar de idioma tiene que rehacer también la
         #: cabecera y el pie, que se arman una sola vez y no pasan por
         #: `_render`. Es la lista de lo que hay que destruir, no un dato de
         #: la interfaz --- ver `_switch_language`.
-        self._chrome = (header, rail, footer, self.body)
+        self._chrome = (header, rail, footer, self.stage)
 
     # -- la anotación a mano del pie -----------------------------------------
 
@@ -2907,6 +3388,7 @@ class ChordWeaverApp(ctk.CTk):
         "book": "Libro de teoría",
         "lab": "Experimentador de armónicos",
         "analysis": "Analizador",
+        "school": "Escuelita",
     }
 
     def _open_detour(self, name: str, payload=None,
@@ -2934,30 +3416,90 @@ class ChordWeaverApp(ctk.CTk):
             self.detour.pop()
         self._render()
 
+    def _fresh_body(self) -> "ctk.CTkFrame":
+        """Un marco vacío para armar una pantalla, todavía sin ubicar."""
+        body = ctk.CTkFrame(self.stage, fg_color="transparent")
+        body.pack_propagate(False)
+        body.grid_propagate(False)
+        return body
+
     def _render(self) -> None:
         """
-        Redibujar la pantalla actual.
+        Redibujar la pantalla actual, con doble búfer.
 
-        El cuerpo se desmapea antes de armarlo y se vuelve a mapear al
-        final. Tk dibuja cada widget en cuanto se crea, así que una pantalla
-        con muchos controles aparecía por pedazos y pagaba un repintado por
-        widget; con el contenedor fuera de la pantalla no se dibuja nada
-        hasta que está todo listo y aparece de una vez. Es la misma técnica
-        que ya usaba la pantalla de resultados, aplicada a todas.
+        La pantalla nueva se arma en un marco aparte, se ubica **debajo** de
+        la vieja y se le deja hacer todo su dibujo ahí, tapada. Recién
+        cuando terminó se la sube y se destruye la vieja, así que el cambio
+        es uno solo. Antes se desmapeaba el cuerpo, se lo armaba y se lo
+        volvía a mapear: eso evitaba el repintado widget por widget mientras
+        se creaban, pero customtkinter dibuja sus bordes redondeados recién
+        al recibir su tamaño, que llega al mapear. La pantalla aparecía en
+        blanco y después por tramos, con bloques encimados hasta que el
+        último se acomodaba: medio segundo largo cada vez que se volvía al
+        inicio, que es la pantalla con más tarjetas.
+
+        Windows recorta a los hermanos tapados, así que lo que se dibuja
+        debajo no se ve.
         """
+        if self._rendering:
+            # Un click o un temporizador atendido mientras la pantalla nueva
+            # se dibujaba tapada. Sólo se anota: el redibujado se agenda una
+            # vez, al terminar. Agendándolo acá con `after_idle`, el mismo
+            # `update()` que lo había llamado lo volvía a correr, se volvía
+            # a agendar, y el programa quedaba colgado para siempre --- un
+            # doble click en una tarjeta alcanzaba.
+            self._render_again = True
+            return
         # Antes que nada: la guía abierta señala widgets de la pantalla que
         # está por desaparecer. Sus velos están puestos sobre la ventana y
         # no sobre el cuerpo, así que sobrevivirían al rearmado y quedarían
         # tapando la pantalla nueva con un hueco en cualquier parte.
         self._close_guide()
-        self.body.pack_forget()
+        old = self.body
+        kept = self._home_body
+        self._reusing_home = self._home_reusable()
+        self.body = kept if self._reusing_home else self._fresh_body()
+        self._rendering = True
         try:
             # Antes de armar nada: lo que se construya de acá en adelante
             # toma el acento del modo en curso.
             self._apply_accent()
             self._render_screen()
         finally:
-            self.body.pack(fill="both", expand=True, padx=28, pady=8)
+            self._reusing_home = False
+            if self.body is not old:
+                try:
+                    self.body.place(x=0, y=0, relwidth=1.0, relheight=1.0)
+                    self.body.lower(old)
+                    # Que llegue el tamaño y que cada widget se dibuje,
+                    # tapado.
+                    self.update_idletasks()
+                    self.update()
+                except tk.TclError:
+                    pass
+            self._rendering = False
+            self.body.lift()
+            if old is not self.body:
+                # La pantalla inicial no se destruye al irse: queda puesta
+                # debajo de la actual, tapada. Sacándola con `place_forget`
+                # la vuelta pagaba volver a mapear sus doscientos widgets.
+                # Lo que cambia ---logros, libro, sendero--- sí se va: tiene
+                # brillos animados que seguían corriendo escondidos, y
+                # `_refresh_home` lo rearma al volver.
+                if old is self._home_body:
+                    old.lower()
+                    for widget in self._home_lower:
+                        try:
+                            widget.destroy()
+                        except tk.TclError:
+                            pass
+                    self._home_lower = []
+                else:
+                    old.destroy()
+            if (kept is not None and kept is not self._home_body
+                    and kept is not old):
+                # Una pantalla inicial guardada que dejó de servir.
+                kept.destroy()
             # Los avisos están `place`-ados sobre la ventana, y todo lo que
             # se acaba de crear queda por encima de ellos en el orden de
             # apilado. Se los vuelve a subir en cada render: si no, el cartel
@@ -2967,9 +3509,13 @@ class ChordWeaverApp(ctk.CTk):
             # haber aparecido --- o haberse leído --- mientras se armaba
             # ésta.
             self._refresh_note_flag()
+            if self._render_again:
+                self._render_again = False
+                self.after_idle(self._render)
 
     def _render_screen(self) -> None:
-        self._clear_body()
+        if not self._reusing_home:
+            self._clear_body()
         if self.detour:
             name, payload = self.detour[-1]
             # Los logros y el historial son una pantalla más, no una ventana
@@ -2988,7 +3534,8 @@ class ChordWeaverApp(ctk.CTk):
              "record": self._screen_record,
              "book": self._screen_book,
              "lab": self._screen_lab,
-             "analysis": self._screen_analysis}[name](payload)
+             "analysis": self._screen_analysis,
+             "school": self._screen_school}[name](payload)
             return
 
         if self._next_button_hidden:
@@ -3063,18 +3610,18 @@ class ChordWeaverApp(ctk.CTk):
     def _mode_accent(self) -> str:
         """El color de lo que se está usando ahora mismo.
 
-        Las dos herramientas también tiñen la interfaz. No son un cuarto y
-        un quinto modo ---el riel de progreso sigue apagado adentro de
-        ellas--- pero mientras se está adentro son lo que se está usando, y
-        quedarse con el azul del modo elegido antes de entrar hacía que el
-        experimentador y el analizador fueran los dos únicos lugares del
-        programa donde el color no decía dónde estaba uno.
+        Las herramientas también tiñen la interfaz. No son más modos ---el
+        riel de progreso sigue apagado adentro de ellas--- pero mientras se
+        está adentro son lo que se está usando, y quedarse con el azul del
+        modo elegido antes de entrar hacía que el experimentador y el
+        analizador fueran los únicos lugares del programa donde el color no
+        decía dónde estaba uno. La escuelita, igual.
         """
         detour = self.detour[-1][0] if self.detour else ""
-        for key, _name, _sub, _body, _points, accent, _icon in TOOL_CARDS:
+        for key, _name, _sub, _body, accent, _icon in TOOL_CARDS:
             if key == detour:
                 return accent
-        for key, _name, _sub, _body, _steps, accent, _icon in MODE_CARDS:
+        for key, _name, _sub, accent, _icon in MODE_CARDS:
             if key == self.mode:
                 return accent
         return ACCENT
@@ -3244,9 +3791,9 @@ class ChordWeaverApp(ctk.CTk):
                      font=scaled(("Segoe UI Semibold", 16))
                      ).pack(anchor="w", padx=22, pady=(20, 2))
         ctk.CTkLabel(window,
-                     text=tr("Se aplica al momento. Lo que ya generaste no "
-                             "cambia: los acordes se llaman igual en los dos "
-                             "idiomas."),
+                     text=tr("Se aplica al instante. Lo que ya generaste no "
+                             "cambia, porque los acordes se escriben igual en "
+                             "los dos idiomas."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=460,
                      justify="left").pack(anchor="w", padx=22, pady=(0, 8))
         language_row = ctk.CTkSegmentedButton(
@@ -3287,10 +3834,9 @@ class ChordWeaverApp(ctk.CTk):
 
         workers = resolve_worker_count(None, 200 * 12)
         ctk.CTkLabel(window,
-                     text=trf("Esta máquina tiene {cpu_count} núcleos; la "
-                              "búsqueda va a usar {workers} proceso(s) y "
-                              "deja uno libre para que la ventana siga "
-                              "respondiendo.",
+                     text=trf("Esta máquina tiene {cpu_count} núcleos. La "
+                              "búsqueda usa {workers} proceso(s) y deja uno "
+                              "libre para que la ventana siga respondiendo.",
                               cpu_count=os.cpu_count(), workers=workers),
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=460,
                      justify="left").pack(anchor="w", padx=22, pady=(14, 6))
@@ -3310,8 +3856,8 @@ class ChordWeaverApp(ctk.CTk):
             for key, value in self.LOW_RESOURCE_PRESET.items():
                 self.ga_vars[key].set(value)
             message.configure(
-                text=tr("Listo: la búsqueda va a tardar alrededor de la mitad. "
-                        "A cambio afina menos, así que vas a oír algo más de "
+                text=tr("Listo. La búsqueda va a tardar más o menos la mitad, "
+                        "pero afina menos y vas a oír un poco más de "
                         "movimiento entre acordes."))
 
         modest = ctk.CTkButton(
@@ -3325,13 +3871,11 @@ class ChordWeaverApp(ctk.CTk):
                                wraplength=460, justify="left")
         message.pack(anchor="w", padx=22)
         Tooltip(modest,
-                tr("Recorta la búsqueda para una máquina que sufre: la mitad de "
-                   "generaciones, la mitad de tiempo. Los resultados siguen "
-                   "siendo válidos —ninguna regla dura se afloja— pero el "
-                   "programa tiene menos vueltas para pulir la conducción de "
-                   "voces. La población no se toca: es de donde sale el arranque "
-                   "válido de la búsqueda, y bajándola las piezas largas dejan "
-                   "de generarse del todo."))
+                tr("Recorta las generaciones para una máquina lenta, y la "
+                   "búsqueda tarda la mitad. Se siguen cumpliendo todas las "
+                   "reglas duras, pero queda menos tiempo para pulir la "
+                   "conducción de voces. La población no cambia, porque "
+                   "bajándola las piezas largas dejan de generarse."))
 
         def apply_and_close() -> None:
             # Antes de validar: la combinación del zorro no es configuración
@@ -3365,9 +3909,11 @@ class ChordWeaverApp(ctk.CTk):
             fg_color=ACCENT, hover_color=ACCENT_HOVER)
         odds.pack(anchor="w", padx=22, pady=(14, 2))
         Tooltip(odds,
-                tr("Las cadencias completas — la frigia, el ciclo de Vivaldi y "
-                   "el bajo cromático — aparecen del 10% al 20% de las veces "
-                   "cuando se dan las condiciones."))
+                tr("Las cadencias completas (la frigia, el ciclo de Vivaldi y "
+                   "el bajo cromático) aparecen casi la mitad de las veces "
+                   "que se dan las condiciones, en vez de una de cada diez."))
+
+        self._build_sound_settings(window)
 
         ctk.CTkLabel(window, text=tr("Accesibilidad"),
                      font=scaled(("Segoe UI Semibold", 14))).pack(anchor="w", padx=22,
@@ -3415,8 +3961,8 @@ class ChordWeaverApp(ctk.CTk):
                                     lambda _e: preview_scale(
                                         self.font_scale_slider.get()))
         ctk.CTkLabel(window,
-                     text=tr("Se aplica al reabrir el programa. La configuración "
-                             "queda guardada junto al ejecutable."),
+                     text=tr("Se aplica al reabrir el programa. La "
+                             "configuración se guarda junto al ejecutable."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=440,
                      justify="left").pack(anchor="w", padx=22, pady=(2, 0))
 
@@ -3450,8 +3996,8 @@ class ChordWeaverApp(ctk.CTk):
                          font=scaled(("Segoe UI Semibold", 14))
                          ).pack(anchor="w", padx=22, pady=(16, 2))
             ctk.CTkLabel(window,
-                         text=tr("Las apariciones que ya te ocurrieron. Se juegan "
-                                 "enteras, igual que la primera vez."),
+                         text=tr("Las apariciones que ya viste. Se repiten "
+                                 "enteras, como la primera vez."),
                          font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=440,
                          justify="left").pack(anchor="w", padx=22, pady=(0, 6))
             for label, key in seen_scenes:
@@ -3475,11 +4021,10 @@ class ChordWeaverApp(ctk.CTk):
                                        self._start_tutorial())
                       ).pack(anchor="w", padx=22, pady=(0, 4))
         ctk.CTkLabel(window,
-                     text=tr("Vuelve a correr el recorrido de bienvenida y "
-                             "devuelve las explicaciones de cada pantalla: la de "
-                             "los acordes, la del pentagrama y la de las reglas "
-                             "se abren de nuevo la próxima vez que pases por "
-                             "ellas."),
+                     text=tr("Repite el recorrido de bienvenida. Las guías de "
+                             "los acordes, del pentagrama y de las reglas "
+                             "vuelven a abrirse la próxima vez que llegues a "
+                             "esas pantallas."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=440,
                      justify="left").pack(anchor="w", padx=22, pady=(0, 14))
 
@@ -3496,6 +4041,13 @@ class ChordWeaverApp(ctk.CTk):
                 self.ga_vars[key].set(default)
             self.raise_odds_var.set(False)
             self.settings["raise_cadence_odds"] = False
+            # El timbre también vuelve al de siempre. La ruta del WAV se
+            # queda: no es una preferencia sino dónde está un archivo, y
+            # volver a elegir la muestra no tiene por qué pedir buscarlo.
+            # Guardado al momento, como cuando se lo elige en el menú: si
+            # después se cierra sin «Aceptar», al reabrir volvía el anterior.
+            self._remember_timbre(timbres.DEFAULT)
+            self._timbre_problem = self._apply_timbre(timbres.DEFAULT)
             # Va última porque rearma el panel entero: cualquier cosa que
             # tocara widgets después de esto estaría tocando widgets muertos.
             preview_scale(1.0)
@@ -3563,6 +4115,209 @@ class ChordWeaverApp(ctk.CTk):
         if panel is not None:
             panel.destroy()
             self.config_panel = None
+
+    # -- el timbre de las reproducciones ------------------------------------
+
+    #: Con qué se prueba un timbre: una cadencia corta, I–V7–I. Más que un
+    #: acorde solo porque lo que el programa toca son voces que se mueven, y
+    #: un timbre sostenido se juzga en cómo pasa de un acorde al siguiente.
+    TIMBRE_TRIAL = ([[48, 64, 67, 72], [43, 62, 65, 71], [48, 64, 67, 72]],
+                    [1.0, 1.0, 2.0])
+
+    def _apply_timbre(self, key: str, path: str = "") -> Optional[str]:
+        """
+        Poner un timbre para todo lo que suene; el motivo si no se pudo.
+
+        Si no se puede, queda sonando el de siempre ---`timbres.use` ya lo
+        deja así--- y la preferencia guardada no se toca acá: un WAV en un
+        disco desenchufado vuelve a andar la próxima vez que el disco esté.
+        """
+        try:
+            timbres.use(key, path)
+        except timbres.TimbreError as exc:
+            return str(exc)
+        except Exception as exc:                            # noqa: BLE001
+            # Un archivo que revienta de una manera que el lector no prevé
+            # ---memoria, un formato raro--- no puede impedir que el programa
+            # abra: esto corre al arrancar. Queda el timbre de siempre.
+            timbres.use(timbres.DEFAULT)
+            return str(exc) or exc.__class__.__name__
+        return None
+
+    def _remember_timbre(self, key: str, path: Optional[str] = None) -> None:
+        self.settings["timbre"] = key
+        if path is not None:
+            self.settings["timbre_path"] = path
+        history.save_settings(self.settings, self.settings_path)
+
+    def _use_instrument(self, path: str) -> None:
+        """
+        Lo que hace el experimentador al guardar un timbre y pedir usarlo.
+
+        Llega por parámetro (`spectrum.Experimenter(on_instrument=...)`)
+        porque el experimentador no importa la aplicación.
+        """
+        problem = self._apply_timbre(timbres.SAMPLE, path)
+        if problem:
+            messagebox.showwarning(tr("No se pudo usar el timbre"), problem)
+            self._remember_timbre(timbres.DEFAULT)
+            return
+        self._timbre_problem = None
+        self._remember_timbre(timbres.SAMPLE, path)
+
+    def _build_sound_settings(self, window) -> None:
+        """
+        La sección «Sonido» del engranaje: qué timbre, probarlo, cargar uno.
+
+        Se aplica al momento, como el idioma, y no al apretar «Aceptar»: el
+        botón de probar toca lo que está elegido, y elegir algo para oírlo
+        y que no suene hasta cerrar el panel no tendría sentido.
+        """
+        ctk.CTkLabel(window, text=tr("Sonido"),
+                     font=scaled(("Segoe UI Semibold", 14))
+                     ).pack(anchor="w", padx=22, pady=(16, 2))
+        ctk.CTkLabel(window,
+                     text=tr("El timbre de todo lo que toca el programa, "
+                             "desde los resultados hasta el analizador. Todos "
+                             "suenan igual de fuerte y sólo cambia el color."),
+                     font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=440,
+                     justify="left").pack(anchor="w", padx=22, pady=(0, 6))
+
+        line = ctk.CTkFrame(window, fg_color="transparent")
+        line.pack(fill="x", padx=22, pady=4)
+        ctk.CTkLabel(line, text=tr("Timbre"), font=FONT_SMALL, width=150,
+                     anchor="w").pack(side="left")
+        menu = ctk.CTkOptionMenu(
+            line, values=trs([item.label for item in timbres.TIMBRES]),
+            width=240, font=FONT_SMALL, dropdown_font=FONT_SMALL,
+            fg_color=SURFACE, button_color=SURFACE,
+            button_hover_color=ACCENT)
+        menu.pack(side="left")
+        trial = ctk.CTkButton(
+            line, text=tr("▶  Probar"), width=104, height=30,
+            corner_radius=9, font=FONT_SMALL, fg_color="transparent",
+            border_width=1, border_color=BORDER_SOFT, text_color=TEXT_NORMAL,
+            hover_color=SURFACE)
+        trial.pack(side="left", padx=(8, 0))
+
+        blurb = ctk.CTkLabel(window, text="", font=FONT_SMALL,
+                             text_color=TEXT_MUTED, wraplength=440,
+                             justify="left")
+        blurb.pack(anchor="w", padx=22, pady=(2, 4))
+
+        files = ctk.CTkFrame(window, fg_color="transparent")
+        files.pack(fill="x", padx=22, pady=(2, 0))
+        loader = ctk.CTkButton(
+            files, text=tr("Cargar un WAV…"), width=150, height=30,
+            corner_radius=9, font=FONT_SMALL, fg_color="transparent",
+            border_width=1, border_color=BORDER_SOFT, text_color=TEXT_NORMAL,
+            hover_color=SURFACE)
+        loader.pack(side="left")
+        Tooltip(loader,
+                tr("Un timbre guardado con «Guardar timbre…» en el "
+                   "experimentador ya sabe qué nota es y qué tramo repetir, y "
+                   "suena afinado en todo el teclado. Cualquier otro WAV "
+                   "también sirve. En ese caso el programa deduce la nota "
+                   "escuchándolo y repite su segunda mitad."))
+        detail = ctk.CTkLabel(files, text="", font=FONT_SMALL,
+                              text_color=TEXT_MUTED, wraplength=290,
+                              justify="left", anchor="w")
+        detail.pack(side="left", padx=(10, 0), fill="x", expand=True)
+
+        def refresh() -> None:
+            """Que el menú, la línea y el detalle digan lo que suena."""
+            chosen = timbres.current()
+            try:
+                menu.set(tr(timbres.label_of(chosen.key)))
+                blurb.configure(text=tr(timbres.blurb_of(chosen.key)))
+                problem = getattr(self, "_timbre_problem", None)
+                sample = chosen.sample
+                if problem:
+                    detail.configure(
+                        text=trf("No se pudo usar el timbre guardado y suena "
+                                 "el de siempre.\n{reason}",
+                                 reason=problem), text_color=WARN)
+                elif sample is not None:
+                    root = int(round(sample.root))
+                    note = i18n.note_name(root) + str(root // 12 - 1)
+                    seconds = ((sample.loop_end - sample.loop_start + 1)
+                               / sample.rate)
+                    text = (trf("{name} · es un {note} · repite {seconds:.1f} s",
+                                name=sample.name, note=note, seconds=seconds)
+                            if sample.from_smpl else
+                            trf("{name} · suena como un {note} (deducido "
+                                "oyéndolo) · repite su segunda mitad",
+                                name=sample.name, note=note))
+                    detail.configure(text=text, text_color=TEXT_MUTED)
+                else:
+                    detail.configure(text="", text_color=TEXT_MUTED)
+            except tk.TclError:
+                pass
+
+        def fail(problem: str) -> None:
+            """Un archivo que no sirve: se avisa y vuelve el de siempre."""
+            messagebox.showwarning(tr("No se pudo usar el timbre"), problem)
+            self._timbre_problem = None
+            self._remember_timbre(timbres.DEFAULT)
+            refresh()
+
+        def load() -> None:
+            stored = str(self.settings.get("timbre_path", "") or "")
+            folder = (os.path.dirname(stored) if stored
+                      else history.default_output_directory())
+            path = filedialog.askopenfilename(
+                title=tr("Elegí el timbre"),
+                initialdir=folder if os.path.isdir(folder) else None,
+                filetypes=[(tr("Sonido WAV"), "*.wav"),
+                           (tr("Todos los archivos"), "*.*")])
+            if not path:
+                refresh()           # el menú puede haber quedado en la muestra
+                return
+            problem = self._apply_timbre(timbres.SAMPLE, path)
+            if problem:
+                fail(problem)
+                return
+            self._timbre_problem = None
+            self._remember_timbre(timbres.SAMPLE, path)
+            refresh()
+
+        def pick(label: str) -> None:
+            key = timbres.key_for_label(i18n.untr(label))
+            path = ""
+            if key == timbres.SAMPLE:
+                path = str(self.settings.get("timbre_path", "") or "")
+                if not path:
+                    load()          # todavía no hay ninguno: se lo pide
+                    return
+            problem = self._apply_timbre(key, path)
+            if problem:
+                fail(problem)
+                return
+            self._timbre_problem = None
+            self._remember_timbre(key)
+            refresh()
+
+        def try_it() -> None:
+            playing = getattr(self, "_playing", None)
+            if playing is not None and playing.is_alive():
+                return              # de a un sonido, como en todo el programa
+            chords, durations = self.TIMBRE_TRIAL
+            trial.configure(text=tr("♪  Sonando…"), state="disabled")
+
+            def restore() -> None:
+                try:
+                    trial.configure(text=tr("▶  Probar"), state="normal")
+                except tk.TclError:
+                    pass            # el panel se cerró mientras sonaba
+
+            self._playing = audio.play_chords(chords, durations,
+                                              timbre=timbres.current())
+            self._when_done(self._playing, restore)
+
+        menu.configure(command=pick)
+        trial.configure(command=try_it)
+        loader.configure(command=load)
+        refresh()
 
     #: Las dos maneras de donar, y viven acá y en ningún otro lado. Son dos
     #: porque un alias de transferencia sólo existe adentro de Argentina:
@@ -3633,15 +4388,13 @@ class ChordWeaverApp(ctk.CTk):
             fill="x", padx=24, pady=(0, 14))
 
         for paragraph in (
-            "ChordWeaver es gratis, y va a seguir siéndolo. No me parece "
-            "prudente cobrar por esto: la música es de todos, y una "
-            "herramienta para estudiar cómo se mueven las voces no debería "
-            "tener un precio en la puerta.",
-            "Pero el proyecto lleva tiempo, y sostenerlo cuesta. Si te sirvió "
-            "y querés bancarlo, una donación ayuda a financiarlo y se "
-            "agradece muchísimo.",
-            "No hace falta, y no cambia nada: el programa es exactamente el "
-            "mismo con donación y sin ella. No hay nada cerrado detrás de esto.",
+            "ChordWeaver es gratis y va a seguir siéndolo. La música es de "
+            "todos, y no me parece bien cobrar por una herramienta para "
+            "estudiarla.",
+            "Pero el proyecto lleva tiempo y mantenerlo cuesta. Si te sirvió "
+            "y querés ayudar, una donación se agradece mucho.",
+            "Donar no cambia nada en el programa. No hay funciones "
+            "bloqueadas.",
         ):
             ctk.CTkLabel(window, text=tr(paragraph), font=scaled(FONT_BODY),
                          text_color=TEXT_NORMAL, wraplength=560,
@@ -3656,9 +4409,9 @@ class ChordWeaverApp(ctk.CTk):
             open_link=True)
 
         ctk.CTkLabel(window,
-                     text=tr("El alias se copia mientras el programa esté "
-                             "abierto: en Windows el portapapeles lo sostiene la "
-                             "aplicación que copió."),
+                     text=tr("El alias queda copiado mientras el programa "
+                             "esté abierto. En Windows, el portapapeles "
+                             "depende de la aplicación que copió."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=560,
                      justify="left").pack(anchor="w", padx=24, pady=(4, 12))
         ctk.CTkLabel(window, text=tr("Gracias por usarlo."),
@@ -3794,8 +4547,7 @@ class ChordWeaverApp(ctk.CTk):
         if config.tournament_size < 2:
             if message_label is not None:
                 message_label.configure(
-                    text=tr("El torneo tiene que ser de al menos 2: con menos no "
-                            "hay a quién comparar.")
+                    text=tr("El torneo tiene que ser de al menos 2.")
                 )
             return False
         # Las tres tasas son probabilidades. Fuera de 0–1 el motor no falla,
@@ -3847,11 +4599,10 @@ class ChordWeaverApp(ctk.CTk):
         # cinco pantallas era pedir justo lo que el botón anula.
         self._story_golden_button(self.body)
         self._heading(
-            tr("¿Con qué reglas se escribe?"),
-            tr("El estilo no toca los acordes: decide cómo se conducen las voces "
-               "de uno al siguiente — qué se prohíbe, qué se premia y con cuánta "
-               "fuerza. En la pantalla de reglas podés prender y apagar cada una "
-               "por separado; acá elegís de dónde parte todo."))
+            tr("Elegí un estilo"),
+            tr("El estilo decide cómo se mueven las voces de un acorde al "
+               "siguiente. Cada regla se puede ajustar después, en la "
+               "pantalla de reglas."))
 
         # Sin `expand`: las tarjetas miden lo que mide la más alta y la franja
         # de resumen queda pegada abajo de ellas en vez de irse al pie de la
@@ -3894,13 +4645,15 @@ class ChordWeaverApp(ctk.CTk):
         defaults = harmony.GENRE_DEFAULTS.get(key)
         if not defaults:
             return ""
-        voices = ", ".join(VOICE_CATALOG[voice].label
+        # Cada pedazo se traduce antes de pegarlo: los tres estaban
+        # catalogados y salían igual en castellano con la interfaz en inglés.
+        voices = ", ".join(tr(VOICE_CATALOG[voice].label)
                            for voice in defaults["voices"])
-        mode = harmony.MODES[defaults["mode"]].label.lower()
-        sevenths = ("acordes de séptima por defecto" if defaults["sevenths"]
-                    else "tríadas por defecto")
-        return (trf("Arranca con {voices} · {mode} · {sevenths}. Todo esto "
-                    "se puede cambiar en las pantallas siguientes.",
+        mode = tr(harmony.MODES[defaults["mode"]].label).lower()
+        sevenths = (tr("acordes de séptima por defecto") if defaults["sevenths"]
+                    else tr("tríadas por defecto"))
+        return (trf("Arranca con {voices} · {mode} · {sevenths}. Se puede "
+                    "cambiar en las pantallas siguientes.",
                     voices=voices, mode=mode, sevenths=sevenths))
 
     def _apply_genre_defaults(self) -> None:
@@ -3958,17 +4711,43 @@ class ChordWeaverApp(ctk.CTk):
     def _screen_voices(self) -> None:
         self._forget_genre_settings()
         self._heading(
-            tr("¿Quién canta?"),
-            tr("Entre 3 y 6 voces. Los rangos que ves son los estándar de cada "
-               "cuerda y son una regla dura: ninguna solución va a poner una "
-               "nota fuera de ellos. Si tu grupo llega a más o a menos, "
-               "cambialos acá."))
+            tr("Elegí las voces"),
+            tr("Entre 3 y 6 voces. Ninguna nota va a salir del rango de su "
+               "voz. Si tus cantantes llegan más arriba o más abajo, cambiá "
+               "los rangos."))
+
+        # Los atajos, arriba de las voces que tocan: marcan las voces y les
+        # ponen el registro de una vez. Se dibujan antes que las filas pero
+        # se encienden después (`_mark_voice_preset`), cuando ya hay casillas
+        # contra las que comparar.
+        shortcuts = ctk.CTkFrame(self.body, fg_color="transparent")
+        shortcuts.pack(fill="x", pady=(0, 8))
+        ctk.CTkLabel(shortcuts, text=tr("Atajos"), font=FONT_SMALL,
+                     text_color=TEXT_MUTED).pack(side="left", padx=(2, 10))
+        self.voice_preset_buttons: Dict[str, ctk.CTkButton] = {}
+        for preset_key, label, blurb, _voices in self.VOICE_PRESETS:
+            button = ctk.CTkButton(
+                shortcuts, text=tr(label), height=30, width=10,
+                corner_radius=15, font=FONT_SMALL, fg_color="transparent",
+                border_width=1, border_color=BORDER_SOFT,
+                text_color=TEXT_NORMAL, hover_color=SURFACE_RAISED,
+                command=lambda k=preset_key: self._apply_voice_preset(k))
+            button.pack(side="left", padx=(0, 8))
+            Tooltip(button, tr(blurb))
+            self.voice_preset_buttons[preset_key] = button
 
         container = ctk.CTkFrame(self.body, fg_color="transparent")
         container.pack(fill="both", expand=True)
 
         self.voice_check_vars: Dict[str, tk.BooleanVar] = {}
         self.range_entries: Dict[str, Tuple[ctk.CTkEntry, ctk.CTkEntry]] = {}
+        self.range_vars: Dict[str, Tuple[tk.StringVar, tk.StringVar]] = {}
+        self.range_rulers: Dict[str, tk.Canvas] = {}
+        # Lo que se ve en las casillas es el registro con el que la voz va a
+        # cantar, no el del catálogo: volviendo a esta pantalla después de
+        # aplicar un atajo, las casillas mostraban los rangos de fábrica y
+        # «Siguiente» los releía de ahí --- el atajo se perdía sin aviso.
+        shown_ranges = self._shown_voice_ranges()
 
         # Organum is a modal device, so the choice only appears where it
         # means something. The harmonising mode does not ask: there the vox
@@ -3978,11 +4757,11 @@ class ChordWeaverApp(ctk.CTk):
         if organum:
             ctk.CTkLabel(
                 self.body,
-                text=tr("Organum: marcá la voz que lleva el canto (vox principalis). "
-                        "La voz inmediata inferior será la vox organalis y buscará "
-                        "moverse en paralelo con ella, a la cuarta, la quinta o la "
-                        "octava. No puede ser la voz más grave: necesita una voz "
-                        "debajo para acompañarla."),
+                text=tr("Organum. Marcá la voz que lleva el canto (vox "
+                        "principalis). La de abajo va a ser la vox organalis "
+                        "y la va a seguir en paralelo, a la cuarta, la quinta "
+                        "o la octava. No puede ser la más grave, porque "
+                        "necesita una voz debajo."),
                 font=FONT_SMALL, text_color=ACCENT, wraplength=760,
                 justify="left").pack(anchor="w", pady=(0, 10))
             self.principalis_var = tk.StringVar(value=self._default_principalis())
@@ -3997,6 +4776,7 @@ class ChordWeaverApp(ctk.CTk):
 
             var = tk.BooleanVar(value=key in self.voice_keys)
             self.voice_check_vars[key] = var
+            var.trace_add("write", lambda *_: self._mark_voice_preset())
             ctk.CTkCheckBox(frame, text=tr(voice.label), variable=var, width=170,
                             font=FONT_BODY, fg_color=ACCENT,
                             hover_color=ACCENT_HOVER).pack(side="left", padx=14, pady=10)
@@ -4012,24 +4792,226 @@ class ChordWeaverApp(ctk.CTk):
                     hover_color=ACCENT_HOVER)
                 principalis.pack(side="left", padx=(0, 10))
                 Tooltip(principalis,
-                        trf("{label} lleva el canto. La voz que quede "
-                            "inmediatamente debajo lo dobla en paralelo.",
-                            label=voice.label))
+                        trf("{label} lleva el canto. La voz de abajo lo dobla "
+                            "en paralelo.",
+                            label=tr(voice.label)))
 
             ctk.CTkLabel(frame, text=tr("rango"), font=FONT_SMALL,
                          text_color=TEXT_MUTED).pack(side="left", padx=(10, 6))
-            low = ctk.CTkEntry(frame, width=64, font=FONT_SMALL)
-            low.insert(0, note_name(voice.low))
+            # Con variable y no con `insert`: es lo que deja enterarse de que
+            # el usuario escribió algo, para apagar el atajo que estaba
+            # encendido.
+            low_shown, high_shown = shown_ranges[key]
+            low_var = tk.StringVar(value=note_name(low_shown))
+            high_var = tk.StringVar(value=note_name(high_shown))
+            low = ctk.CTkEntry(frame, width=64, font=FONT_SMALL,
+                               textvariable=low_var)
             low.pack(side="left")
             ctk.CTkLabel(frame, text="–", text_color=TEXT_MUTED).pack(side="left", padx=4)
-            high = ctk.CTkEntry(frame, width=64, font=FONT_SMALL)
-            high.insert(0, note_name(voice.high))
+            high = ctk.CTkEntry(frame, width=64, font=FONT_SMALL,
+                                textvariable=high_var)
             high.pack(side="left")
             self.range_entries[key] = (low, high)
+            self.range_vars[key] = (low_var, high_var)
+            for text_var in (low_var, high_var):
+                text_var.trace_add("write", lambda *_: self._mark_voice_preset())
+            # El registro dibujado sobre una regla de teclado común a todas
+            # las filas: con los números solos no se veía dónde se pisan
+            # dos voces ni cuánto le queda a cada una de margen.
+            ruler = tk.Canvas(frame, height=30, bg=SURFACE_LIGHT,
+                              highlightthickness=0, bd=0)
+            ruler.pack(side="left", fill="x", expand=True, padx=(22, 18))
+            ruler.bind("<Configure>", lambda _e: self._draw_voice_ranges())
+            self.range_rulers[key] = ruler
 
         self.voice_hint = ctk.CTkLabel(self.body, text="", font=FONT_SMALL,
                                        text_color=WARN)
         self.voice_hint.pack(anchor="w", pady=(10, 0))
+        self._mark_voice_preset()
+
+    #: Los atajos de la pantalla de voces: ``(clave, nombre, para qué,
+    #: voces)``, cada voz ``(voz del catálogo, grave, aguda)``. Las voces
+    #: son las del catálogo porque el motor sabe de esas y nada más: un
+    #: piano son cuatro líneas igual que un coro, con otros registros.
+    #:
+    #: * **Canto**: los ámbitos corales de manual (Kostka-Payne), más
+    #:   angostos que los del catálogo, que son los de una voz entrenada al
+    #:   límite.
+    #: * **Piano**: cuatro voces de teclado. Bajan más que un coro ---la mano
+    #:   izquierda llega al do grave sin esfuerzo--- y el soprano sube hasta
+    #:   el do agudo; el reparto entre las manos lo resuelve el pianista.
+    #: * **Cuarteto de cuerdas**: violonchelo, viola y los dos violines, con
+    #:   el piso de la cuerda más grave de cada uno y techos de primera y
+    #:   tercera posición, que es donde un cuarteto toca un coral.
+    VOICE_PRESETS = (
+        ("satb", N("Canto (SATB)"),
+         N("Coro a cuatro voces con los ámbitos de manual: soprano do4–sol5, "
+           "contralto sol3–re5, tenor do3–sol4, bajo mi2–do4."),
+         (("B", "E2", "C4"), ("T", "C3", "G4"), ("A", "G3", "D5"),
+          ("S", "C4", "G5"))),
+        ("piano", N("Piano"),
+         N("Cuatro voces de teclado, con más registro que un coro. Bajo "
+           "do2–do4, tenor sol2–sol4, contralto re3–re5, soprano sol3–do6."),
+         (("B", "C2", "C4"), ("T", "G2", "G4"), ("A", "D3", "D5"),
+          ("S", "G3", "C6"))),
+        ("quartet", N("Cuarteto de cuerdas"),
+         N("Violonchelo do2–mi4, viola do3–do5, segundo violín sol3–mi5 y "
+           "primer violín sol3–la5: cada uno desde su cuerda más grave."),
+         (("B", "C2", "E4"), ("T", "C3", "C5"), ("A", "G3", "E5"),
+          ("S", "G3", "A5"))),
+    )
+
+    @classmethod
+    def voice_preset(cls, key: str) -> Tuple[List[str], Dict[int, Tuple[int, int]]]:
+        """
+        Las voces y los registros de un atajo, como los deja `_commit_voices`.
+
+        Ordenadas como las ordena el motor ---por la nota grave del
+        catálogo--- y con los registros por posición, que es como los lee
+        `session.build_settings`.
+        """
+        preset = next(p for p in cls.VOICE_PRESETS if p[0] == key)
+        ordered = sorted(preset[3], key=lambda v: VOICE_CATALOG[v[0]].low)
+        return ([voice for voice, _low, _high in ordered],
+                {index: (parse_note_name(low), parse_note_name(high))
+                 for index, (_voice, low, high) in enumerate(ordered)})
+
+    def _shown_voice_ranges(self) -> Dict[str, Tuple[int, int]]:
+        """El registro de cada voz del catálogo, con lo que el usuario cambió."""
+        shown = {key: (voice.low, voice.high)
+                 for key, voice in VOICE_CATALOG.items()}
+        ordered = sorted(self.voice_keys, key=lambda k: VOICE_CATALOG[k].low)
+        for index, key in enumerate(ordered):
+            if index in self.range_overrides:
+                shown[key] = self.range_overrides[index]
+        return shown
+
+    def _apply_voice_preset(self, key: str) -> None:
+        """Marcar las voces de un atajo y ponerles su registro."""
+        preset = next((p for p in self.VOICE_PRESETS if p[0] == key), None)
+        if preset is None:
+            return
+        wanted = {voice: (low, high) for voice, low, high in preset[3]}
+        # Mientras se escriben las casillas, cada una dispara la comparación
+        # con los atajos; a mitad de camino no coincide ninguno y los
+        # botones parpadeaban. Se compara una sola vez, al final.
+        self._presetting = True
+        try:
+            for voice_key, var in self.voice_check_vars.items():
+                var.set(voice_key in wanted)
+                low_var, high_var = self.range_vars[voice_key]
+                if voice_key in wanted:
+                    low, high = wanted[voice_key]
+                else:
+                    low = note_name(VOICE_CATALOG[voice_key].low)
+                    high = note_name(VOICE_CATALOG[voice_key].high)
+                low_var.set(low)
+                high_var.set(high)
+        except tk.TclError:
+            return
+        finally:
+            self._presetting = False
+        try:
+            self.voice_hint.configure(text="")
+        except tk.TclError:
+            pass
+        self._mark_voice_preset()
+
+    def _voice_preset_matching(self) -> Optional[str]:
+        """
+        Qué atajo describe exactamente lo que está en pantalla, si alguno.
+
+        Se pregunta mirando las casillas y no recordando qué botón se
+        apretó: así tocar a mano una voz apaga el atajo, y armar a mano lo
+        mismo que un atajo lo enciende --- el botón dice la verdad sobre lo
+        que se va a cantar, no sobre la historia de los clicks.
+        """
+        try:
+            chosen = {k for k, v in self.voice_check_vars.items() if v.get()}
+            ranges = {}
+            for key in chosen:
+                low_var, high_var = self.range_vars[key]
+                ranges[key] = (parse_note_name(low_var.get()),
+                               parse_note_name(high_var.get()))
+        except (ValueError, KeyError, tk.TclError):
+            return None
+        for preset_key, _label, _blurb, voices in self.VOICE_PRESETS:
+            if chosen != {voice for voice, _low, _high in voices}:
+                continue
+            if all(ranges[voice] == (parse_note_name(low), parse_note_name(high))
+                   for voice, low, high in voices):
+                return preset_key
+        return None
+
+    #: De dónde a dónde va la regla de los registros, en MIDI: del do2 al do6
+    #: entra hasta el piano de los atajos. Si alguien escribe algo más allá
+    #: la regla se estira.
+    RULER_SPAN = (36, 84)
+
+    def _draw_voice_ranges(self) -> None:
+        """Las barras de registro de la pantalla de voces, una por fila."""
+        rulers = getattr(self, "range_rulers", {})
+        if not rulers:
+            return
+        ranges: Dict[str, Optional[Tuple[int, int]]] = {}
+        for key, (low_var, high_var) in self.range_vars.items():
+            try:
+                low = parse_note_name(low_var.get().strip())
+                high = parse_note_name(high_var.get().strip())
+                ranges[key] = (min(low, high), max(low, high))
+            except Exception:                               # noqa: BLE001
+                ranges[key] = None
+        known = [r for r in ranges.values() if r is not None]
+        start = min([self.RULER_SPAN[0]] + [r[0] for r in known])
+        end = max([self.RULER_SPAN[1]] + [r[1] for r in known])
+        last = list(rulers)[-1]
+        for key, canvas in rulers.items():
+            try:
+                canvas.delete("all")
+                width = max(60, canvas.winfo_width())
+            except tk.TclError:
+                continue
+            pad = 6
+
+            def x_of(midi: float) -> float:
+                return pad + (midi - start) / max(1, end - start) * (width - 2 * pad)
+
+            # Un trazo tenue en cada do: la regla es un teclado, y el do es
+            # la tecla con la que se cuenta.
+            for midi in range(start - start % 12 + 12 * (start % 12 > 0),
+                              end + 1, 12):
+                x = x_of(midi)
+                canvas.create_line(x, 3, x, 27 if key != last else 19,
+                                   fill=BORDER_SOFT)
+                if key == last:
+                    canvas.create_text(x, 25, text=note_name(midi),
+                                       fill=TEXT_MUTED, font=("Segoe UI", 8))
+            span = ranges.get(key)
+            if span is None:
+                continue
+            chosen = self.voice_check_vars[key].get()
+            lane = self.STAFF_LANES.get(key, 0)
+            colour = (VOICE_COLOURS[min(3, 3 - lane)] if chosen
+                      else mix(SURFACE_LIGHT, TEXT_MUTED, 0.35))
+            canvas.create_line(x_of(span[0]), 12, x_of(span[1]), 12,
+                               fill=colour, width=8, capstyle="round")
+
+    def _mark_voice_preset(self) -> None:
+        """Encender el botón del atajo que coincide, y apagar los demás."""
+        if getattr(self, "_presetting", False):
+            return
+        self._draw_voice_ranges()
+        matching = self._voice_preset_matching()
+        for key, button in getattr(self, "voice_preset_buttons", {}).items():
+            on = key == matching
+            try:
+                button.configure(
+                    fg_color=ACCENT if on else "transparent",
+                    border_color=ACCENT if on else BORDER_SOFT,
+                    text_color="#FFFFFF" if on else TEXT_NORMAL,
+                    hover_color=ACCENT_HOVER if on else SURFACE_RAISED)
+            except tk.TclError:
+                pass
 
     def _default_principalis(self) -> str:
         """
@@ -4071,14 +5053,14 @@ class ChordWeaverApp(ctk.CTk):
                 self.voice_hint.configure(
                     text=trf("El rango de {label} no se entiende. Usá "
                              "nombres tipo C4, Bb3, F#5.",
-                             label=VOICE_CATALOG[key].label)
+                             label=tr(VOICE_CATALOG[key].label))
                 )
                 return False
             if low >= high:
                 self.voice_hint.configure(
                     text=trf("En {label} la nota grave tiene que ser menor "
                              "que la aguda.",
-                             label=VOICE_CATALOG[key].label)
+                             label=tr(VOICE_CATALOG[key].label))
                 )
                 return False
             overrides[position] = (low, high)
@@ -4089,7 +5071,7 @@ class ChordWeaverApp(ctk.CTk):
                 self.voice_hint.configure(
                     text=trf("Marcaste {label} como vox principalis, pero "
                              "esa voz no está en el conjunto.",
-                             label=VOICE_CATALOG[chosen_principalis].label)
+                             label=tr(VOICE_CATALOG[chosen_principalis].label))
                 )
                 return False
             if ordered.index(chosen_principalis) == 0:
@@ -4097,7 +5079,7 @@ class ChordWeaverApp(ctk.CTk):
                     text=trf("{label} es la voz más grave del conjunto, "
                              "así que no queda ninguna debajo para hacer "
                              "de vox organalis. Elegí una voz más aguda.",
-                             label=VOICE_CATALOG[chosen_principalis].label)
+                             label=tr(VOICE_CATALOG[chosen_principalis].label))
                 )
                 return False
 
@@ -4121,11 +5103,9 @@ class ChordWeaverApp(ctk.CTk):
 
     def _screen_metre(self) -> None:
         self._heading(
-            tr("¿Cuánto dura y en qué compás?"),
-            tr("Elegí la métrica base y cuántos compases. Cada compás puede "
-               "después llevar la suya propia: el cambio de métrica en el medio "
-               "de la pieza es legítimo y el programa lo escribe en la "
-               "partitura."))
+            tr("Elegí el compás y el largo"),
+            tr("Cada compás puede tener su propia métrica, y el cambio queda "
+               "escrito en la partitura."))
 
         top = ctk.CTkFrame(self.body, fg_color=SURFACE_LIGHT, corner_radius=11)
         top.pack(fill="x", pady=(0, 12))
@@ -4180,7 +5160,7 @@ class ChordWeaverApp(ctk.CTk):
         hint = getattr(self, "metre_hint", None)
         if hint is not None:
             hint.configure(
-                text=(trf("Pediste {asked}: el máximo son {MAX_BARS} "
+                text=(trf("Pediste {asked}, pero el máximo son {MAX_BARS} "
                           "compases.",
                           asked=asked, MAX_BARS=MAX_BARS)
                       if asked > MAX_BARS else ""))
@@ -4200,19 +5180,26 @@ class ChordWeaverApp(ctk.CTk):
         # Las que sobran se esconden, no se mueren: bajar el número de
         # compases y volver a subirlo es lo más común que se hace acá.
         for row in self.bar_rows[count:]:
-            row["frame"].pack_forget()
+            row["frame"].grid_remove()
 
+        # Un mosaico y no una fila por compás: con la fila a todo el ancho,
+        # cuatro compases ya ocupaban la pantalla y el desplegable quedaba
+        # perdido en una franja vacía. Así entran los treinta y dos.
+        self.bars_frame.grid_columnconfigure(tuple(range(BAR_TILES)),
+                                             weight=1, uniform="baldosa")
         self.bar_signature_menus: List[DurationPicker] = []
         for index in range(count):
             if index < len(self.bar_rows):
                 row = self.bar_rows[index]
-                row["frame"].pack(fill="x", pady=3)
             else:
                 row = self._build_bar_row(index)
                 self.bar_rows.append(row)
+            row["frame"].grid(row=index // BAR_TILES, column=index % BAR_TILES,
+                              sticky="nsew", padx=5, pady=5)
             existing = (self.bar_signatures[index]
                         if index < len(self.bar_signatures) else None)
             row["menu"].set(existing or self.base_time_signature)
+            self._paint_bar_tile(row)
             self.bar_signature_menus.append(row["menu"])
 
     def _build_bar_row(self, index: int) -> dict:
@@ -4230,14 +5217,57 @@ class ChordWeaverApp(ctk.CTk):
         cuatro. `DurationPicker` comparte un solo menú para toda la ventana.
         """
         frame = ctk.CTkFrame(self.bars_frame, fg_color=SURFACE_LIGHT,
-                             corner_radius=11)
-        frame.pack(fill="x", pady=3)
-        tk.Label(frame, text=trf("Compás {index}", index=index + 1), font=FONT_BODY,
-                 fg=TEXT_NORMAL, bg=SURFACE_LIGHT, width=13, anchor="w",
-                 pady=0).pack(side="left", padx=14, pady=8)
-        menu = DurationPicker(frame, TIME_SIGNATURES, width=8)
-        menu.pack(side="left")
-        return {"frame": frame, "menu": menu}
+                             corner_radius=11, border_width=1,
+                             border_color=BORDER_SOFT)
+        inner = tk.Frame(frame, bg=SURFACE_LIGHT)
+        inner.pack(fill="both", expand=True, padx=12, pady=10)
+        tk.Label(inner, text=str(index + 1),
+                 font=scaled(("Segoe UI Semibold", 18)), fg=ACCENT,
+                 bg=SURFACE_LIGHT, pady=0).pack(side="left", anchor="n")
+        side = tk.Frame(inner, bg=SURFACE_LIGHT)
+        side.pack(side="right", anchor="n")
+        row: dict = {"frame": frame, "border": BORDER_SOFT}
+        menu = DurationPicker(side, TIME_SIGNATURES, width=6,
+                              background=SURFACE_RAISED,
+                              command=lambda _v, r=row: self._paint_bar_tile(r))
+        menu.pack(anchor="e", ipady=3)
+        beats = tk.Canvas(side, width=BEAT_DOTS_WIDTH, height=7,
+                          bg=SURFACE_LIGHT, highlightthickness=0, bd=0)
+        beats.pack(anchor="e", pady=(7, 0))
+        row.update(menu=menu, beats=beats)
+        return row
+
+    def _paint_bar_tile(self, row: dict) -> None:
+        """
+        Los tiempos del compás como puntos, y el borde si cambia de métrica.
+
+        Los compuestos van agrupados de a tres --- un 6/8 son dos tiempos de
+        tres corcheas, no seis tiempos ---, que es justamente lo que el
+        número solo no deja ver. Y el compás que cambia de métrica respecto
+        de la base se enciende con el color del modo: un cambio de compás
+        en el medio de la pieza tiene que verse de lejos.
+        """
+        try:
+            signature = row["menu"].get()
+            beats, _, unit = signature.partition("/")
+            beats, unit = int(beats), int(unit or 4)
+            canvas = row["beats"]
+            canvas.delete("all")
+            group = 3 if unit == 8 and beats % 3 == 0 and beats > 3 else beats
+            x = BEAT_DOTS_WIDTH - 3.5
+            for index in reversed(range(beats)):
+                canvas.create_oval(x - 2.5, 1, x + 2.5, 6, width=0,
+                                   fill=ACCENT if index % group == 0
+                                   else TEXT_MUTED)
+                x -= 7 + (4 if index % group == 0 else 0)
+            base = getattr(self, "signature_menu", None)
+            changed = base is not None and signature != base.get()
+            border = ACCENT if changed else BORDER_SOFT
+            if row.get("border") != border:
+                row["frame"].configure(border_color=border)
+                row["border"] = border
+        except (tk.TclError, ValueError):
+            pass
 
     def _commit_metre(self) -> bool:
         self.bar_signatures = [menu.get() for menu in self.bar_signature_menus]
@@ -4249,23 +5279,35 @@ class ChordWeaverApp(ctk.CTk):
     def _screen_chords(self) -> None:
         self._heading(
             tr("Escribí la progresión"),
-            tr("Cifrado americano: Cmaj7, F#m7b5, Bb13, C/G. Cada compás tiene "
-               "que llenarse exacto con las duraciones elegidas. El candado fija "
-               "el orden de las voces de un acorde, y el piano sirve para armar "
-               "a mano uno que el cifrado no sepa nombrar."))
+            tr("En cifrado americano, por ejemplo Cmaj7, F#m7b5, Bb13 o C/G. "
+               "Las duraciones de cada compás tienen que sumar exacto. Para "
+               "un acorde sin nombre, usá el piano."))
 
         toolbar = ctk.CTkFrame(self.body, fg_color="transparent")
-        toolbar.pack(fill="x", pady=(0, 8))
+        toolbar.pack(fill="x", pady=(0, 10))
         import_button = ctk.CTkButton(
-            toolbar, text=tr("Importar partitura…"), width=170,
-            fg_color="transparent", border_width=1, border_color=TEXT_MUTED,
+            toolbar, text=tr("Importar partitura…"), width=170, height=34,
+            corner_radius=9, fg_color="transparent", border_width=1,
+            border_color=BORDER_SOFT, text_color=TEXT_NORMAL,
             hover_color=SURFACE_LIGHT, command=self._import_score)
         import_button.pack(side="left")
+        # La progresión entera en un renglón, como en una hoja de acordes:
+        # con los compases en tarjetas, es lo único que deja leerla de un
+        # vistazo. Se rehace con cada tecla y cuesta un `join`.
+        strip = ctk.CTkFrame(toolbar, fg_color=SURFACE_LIGHT, corner_radius=9,
+                             border_width=1, border_color=BORDER_SOFT,
+                             height=34)
+        strip.pack(side="left", fill="x", expand=True, padx=(12, 0))
+        strip.pack_propagate(False)
+        self.chord_preview = FlatLabel(
+            strip, text="", font=scaled(("Segoe UI Semibold", 12)),
+            text_color=TEXT_NORMAL, background=SURFACE_LIGHT)
+        self.chord_preview.pack(side="left", fill="x", expand=True,
+                                padx=14, pady=6)
         Tooltip(import_button,
-                tr("Lee un archivo MusicXML y carga sus acordes con su ritmo. "
-                   "El orden de las voces queda como punto de partida: el "
-                   "programa puede reacomodarlo, salvo en los acordes que fijes "
-                   "con el candado."))
+                tr("Carga los acordes de un MusicXML con su ritmo. El "
+                   "programa puede reacomodar las voces, salvo en los acordes "
+                   "con candado."))
 
         # Sin adornos en el Organizador. Acá la progresión la escribe el
         # usuario acorde por acorde, y el adorno metía notas que nadie pidió
@@ -4326,9 +5368,9 @@ class ChordWeaverApp(ctk.CTk):
     def _import_score(self) -> None:
         """Load a MusicXML file into the chord rows."""
         path = filedialog.askopenfilename(
-            title="Elegí una partitura",
-            filetypes=[("Partituras", "*.musicxml *.xml *.mxl"),
-                       ("Todos los archivos", "*.*")],
+            title=tr("Elegí una partitura"),
+            filetypes=[(tr("Partituras"), "*.musicxml *.xml *.mxl"),
+                       (tr("Todos los archivos"), "*.*")],
             initialdir=history.default_output_directory(),
         )
         if not path:
@@ -4342,9 +5384,9 @@ class ChordWeaverApp(ctk.CTk):
         if score.voice_count != len(self.voice_keys):
             if not messagebox.askyesno(
                 tr("Cantidad de voces distinta"),
-                trf("La partitura tiene {voice_count} voces y vos elegiste "
-                    "{voice_keys}. Se van a cargar los acordes igual, "
-                    "repartidos entre las voces que elegiste. ¿Seguimos?",
+                trf("La partitura tiene {voice_count} voces y elegiste "
+                    "{voice_keys}. Los acordes se cargan igual, repartidos "
+                    "entre tus voces. ¿Seguimos?",
                     voice_count=score.voice_count,
                     voice_keys=len(self.voice_keys)),
             ):
@@ -4384,9 +5426,10 @@ class ChordWeaverApp(ctk.CTk):
         # y el bajo se lee como inversión, así que lo escrito vuelve con
         # barra aunque en el original no la tuviera. Conviene decirlo acá y
         # no que se descubra mirando la progresión.
-        message += ("\n\nLa lectura es aproximada: los cifrados se deducen de "
-                    "las notas, así que puede haber inversiones de más o algún "
-                    "acorde con otro nombre. Revisalos antes de generar.")
+        message += "\n\n" + tr(
+            "Los cifrados se deducen de las notas, así que puede haber "
+            "inversiones de más o algún acorde con otro nombre. Revisalos "
+            "antes de generar.")
         if score.warnings:
             message += "\n\n" + "\n".join(score.warnings)
         messagebox.showinfo(tr("Partitura importada"), message)
@@ -4399,36 +5442,56 @@ class ChordWeaverApp(ctk.CTk):
         for child in self.chords_frame.winfo_children():
             child.destroy()
         self.chord_rows = []
+        # Dos compases por renglón, como en una hoja de acordes: uno debajo
+        # del otro, la progresión se leía como un formulario y no como
+        # música, y ocho compases ya no entraban en la pantalla.
+        self.chords_frame.grid_columnconfigure((0, 1), weight=1,
+                                               uniform="compas")
 
         for bar_index in range(self.bar_count):
             signature = self._signature_for(bar_index)
             bar_frame = ctk.CTkFrame(self.chords_frame, fg_color=SURFACE_LIGHT,
-                                     corner_radius=11)
-            bar_frame.pack(fill="x", pady=5)
+                                     corner_radius=12, border_width=1,
+                                     border_color=BORDER_SOFT)
+            bar_frame.grid(row=bar_index // 2, column=bar_index % 2,
+                           sticky="nsew", padx=(0, 6) if bar_index % 2 == 0
+                           else (6, 0), pady=6)
 
             # De acá para abajo va todo pelado. El marco del compás se queda
-            # en `CTkFrame` porque su esquina redondeada se ve; estos dos son
-            # `fg_color="transparent"`, o sea que lo único que dibujan es un
-            # rectángulo del color del padre --- invisible, y pago.
+            # en `CTkFrame` porque su esquina redondeada se ve; lo de adentro
+            # es `tk` puro: un compás lleva una docena de piezas y los
+            # compases los elige el usuario. Ver `FlatButton`.
             head = tk.Frame(bar_frame, bg=SURFACE_LIGHT)
-            head.pack(fill="x", padx=12, pady=(10, 4))
-            FlatLabel(head, text=trf("Compás {bar_index}  ·  {signature}",
-                                     bar_index=bar_index + 1,
-                                     signature=signature),
-                      font=scaled(("Segoe UI Semibold", 13))).pack(side="left")
+            head.pack(fill="x", padx=14, pady=(12, 8))
+            FlatLabel(head, text=str(bar_index + 1),
+                      font=scaled(("Segoe UI Semibold", 20)),
+                      text_color=ACCENT).pack(side="left")
+            FlatLabel(head, text=tr("compás"), text_color=TEXT_MUTED
+                      ).pack(side="left", padx=(8, 0), pady=(8, 0))
+            tk.Label(head, text=str(signature), font=FONT_SMALL,
+                     fg=TEXT_NORMAL, bg=SURFACE_RAISED, padx=7, pady=1
+                     ).pack(side="left", padx=(8, 0), pady=(8, 0))
             fill_label = FlatLabel(head, text="", text_color=TEXT_MUTED)
-            fill_label.pack(side="left", padx=12)
-            FlatButton(head, "+ acorde",
-                       lambda b=bar_index: self._add_chord(b),
-                       width=10).pack(side="right")
+            fill_label.pack(side="right", pady=(8, 0))
+            meter = tk.Canvas(head, width=METER_WIDTH, height=8,
+                              bg=SURFACE_LIGHT, highlightthickness=0, bd=0)
+            meter.pack(side="right", padx=(0, 10), pady=(8, 0))
 
             slots_frame = tk.Frame(bar_frame, bg=SURFACE_LIGHT)
-            slots_frame.pack(fill="x", padx=12, pady=(0, 10))
+            slots_frame.pack(fill="x", padx=14)
+            add = FlatButton(slots_frame, N("+ acorde"),
+                             lambda b=bar_index: self._add_chord(b),
+                             width=0, border=BORDER_SOFT,
+                             hover=SURFACE_RAISED, background=SURFACE_LIGHT)
+            add.configure(text_color=TEXT_MUTED, pady=3)
+            add.pack(fill="x", pady=(2, 12))
 
             self.chord_rows.append({
                 "bar_index": bar_index,
                 "frame": slots_frame,
                 "fill_label": fill_label,
+                "meter": meter,
+                "add": add,
                 "entries": [],
             })
             saved = getattr(self, "saved_chords", {}).get(bar_index)
@@ -4457,6 +5520,7 @@ class ChordWeaverApp(ctk.CTk):
             for _ in range(needed):
                 self._add_chord(bar_index, duration=default_duration, refresh=False)
             self._refresh_fill(bar_index)
+        self._refresh_preview()
 
     def _signature_for(self, bar_index: int) -> TimeSignature:
         raw = (self.bar_signatures[bar_index]
@@ -4467,13 +5531,26 @@ class ChordWeaverApp(ctk.CTk):
     def _add_chord(self, bar_index: int, duration: float = 2.0,
                    refresh: bool = True, initial: Optional[dict] = None) -> None:
         row = self.chord_rows[bar_index]
-        # Pelado por lo mismo que la cabecera: transparente sobre el marco
-        # del compás, así que no hay ninguna esquina que perder.
-        line = tk.Frame(row["frame"], bg=SURFACE_LIGHT)
-        line.pack(fill="x", pady=2)
+        # La ficha: un renglón hundido con una franja a la izquierda que
+        # lleva el color del estado, así se ve de lejos qué casilla tiene un
+        # problema sin leer ningún texto. Pelada por lo mismo que la
+        # cabecera.
+        line = tk.Frame(row["frame"], bg=CHIP, highlightthickness=1,
+                        highlightbackground=BORDER_SOFT)
+        line.pack(fill="x", pady=(0, 6), before=row["add"])
+        stripe = tk.Frame(line, bg=BORDER_SOFT, width=3)
+        stripe.pack(side="left", fill="y")
+        inner = tk.Frame(line, bg=CHIP)
+        inner.pack(side="left", fill="x", expand=True, padx=(10, 8),
+                   pady=(7, 6))
+        top = tk.Frame(inner, bg=CHIP)
+        top.pack(fill="x")
 
-        entry = ctk.CTkEntry(line, width=130, placeholder_text=tr("Cmaj7"),
-                             font=FONT_BODY)
+        entry = ctk.CTkEntry(top, width=150, height=32,
+                             placeholder_text=tr("Cmaj7"),
+                             font=scaled(("Segoe UI Semibold", 15)),
+                             fg_color=SURFACE, border_color=BORDER_SOFT,
+                             border_width=1, corner_radius=7)
         entry.pack(side="left")
 
         duration_values = ([label for label, _ in DURATION_LABELS]
@@ -4482,26 +5559,26 @@ class ChordWeaverApp(ctk.CTk):
         # `CTkOptionMenu` se trae su propio menú desplegable puesto. Ver la
         # clase para el número.
         duration_menu = DurationPicker(
-            line, duration_values,
+            top, duration_values, width=17, background=SURFACE_RAISED,
             command=lambda _v, b=bar_index: (
                 self._refresh_fill(b), self._revalidate_bar(b)),
         )
         default_label = next((l for l, v in DURATION_LABELS if v == duration),
                              DURATION_LABELS[1][0])
         duration_menu.set(default_label)
-        duration_menu.pack(side="left", padx=8)
+        duration_menu.pack(side="left", padx=(8, 0), ipady=5)
 
-        # `width` en un `tk.Label` se mide en caracteres, no en píxeles: 31
-        # es lo que ocupaban los 250 px del `CTkLabel` con esta letra, y hace
-        # falta que sea fijo para que los tres botones de la derecha queden
-        # alineados entre casilla y casilla.
-        status = FlatLabel(line, text="", width=31, text_color=TEXT_MUTED)
-        status.pack(side="left", padx=6)
+        # Debajo del cifrado y no al costado: con dos compases por renglón
+        # el costado no alcanza, y el aviso largo ("no lo reconozco ---
+        # probá el piano") empujaba los botones fuera de la ficha.
+        status = FlatLabel(inner, text="", text_color=TEXT_MUTED,
+                           background=CHIP)
+        status.pack(fill="x", pady=(4, 0))
 
         record = {
             "entry": entry, "duration": duration_menu, "status": status,
-            "line": line, "custom": None, "locked": None, "lock_button": None,
-            "piano_button": None,
+            "line": line, "stripe": stripe, "custom": None, "locked": None,
+            "lock_button": None, "piano_button": None,
         }
 
         # Los tres van con `FlatButton` y no con `CTkButton`: son tres por
@@ -4509,27 +5586,31 @@ class ChordWeaverApp(ctk.CTk):
         # botones del programa cuya cantidad no la decide el diseño sino el
         # usuario. Ver `FlatButton` para el número.
         lock_button = FlatButton(
-            line, "🔓", lambda r=record: self._open_lock(r),
-            width=3, font=scaled(("Segoe UI", 13)),
+            top, "🔓", lambda r=record: self._open_lock(r),
+            width=3, font=scaled(("Segoe UI", 13)), border=CHIP,
+            hover=SURFACE_RAISED, background=CHIP,
         )
-        lock_button.pack(side="right", padx=(6, 0))
+        lock_button.pack(side="right", padx=(4, 0))
         record["lock_button"] = lock_button
         Tooltip(lock_button,
-                tr("Fijar el orden exacto de las voces de este acorde. El "
-                   "programa no va a poder cambiarlo, pero lo sigue teniendo en "
-                   "cuenta al acomodar los acordes vecinos."))
+                tr("Fija qué nota canta cada voz en este acorde. El programa "
+                   "no lo cambia, pero lo tiene en cuenta para los acordes "
+                   "vecinos."))
 
-        piano_button = FlatButton(line, "piano",
+        piano_button = FlatButton(top, "piano",
                                   lambda r=record: self._open_piano(r),
-                                  width=7)
-        piano_button.pack(side="right")
+                                  width=6, border=SURFACE_RAISED,
+                                  hover=BORDER_SOFT, background=SURFACE_RAISED)
+        piano_button.configure(pady=4)
+        piano_button.pack(side="right", padx=(4, 0))
         # Guardado para que la guía de esta pantalla pueda señalarlo: es la
         # salida para los acordes que el cifrado no sabe nombrar, y sin
         # señalarlo el paso resaltaba la casilla entera.
         record["piano_button"] = piano_button
-        FlatButton(line, "✕", lambda r=record, b=bar_index:
+        FlatButton(top, "✕", lambda r=record, b=bar_index:
                    self._remove_chord(b, r),
-                   width=3, hover=ERROR).pack(side="right", padx=6)
+                   width=3, border=CHIP, hover=ERROR,
+                   background=CHIP).pack(side="right")
 
         if initial:
             if initial.get("symbol"):
@@ -4540,7 +5621,7 @@ class ChordWeaverApp(ctk.CTk):
             record["locked"] = initial.get("locked")
             record["imported_voicing"] = initial.get("imported_voicing")
             if record["locked"]:
-                lock_button.configure(text="🔒", border_color=ACCENT,
+                lock_button.configure(text="🔒", border_color=CHIP,
                                       text_color=ACCENT)
             self._validate_chord(record)
 
@@ -4551,6 +5632,9 @@ class ChordWeaverApp(ctk.CTk):
         self._story_watch_cadence(record)
         if refresh:
             self._refresh_fill(bar_index)
+            # Después del `append`: la validación de arriba la refresca
+            # cuando la casilla todavía no está en el compás.
+            self._refresh_preview()
 
     def _remove_chord(self, bar_index: int, record: dict) -> None:
         row = self.chord_rows[bar_index]
@@ -4558,10 +5642,50 @@ class ChordWeaverApp(ctk.CTk):
             row["entries"].remove(record)
             record["line"].destroy()
             self._refresh_fill(bar_index)
+            self._refresh_preview()
 
     def _validate_chord(self, record: dict) -> None:
+        """Revisar una casilla y pintar su estado: el texto, la franja y la
+        lectura corrida de arriba."""
+        self._judge_chord(record)
+        stripe = record.get("stripe")
+        if stripe is not None:
+            try:
+                status = record["status"]
+                colour = status.cget("fg") if status.cget("text") else BORDER_SOFT
+                if colour == TEXT_MUTED:
+                    colour = BORDER_SOFT
+                stripe.configure(bg=colour)
+            except tk.TclError:
+                pass
+        self._refresh_preview()
+
+    def _refresh_preview(self) -> None:
+        """La progresión en un renglón: los compases separados por barras."""
+        label = getattr(self, "chord_preview", None)
+        if label is None:
+            return
+        bars = []
+        for row in getattr(self, "chord_rows", []):
+            names = []
+            for record in row["entries"]:
+                try:
+                    if self._is_rest(record):
+                        names.append("—")
+                        continue
+                    names.append(record["entry"].get().strip() or "·")
+                except tk.TclError:
+                    return
+            bars.append("  ".join(names))
+        text = "│  " + "  │  ".join(bars) + "  │" if bars else ""
+        try:
+            label.configure(text=text)
+        except tk.TclError:
+            pass
+
+    def _judge_chord(self, record: dict) -> None:
         if self._is_rest(record):
-            record["status"].configure(text=tr("silencio — el AG no interviene"),
+            record["status"].configure(text=tr("silencio, no suena nada"),
                                        text_color=TEXT_MUTED)
             record["entry"].configure(state="disabled")
             record["lock_button"].configure(state="disabled")
@@ -4571,7 +5695,8 @@ class ChordWeaverApp(ctk.CTk):
         text = record["entry"].get().strip()
         if record.get("locked"):
             record["status"].configure(
-                text="bloqueado: " + " ".join(note_name(p) for p in record["locked"]),
+                text=trf("bloqueado: {notes}",
+                         notes=" ".join(note_name(p) for p in record["locked"])),
                 text_color=ACCENT,
             )
             return
@@ -4598,13 +5723,13 @@ class ChordWeaverApp(ctk.CTk):
                 # terminación del verbo: «va»/«van» es una concordancia del
                 # castellano y no existe como pedazo en ningún otro idioma.
                 record["status"].configure(
-                    text=trf("{record} notas y sólo {voice_keys} voces — "
+                    text=trf("{record} notas para {voice_keys} voces · "
                              "{extra} no se va a escribir",
                              record=len(record['custom']),
                              voice_keys=len(self.voice_keys), extra=extra)
                     if extra == 1 else
-                    trf("{record} notas y sólo {voice_keys} voces — "
-                        "{extra} no se van a escribir",
+                    trf("{record} notas para {voice_keys} voces · {extra} no "
+                        "se van a escribir",
                         record=len(record['custom']),
                         voice_keys=len(self.voice_keys), extra=extra),
                     text_color=WARN)
@@ -4615,13 +5740,14 @@ class ChordWeaverApp(ctk.CTk):
         try:
             chord = parse_chord(text)
         except ChordParseError:
-            record["status"].configure(text=tr("no lo reconozco — probá el piano"),
+            record["status"].configure(text=tr("no lo reconozco, probá con el "
+                                               "piano"),
                                        text_color=ERROR)
             return
         advice = check_chord_fits(chord, len(self.voice_keys))
         if advice.fits:
             record["status"].configure(
-                text=trf("{tones} notas — entra", tones=len(chord.tones)), text_color=OK_GREEN
+                text=trf("{tones} notas · entra", tones=len(chord.tones)), text_color=OK_GREEN
             )
         elif advice.suggested_omissions:
             record["status"].configure(
@@ -4643,6 +5769,7 @@ class ChordWeaverApp(ctk.CTk):
         signature = self._signature_for(bar_index)
         total = sum(self._duration_of(r) for r in row["entries"])
         target = signature.quarters_per_bar
+        self._draw_meter(row.get("meter"), total, target, signature.beats)
         if abs(total - target) < 1e-6:
             row["fill_label"].configure(text=trf("{total:g}/{target:g} "
                                                  "tiempos",
@@ -4653,6 +5780,40 @@ class ChordWeaverApp(ctk.CTk):
                                                  "tiempos",
                                                  total=total, target=target),
                                         text_color=WARN)
+
+    @staticmethod
+    def _draw_meter(canvas, total: float, target: float, beats: int) -> None:
+        """
+        Cuánto del compás está lleno, en segmentos de a un tiempo.
+
+        Verde exacto, ámbar si falta y rojo si sobra --- los mismos colores
+        que el texto de al lado, que dice el número.
+        """
+        if canvas is None:
+            return
+        try:
+            canvas.delete("all")
+            width = METER_WIDTH
+            beats = max(1, beats)
+            gap = 3
+            share = (width - gap * (beats - 1)) / beats
+            if abs(total - target) < 1e-6:
+                colour = OK_GREEN
+            elif total > target:
+                colour = ERROR
+            else:
+                colour = WARN
+            filled = 0.0 if target <= 0 else min(1.0, total / target) * beats
+            for index in range(beats):
+                left = index * (share + gap)
+                canvas.create_rectangle(left, 0, left + share, 8,
+                                        fill=SURFACE_RAISED, width=0)
+                portion = max(0.0, min(1.0, filled - index))
+                if portion > 0:
+                    canvas.create_rectangle(left, 0, left + share * portion, 8,
+                                            fill=colour, width=0)
+        except tk.TclError:
+            pass
 
     @staticmethod
     def _duration_of(record: dict) -> float:
@@ -4684,8 +5845,8 @@ class ChordWeaverApp(ctk.CTk):
         # seis notas sin que nada dijera que sobraban dos.
         limit = ctk.CTkLabel(
             window,
-            text=trf("Hay {voice_keys} voces: más notas que ésas se "
-                     "escriben dando algunas por sobreentendidas.",
+            text=trf("Hay {voice_keys} voces. Si marcás más notas, algunas se "
+                     "omiten al escribir.",
                      voice_keys=len(self.voice_keys)),
             font=FONT_SMALL, text_color=TEXT_MUTED)
         limit.pack()
@@ -4702,18 +5863,17 @@ class ChordWeaverApp(ctk.CTk):
             try:
                 if extra > 0:
                     limit.configure(
-                        text=trf("Te pasaste por {extra}: hay {voice_keys} "
-                                 "voces, así que {extra2} de estas notas "
-                                 "no se van a escribir.",
+                        text=trf("Sobran {extra}. Hay {voice_keys} voces, así "
+                                 "que {extra2} de estas notas no se van a "
+                                 "escribir.",
                                  extra=extra,
                                  voice_keys=len(self.voice_keys),
                                  extra2=extra),
                         text_color=WARN)
                 else:
                     limit.configure(
-                        text=trf("Hay {voice_keys} voces: más notas que "
-                                 "ésas se escriben dando algunas por "
-                                 "sobreentendidas.",
+                        text=trf("Hay {voice_keys} voces. Si marcás más "
+                                 "notas, algunas se omiten al escribir.",
                                  voice_keys=len(self.voice_keys)),
                         text_color=TEXT_MUTED)
             except tk.TclError:
@@ -4784,9 +5944,9 @@ class ChordWeaverApp(ctk.CTk):
                      font=scaled(("Segoe UI Semibold", 15))).pack(anchor="w", padx=22,
                                                           pady=(20, 2))
         ctk.CTkLabel(window,
-                     text=tr("Escribí qué nota canta cada voz. El programa no va a "
-                             "tocar este acorde, pero sí lo usa para decidir cómo se "
-                             "mueven los acordes de al lado."),
+                     text=tr("Escribí qué nota canta cada voz. El programa no "
+                             "va a cambiar este acorde, pero lo usa para "
+                             "mover los acordes vecinos."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=460,
                      justify="left").pack(anchor="w", padx=22, pady=(0, 12))
 
@@ -4800,7 +5960,7 @@ class ChordWeaverApp(ctk.CTk):
         for index, voice in enumerate(voices):
             line = ctk.CTkFrame(window, fg_color="transparent")
             line.pack(fill="x", padx=22, pady=4)
-            ctk.CTkLabel(line, text=tr(voice.name), font=FONT_SMALL, width=140,
+            ctk.CTkLabel(line, text=i18n.tr_name(voice.name), font=FONT_SMALL, width=140,
                          anchor="w").pack(side="left")
             variable = tk.StringVar(
                 value=note_name(current[index]) if index < len(current) else ""
@@ -4887,19 +6047,19 @@ class ChordWeaverApp(ctk.CTk):
                 pitches.append(pitch)
             if any(pitches[i] > pitches[i + 1] for i in range(len(pitches) - 1)):
                 message.configure(
-                    text=tr("Las voces quedan cruzadas: cada una tiene que estar "
-                            "por encima de la anterior.")
+                    text=tr("Las voces quedan cruzadas. Cada una tiene que "
+                            "estar por encima de la anterior.")
                 )
                 return
             record["locked"] = pitches
-            record["lock_button"].configure(text="🔒", border_color=ACCENT,
+            record["lock_button"].configure(text="🔒", border_color=CHIP,
                                             text_color=ACCENT)
             self._validate_chord(record)
             window.destroy()
 
         def clear_lock() -> None:
             record["locked"] = None
-            record["lock_button"].configure(text="🔓", border_color=TEXT_MUTED,
+            record["lock_button"].configure(text="🔓", border_color=CHIP,
                                             text_color=TEXT_NORMAL)
             self._validate_chord(record)
             window.destroy()
@@ -4933,13 +6093,13 @@ class ChordWeaverApp(ctk.CTk):
                             and not r["custom"])
                 extra = ""
                 if empty and total > signature.quarters_per_bar:
-                    extra = (trf(" Hay {empty} casilla vacía que igual "
-                                 "ocupa su duración: escribí un acorde o "
-                                 "borrala con la ✕.",
+                    extra = (trf(" Hay {empty} casilla vacía que igual ocupa "
+                                 "su duración. Escribí un acorde o borrala "
+                                 "con la ✕.",
                                  empty=empty)
                              if empty == 1 else
                              trf(" Hay {empty} casillas vacías que igual "
-                                 "ocupan su duración: escribí un acorde o "
+                                 "ocupan su duración. Escribí acordes o "
                                  "borralas con la ✕.",
                                  empty=empty))
                 problems.append(
@@ -5025,10 +6185,9 @@ class ChordWeaverApp(ctk.CTk):
         self.range_overrides = {}
         self._heading(
             tr("Dibujá la melodía"),
-            tr("Click en el pentagrama para poner cada nota, o usá el piano de "
-               "abajo. El programa busca los acordes que la sostienen "
-               "—respetando la armadura— y escribe las otras voces alrededor de "
-               "la tuya, sin tocarla."))
+            tr("Hacé click en el pentagrama para poner cada nota, o usá el "
+               "piano de abajo. El programa no cambia ninguna nota de tu "
+               "melodía."))
 
         toolbar = ctk.CTkFrame(self.body, fg_color="transparent")
         toolbar.pack(fill="x", pady=(0, 8))
@@ -5065,8 +6224,30 @@ class ChordWeaverApp(ctk.CTk):
         # apenas se escribe un poco arriba.
         saved = getattr(self, "_melody_voice", len(self.voice_keys) - 1)
         saved = min(saved, len(self.voice_keys) - 1)
-        self.melody_voice_menu.set(VOICE_CATALOG[self.voice_keys[saved]].label)
+        self.melody_voice_menu.set(tr(VOICE_CATALOG[self.voice_keys[saved]].label))
         self.melody_voice_menu.pack(side="left")
+
+        # Los accidentes, para escribir notas fuera de la armadura con el
+        # mouse. Se eligen antes del click y valen para esa nota sola, como
+        # en el analizador; el piano de abajo ya escribe las teclas negras
+        # con su accidente. Sin esto el pentagrama tenía siete notas por
+        # octava y el armonizador no podía recibir un sol sostenido.
+        ctk.CTkLabel(toolbar, text=tr("Accidente"), font=FONT_SMALL,
+                     text_color=TEXT_MUTED).pack(side="left", padx=(14, 6))
+        self.melody_accidentals = {}
+        for value, glyph in ((1, "♯"), (-1, "♭"), (0, "♮")):
+            button = ctk.CTkButton(
+                toolbar, text=glyph, width=34, height=28,
+                font=("Segoe UI Symbol", 15), fg_color="transparent",
+                border_width=1, border_color=TEXT_MUTED,
+                hover_color=SURFACE_LIGHT,
+                command=lambda v=value: self._set_melody_accidental(v))
+            button.pack(side="left", padx=2)
+            self.melody_accidentals[value] = button
+        Tooltip(self.melody_accidentals[1],
+                tr("La próxima nota que escribas con el mouse lleva este "
+                   "accidente. Vale para una sola nota. Tocalo otra vez para "
+                   "quitarlo."))
 
         import_button = ctk.CTkButton(
             toolbar, text=tr("Importar…"), width=110, height=30, font=FONT_SMALL,
@@ -5074,20 +6255,25 @@ class ChordWeaverApp(ctk.CTk):
             hover_color=SURFACE_LIGHT, command=self._import_melody)
         import_button.pack(side="right")
         Tooltip(import_button,
-                tr("Lee una melodía de un archivo MusicXML. Toma la nota más "
-                   "aguda de cada momento, así que sirve aunque la partitura "
-                   "traiga más de una voz."))
+                tr("Carga una melodía de un MusicXML. Toma la nota más aguda "
+                   "de cada momento, así que sirve aunque la partitura tenga "
+                   "varias voces."))
 
         self.staff = StaffEditor(
             self.body,
             colours={"surface": SURFACE_LIGHT, "text": TEXT_NORMAL,
-                     "muted": TEXT_MUTED, "accent": ACCENT, "gold": GOLD},
+                     "muted": TEXT_MUTED, "accent": ACCENT, "gold": GOLD,
+                     "chromatic": CHROMATIC_COLOUR},
             on_change=self._on_melody_changed)
         self.staff.pack(fill="both", expand=True, pady=(0, 8))
         for index, duration in getattr(self, "_melody_notes", []):
             self.staff.notes.append((index, duration))
         self.staff.marked = set(getattr(self, "_melody_marks", set()))
         self.staff.blocked = set(getattr(self, "_melody_skips", set()))
+        # Los accidentes van aparte de las notas (ver `StaffEditor`), así que
+        # se guardan y se devuelven aparte: sin esto, volver a esta pantalla
+        # convertía cada sol sostenido en un sol.
+        self.staff.accidentals = dict(getattr(self, "_melody_accidentals", {}))
 
         #: La fila de figuras y botones del pentagrama. Con nombre para que
         #: la guía de esta pantalla pueda señalarla entera.
@@ -5110,8 +6296,7 @@ class ChordWeaverApp(ctk.CTk):
                                hover_color=ACCENT_HOVER)
         listen.configure(command=lambda b=listen: self._play_melody(b))
         listen.pack(side="right", padx=(12, 0))
-        Tooltip(listen, tr("Reproduce la melodía sola, para escuchar lo que "
-                           "estás escribiendo antes de armonizarla."))
+        Tooltip(listen, tr("Toca la melodía sola, antes de armonizarla."))
         # Entre «Escuchar» y «Deshacer»: es un botón del pentagrama como
         # los otros dos, y con la fila de figuras a la izquierda queda a
         # mano. Lo que significa el dorado sigue explicado abajo.
@@ -5122,9 +6307,9 @@ class ChordWeaverApp(ctk.CTk):
             command=self._toggle_marking)
         self.mark_button.pack(side="right", padx=(6, 0))
         Tooltip(self.mark_button,
-                tr("Mientras está encendido, cada click del pentagrama prende o "
-                   "apaga el acorde de una nota en vez de escribirla. Apaga "
-                   "también las que doró el programa."))
+                tr("Encendido, cada click en el pentagrama pone o saca el "
+                   "acorde de una nota en vez de escribirla. También sirve "
+                   "para las que doró el programa."))
         self.undo_button = ctk.CTkButton(
             controls, text=tr("Deshacer"), width=100, height=30,
             font=FONT_SMALL, fg_color="transparent", border_width=1,
@@ -5141,19 +6326,46 @@ class ChordWeaverApp(ctk.CTk):
         # tooltip ni en el texto de arriba: es la única explicación de por
         # qué algunas notas están de otro color, y una explicación que hay
         # que ir a buscar no explica nada.
+        #
+        # Las muestras las dibuja el mismo `note_look` que pinta el
+        # pentagrama: escritas a mano con un «●» de color, la explicación
+        # podía decir una cosa y la nota mostrar otra. Son dos preguntas y
+        # cada una tiene su canal ---el color dice si la nota está en la
+        # escala, el halo si lleva acorde--- así que las tres que importan
+        # se distinguen aunque no se distinga el naranja del dorado.
         legend = ctk.CTkFrame(self.body, fg_color="transparent")
         legend.pack(fill="x", pady=(0, 4))
-        ctk.CTkLabel(legend, text="●", font=FONT_SMALL, text_color=GOLD,
-                     width=14).pack(side="left")
+        swatches = ctk.CTkFrame(legend, fg_color="transparent")
+        swatches.pack(fill="x")
+        palette = {"surface": SURFACE_LIGHT, "text": TEXT_NORMAL,
+                   "gold": GOLD, "chromatic": CHROMATIC_COLOUR}
+        for chromatic, harmonised, label in (
+                (False, True, tr("lleva acorde")),
+                (True, False, tr("fuera de la escala")),
+                (True, True, tr("fuera de la escala, con acorde"))):
+            legend_swatch(swatches, palette, chromatic, harmonised,
+                          background=SURFACE).pack(side="left")
+            ctk.CTkLabel(swatches, text=label, font=FONT_SMALL,
+                         text_color=TEXT_MUTED).pack(side="left",
+                                                     padx=(2, 14))
+        # Un renglón y no dos: lo que antes explicaba el dorado ya lo dicen
+        # las muestras, y cada renglón de más empujaba fuera de la ventana
+        # el aviso de abajo ---el que dice que la melodía no entra en la
+        # voz---. El jazz lleva su propia frase porque es el único estilo
+        # donde la nota que baja también se marca sola.
         ctk.CTkLabel(
             legend,
-            text=tr("Las doradas son las notas que van a llevar acorde. El "
-                    "click derecho ---o «Marcar notas» prendido--- prende y "
-                    "apaga el dorado de una nota: sirve tanto para pedir un "
-                    "acorde donde no lo había como para sacar el que puso el "
-                    "programa."),
+            text=(tr("Con click derecho, o con «Marcar notas» prendido, ponés "
+                     "o sacás el acorde de una nota. Una nota naranja que "
+                     "sube un semitono lleva sola el dominante de la "
+                     "siguiente, y una que baja, el sustituto tritonal.")
+                  if self.genre_key == "jazz"
+                  else tr("Con click derecho, o con «Marcar notas» prendido, "
+                          "ponés o sacás el acorde de una nota. Una nota "
+                          "naranja que sube un semitono lleva sola el "
+                          "dominante de la siguiente.")),
             font=FONT_SMALL, text_color=TEXT_MUTED, justify="left",
-            wraplength=760).pack(side="left")
+            wraplength=1080).pack(anchor="w")
 
         # El tramo del sendero que se juega acá no se toca con un botón sino
         # con una tecla: el piano se enciende en dorado y lo único que hay
@@ -5259,6 +6471,31 @@ class ChordWeaverApp(ctk.CTk):
         except tk.TclError:
             pass
 
+    def _set_melody_accidental(self, value: int) -> None:
+        """Elegir el accidente de la próxima nota, o soltarlo si ya estaba."""
+        if not hasattr(self, "staff"):
+            return
+        self.staff.pending = None if self.staff.pending == value else value
+        self._sync_melody_accidentals()
+
+    def _sync_melody_accidentals(self) -> None:
+        """Encender el botón del accidente pendiente, y sólo ése.
+
+        El pentagrama suelta el accidente en cuanto escribe la nota, así que
+        el botón se apaga solo al escribir: un botón que siguiera encendido
+        prometería un sostenido que la nota siguiente ya no va a llevar.
+        """
+        pending = getattr(getattr(self, "staff", None), "pending", None)
+        for value, button in getattr(self, "melody_accidentals", {}).items():
+            chosen = value == pending
+            try:
+                button.configure(
+                    fg_color=CHROMATIC_COLOUR if chosen else "transparent",
+                    text_color=SURFACE if chosen else TEXT_NORMAL,
+                    border_color=CHROMATIC_COLOUR if chosen else TEXT_MUTED)
+            except tk.TclError:
+                pass
+
     def _play_melody(self, button) -> None:
         """Play just the line, so the user can hear what they are writing."""
         if getattr(self, "_playing", None) is not None and self._playing.is_alive():
@@ -5307,6 +6544,7 @@ class ChordWeaverApp(ctk.CTk):
     def _on_melody_changed(self) -> None:
         if not hasattr(self, "staff"):
             return
+        self._sync_melody_accidentals()
         # Con el piano del sendero encendido el renglón dice qué hacer y no
         # cuánto se lleva escrito: el pentagrama está vacío y no se puede
         # escribir en él, así que «0 nota(s) · 0 compás(es)» es un contador
@@ -5343,9 +6581,9 @@ class ChordWeaverApp(ctk.CTk):
 
     def _import_melody(self) -> None:
         path = filedialog.askopenfilename(
-            title="Elegí una partitura",
-            filetypes=[("Partituras", "*.musicxml *.xml *.mxl"),
-                       ("Todos los archivos", "*.*")])
+            title=tr("Elegí una partitura"),
+            filetypes=[(tr("Partituras"), "*.musicxml *.xml *.mxl"),
+                       (tr("Todos los archivos"), "*.*")])
         if not path:
             return
         try:
@@ -5375,6 +6613,7 @@ class ChordWeaverApp(ctk.CTk):
         self._melody_notes = list(self.staff.notes)
         self._melody_marks = set(self.staff.marked)
         self._melody_skips = set(self.staff.blocked)
+        self._melody_accidentals = dict(self.staff.accidentals)
         self._key_label = i18n.untr(self.key_menu.get())
         self._melody_metre = self.melody_metre.get()
         self._duration_label = self.duration_var.get()
@@ -5437,14 +6676,21 @@ class ChordWeaverApp(ctk.CTk):
         return True
 
     def _build_melody(self, written=None, marks=None,
-                      key_label=None, metre=None, skips=None):
+                      key_label=None, metre=None, skips=None,
+                      alterations=None):
         """Turn what is on the staff into a melody the engine understands.
 
         Sin argumentos devuelve la melodía **guardada**, que es la que se va
         a armonizar. Los argumentos existen para la vista previa: mientras el
         usuario dibuja no hay nada guardado todavía, y lo que hay que mirar
         es el pentagrama y los menús tal como están en ese momento.
+
+        `alterations` son los accidentes escritos, por posición (ver
+        `StaffEditor.accidentals`). Sin ellos un sol sostenido llegaba al
+        armonizador como sol y la nota fuera de la escala no existía.
         """
+        if alterations is None:
+            alterations = getattr(self, "_melody_accidentals", {})
         label = key_label or getattr(self, "_key_label", self.KEY_SIGNATURES[0][0])
         fifths = next((f for name, f in self.KEY_SIGNATURES if name == label), 0)
         beats, beat_type = (int(x) for x in
@@ -5454,6 +6700,11 @@ class ChordWeaverApp(ctk.CTk):
         per_bar = beats * 4.0 / beat_type
         if written is None:
             written = getattr(self, "_melody_notes", [])
+        # La armadura dice dos tonalidades; la nota final elige entre ellas.
+        if written:
+            tonic, mode_key = harmonize.key_of_ending(
+                staff_pitch(written[-1][0], fifths,
+                            alterations.get(len(written) - 1)), tonic)
         if marks is None:
             marks = getattr(self, "_melody_marks", set())
         if skips is None:
@@ -5466,7 +6717,7 @@ class ChordWeaverApp(ctk.CTk):
             while len(bars) <= bar_index:
                 bars.append(harmonize.MelodyBar(beats, beat_type, tonic, mode_key))
             notes.append(harmonize.MelodyNote(
-                pitch=staff_pitch(index, fifths),
+                pitch=staff_pitch(index, fifths, alterations.get(order)),
                 duration_quarters=duration,
                 bar_index=bar_index,
                 offset_quarters=position - bar_index * per_bar,
@@ -5510,7 +6761,8 @@ class ChordWeaverApp(ctk.CTk):
                 written=self.staff.notes, marks=self.staff.marked,
                 key_label=i18n.untr(self.key_menu.get()),
                 metre=self.melody_metre.get(),
-                skips=self.staff.blocked)
+                skips=self.staff.blocked,
+                alterations=self.staff.accidentals)
             planned = harmonize.planned_notes(melody, self._harmonisation_rules())
         except (tk.TclError, AttributeError, ValueError):
             return
@@ -5523,7 +6775,7 @@ class ChordWeaverApp(ctk.CTk):
 
     # -- screen: harmony (generator only) -----------------------------------
 
-    ENDPOINT_MODES = ["Libre", "Preferido", "Obligatorio"]
+    ENDPOINT_MODES = [N("Libre"), N("Preferido"), N("Obligatorio")]
 
     #: Everything the harmony and parameters screens cache between visits.
     #: All of it belongs to a style, so it is dropped when the style changes.
@@ -5599,11 +6851,8 @@ class ChordWeaverApp(ctk.CTk):
     def _screen_harmony(self) -> None:
         self._forget_genre_settings()
         self._heading(
-            tr("¿De dónde saca los acordes?"),
-            tr("Acá se define el material: la tonalidad, el modo, qué acordes "
-               "prestados de fuera de la escala se permiten y con qué empieza y "
-               "termina. El programa arma la progresión con eso y nada más, y "
-               "después la juzga con las reglas del estilo."))
+            tr("Elegí la tonalidad y los acordes"),
+            tr("El programa arma la progresión sólo con lo que permitas acá."))
 
         columns = ctk.CTkFrame(self.body, fg_color="transparent")
         columns.pack(fill="both", expand=True)
@@ -5653,9 +6902,9 @@ class ChordWeaverApp(ctk.CTk):
                      font=scaled(("Segoe UI Semibold", 14))).pack(anchor="w", padx=16,
                                                           pady=(16, 4))
         ctk.CTkLabel(left,
-                     text=tr("Podés dejarlos libres, preferirlos con peso, o "
-                             "exigirlos. Obligatorio no se negocia: ese lugar "
-                             "queda con un solo acorde posible."),
+                     text=tr("Cada uno puede ser libre, preferido u "
+                             "obligatorio. Obligatorio deja un solo acorde "
+                             "posible en ese lugar."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=330,
                      justify="left").pack(anchor="w", padx=16)
         # The tonic is written "I" in a major key and "i" in a minor one, so
@@ -5703,7 +6952,7 @@ class ChordWeaverApp(ctk.CTk):
         ctk.CTkLabel(left, text=tr("Con qué frecuencia aparecen"), font=FONT_SMALL,
                      text_color=TEXT_MUTED).pack(anchor="w", padx=16, pady=(8, 2))
         self.passing_density = LabelledSlider(
-            left, "pocas", "muchas", 0.0, 1.0,
+            left, N("pocas"), N("muchas"), 0.0, 1.0,
             getattr(self, "_passing_density", 0.45))
         self.passing_density.pack(fill="x", padx=16, pady=(0, 8))
 
@@ -5716,10 +6965,10 @@ class ChordWeaverApp(ctk.CTk):
             font=FONT_SMALL, fg_color=ACCENT, hover_color=ACCENT_HOVER)
         chromatic_box.pack(anchor="w")
         Tooltip(chromatic_box,
-                tr("Deja que los adornos usen notas de fuera de la escala. Da "
-                   "resultados más ricos, pero es muy probable que haya que "
-                   "retocarlos a mano: el programa no juzga si la cromática "
-                   "encaja en el contexto, sólo que sea alcanzable."))
+                tr("Deja que los adornos usen notas fuera de la escala. Suena "
+                   "más rico, pero probablemente haya que retocar alguno a "
+                   "mano, porque el programa no juzga si la nota cromática "
+                   "encaja."))
 
         # --- right: borrowed chords ---
         self.borrowed_panel = right = ctk.CTkScrollableFrame(
@@ -5763,11 +7012,12 @@ class ChordWeaverApp(ctk.CTk):
         # acordes, el tope viejo daba 14% de préstamos --- o sea "muy
         # seguido" y "casi nunca" eran casi lo mismo --- y el nuevo da 60%.
         self.borrowed_slider = LabelledSlider(
-            right, "casi nunca", "muy seguido", 0, 100,
+            right, N("casi nunca"), N("muy seguido"), 0, 100,
             getattr(self, "_borrowed_weight", BORROWED_DEFAULT))
         self.borrowed_slider.pack(fill="x", padx=16, pady=(0, 10))
 
-        ctk.CTkLabel(right, text=tr("Peso de la armonía frente al voice leading"),
+        ctk.CTkLabel(right, text=tr("Peso de la armonía frente a la "
+                                    "conducción de voces"),
                      font=FONT_SMALL, text_color=TEXT_MUTED).pack(anchor="w",
                                                                   padx=16,
                                                                   pady=(12, 2))
@@ -5776,7 +7026,7 @@ class ChordWeaverApp(ctk.CTk):
         # quiet the cheapest progression is barely a progression at all. The
         # scale now runs from "follows the style" to "follows it strictly".
         self.harmony_slider = LabelledSlider(
-            right, "estilo flexible", "estilo estricto",
+            right, N("estilo flexible"), N("estilo estricto"),
             4.0, 14.0, getattr(self, "_harmony_emphasis", 8.0))
         self.harmony_slider.pack(fill="x", padx=16, pady=(0, 12))
 
@@ -5788,18 +7038,17 @@ class ChordWeaverApp(ctk.CTk):
             font=FONT_SMALL, fg_color=ACCENT, hover_color=ACCENT_HOVER)
         sevenths_box.pack(anchor="w", padx=16, pady=(10, 4))
         Tooltip(sevenths_box,
-                tr("Construye los acordes con cuatro notas en vez de tres: "
-                   "Cmaj7 en lugar de C. Es lo normal en jazz y la excepción en "
-                   "los otros estilos."))
+                tr("Arma los acordes con cuatro notas en vez de tres, por "
+                   "ejemplo Cmaj7 en lugar de C. Es lo normal en jazz y la "
+                   "excepción en los otros estilos."))
 
         ctk.CTkLabel(right, text=tr("Modulaciones"),
                      font=scaled(("Segoe UI Semibold", 14))).pack(anchor="w", padx=16,
                                                           pady=(6, 2))
         ctk.CTkLabel(right,
-                     text=tr("La pieza puede irse a otra tonalidad, o cambiar de "
-                             "modo sobre la misma tónica, y siempre vuelve al "
-                             "punto de partida antes de terminar. Se pueden usar "
-                             "las dos a la vez."),
+                     text=tr("La pieza puede pasar a otra tonalidad o cambiar "
+                             "de modo sobre la misma tónica. Siempre vuelve "
+                             "al punto de partida antes de terminar."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=330,
                      justify="left").pack(anchor="w", padx=16)
 
@@ -5839,7 +7088,7 @@ class ChordWeaverApp(ctk.CTk):
         ctk.CTkLabel(right, text=tr("Cuánto se aleja"), font=FONT_SMALL,
                      text_color=TEXT_MUTED).pack(anchor="w", padx=16, pady=(8, 2))
         self.mod_slider = LabelledSlider(
-            right, "casi nunca", "muy seguido", 0.0, 60.0,
+            right, N("casi nunca"), N("muy seguido"), 0.0, 60.0,
             getattr(self, "_mod_weight", abs(genre_modulation.weight)))
         self.mod_slider.pack(fill="x", padx=16, pady=(0, 14))
         #: El bloque de la modulación, para que la guía lo señale entero: son
@@ -5864,7 +7113,8 @@ class ChordWeaverApp(ctk.CTk):
             colour_default = (14.0 if self.genre_key == "jazz"
                               and len(self.voice_keys) > 4 else 0.0)
         self.colour_slider = LabelledSlider(
-            right, "sin color", "mucho color", 0.0, 30.0, colour_default)
+            right, N("sin color"), N("mucho color"), 0.0, 30.0,
+            colour_default)
         self.colour_slider.pack(fill="x", padx=16, pady=(4, 16))
 
         self.harmony_hint = ctk.CTkLabel(self.body, text="", font=FONT_SMALL,
@@ -5966,19 +7216,18 @@ class ChordWeaverApp(ctk.CTk):
         except tk.TclError:
             return
         if not self._mod_enough_bars:
-            no_room = (trf("Necesitás al menos 8 compases: la pieza tiene "
-                           "que asentar la tonalidad, viajar y volver, y "
-                           "con {bar_count} no hay lugar para eso.",
+            no_room = (trf("Hacen falta al menos 8 compases para asentar la "
+                           "tonalidad, irse y volver. Ahora hay {bar_count}.",
                            bar_count=self.bar_count))
             key_tip.text = modal_tip.text = no_room
             return
         keys, modals = self._modulation_targets_now()
-        key_tip.text = (trf("Viaja a otra tonalidad — {listed} — y regresa.",
+        key_tip.text = (trf("Pasa a otra tonalidad ({listed}) y vuelve.",
                             listed=_listed(keys)) if keys else
                         "Este estilo no viaja a otra tonalidad.")
         if modals:
-            modal_tip.text = (trf("Cambia el color sin cambiar el centro: "
-                                  "la misma tónica pasa a {listed}.",
+            modal_tip.text = (trf("La tónica se queda y el modo cambia a "
+                                  "{listed}.",
                                   listed=_listed(modals)))
             modal_box.configure(state="normal")
         else:
@@ -6087,18 +7336,18 @@ class ChordWeaverApp(ctk.CTk):
     ]
 
     SWITCH_LABELS = [
-        ("forbid_parallel_fifths", "Prohibir quintas paralelas",
-         "Dos voces que están a distancia de quinta y se mueven juntas en la "
-         "misma dirección manteniendo esa quinta. Es la prohibición más "
-         "conocida del contrapunto: destruye la independencia de las líneas, "
-         "porque se escuchan como una sola voz engrosada."),
-        ("forbid_parallel_octaves", "Prohibir octavas paralelas",
+        ("forbid_parallel_fifths", N("Prohibir quintas paralelas"),
+         "Dos voces a distancia de quinta que se mueven juntas en la misma "
+         "dirección y mantienen la quinta. Es la prohibición más conocida del "
+         "contrapunto, porque las dos líneas se oyen como una sola."),
+        ("forbid_parallel_octaves", N("Prohibir octavas paralelas"),
          "Lo mismo que las quintas paralelas pero a distancia de octava o "
          "unísono. Suena todavía más fusionado, así que en la práctica común "
          "está igual de prohibido."),
         ("forbid_melodic_tritone", "Prohibir tritono melódico",
-         "Que una voz salte un tritono (tres tonos, por ejemplo de Fa a Si). "
-         "Que una voz salte tres tonos de una vez. Es un intervalo áspero y difícil de cantar, y los estilos antiguos lo evitan."),
+         "Que una voz salte un tritono, es decir tres tonos de una vez (por "
+         "ejemplo de fa a si). Es un intervalo áspero y difícil de cantar, y "
+         "los estilos antiguos lo evitan."),
         ("forbid_voice_crossing", "Prohibir cruce de voces",
          "Que una voz cante más agudo que la voz que tiene arriba (por "
          "ejemplo el tenor por encima del alto). Confunde al oído sobre qué "
@@ -6116,25 +7365,25 @@ class ChordWeaverApp(ctk.CTk):
         ("population_size", "Población", "200",
          "Cuántas soluciones conviven en cada generación. Más población "
          "explora mejor pero tarda más."),
-        ("generations", "Generaciones", "300",
+        ("generations", N("Generaciones"), "300",
          "Cuántas veces se repite el ciclo de selección, cruza y mutación."),
-        ("elitism", "Elitismo", "2",
+        ("elitism", N("Elitismo"), "2",
          "Cuántas de las mejores soluciones pasan intactas a la generación "
          "siguiente, sin riesgo de perderse."),
         ("tournament_size", "Tamaño de torneo", "3",
          "Cuántos candidatos compiten para ser padres. Más alto = más "
          "presión hacia los mejores, pero menos diversidad."),
         ("crossover_rate", "Prob. de cruza", "0.85",
-         "Probabilidad de combinar dos padres. Es el motor principal de la "
-         "búsqueda: recombina tramos enteros de buen voice leading, así que "
-         "va bastante más alta que la mutación."),
-        ("uniform_crossover_share", "Cruza uniforme", "0.4",
+         "Probabilidad de combinar dos padres. Es lo que más mueve la "
+         "búsqueda, porque junta tramos enteros de buena conducción de voces, "
+         "y por eso va bastante más alta que la mutación."),
+        ("uniform_crossover_share", N("Cruza uniforme"), "0.4",
          "De esas cruzas, qué fracción mezcla voz por voz (permite juntar un "
          "buen bajo con una buena soprano) en vez de cortar la progresión en "
          "un punto."),
         ("mutation_rate", "Tasa de mutación", "0.12",
-         "Probabilidad de que una nota suelta cambie de octava o de nota del "
-         "acorde. Aporta variación fina, no estructura."),
+         "Probabilidad de que una nota cambie de octava o pase a otra nota "
+         "del acorde. Sirve para ajustes finos."),
     ]
 
     #: El algoritmo recortado, para una máquina que no da abasto.
@@ -6167,9 +7416,8 @@ class ChordWeaverApp(ctk.CTk):
     GENERATOR_SWITCHES = [
         ("forbid_harmonic_tritone", "Evitar tritonos entre voces",
          "Descarta cualquier disposición donde dos voces suenen a distancia "
-         "de tritono. Ojo: prenderlo hace imposible cualquier acorde de "
-         "séptima de dominante, porque ese tritono es justamente lo que lo "
-         "define."),
+         "de tritono. Prendido, no puede haber acordes de séptima de "
+         "dominante, porque ese tritono es lo que los define."),
     ]
 
     def _screen_parameters(self) -> None:
@@ -6179,13 +7427,10 @@ class ChordWeaverApp(ctk.CTk):
         self.strict_var = None
         profile = GENRE_PROFILES[self.genre_key]
         self._heading(
-            tr("Reglas y balance"),
-            trf("Los valores arrancan como los deja el estilo {label}, "
-                "pero desde acá mandás vos: las de la izquierda son duras "
-                "—lo que las rompe se descarta— y la de la derecha decide "
-                "qué pesa más al comparar dos soluciones válidas. Pasá el "
-                "mouse por cada una para ver qué significa.",
-                label=profile.label))
+            tr("Ajustá las reglas"),
+            trf("Arranca con los valores del estilo {label}. Pasá el mouse "
+                "por cada opción para ver qué hace.",
+                label=tr(profile.label)))
 
         columns = ctk.CTkFrame(self.body, fg_color="transparent")
         columns.pack(fill="both", expand=True)
@@ -6224,12 +7469,13 @@ class ChordWeaverApp(ctk.CTk):
         self.balance_panel = balance = ctk.CTkFrame(
             columns, fg_color=SURFACE_LIGHT, corner_radius=11)
         balance.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-        ctk.CTkLabel(balance, text=tr("¿Qué te importa más?"),
+        ctk.CTkLabel(balance, text=tr("Balance"),
                      font=scaled(("Segoe UI Semibold", 14))).pack(anchor="w", padx=16,
                                                           pady=(14, 2))
         ctk.CTkLabel(balance,
-                     text=tr("El resultado se juzga por dos cosas: cuánto se mueven las voces y "
-                             "cuánto respeta el estilo. Acá decidís cuál pesa más."),
+                     text=tr("Al comparar dos soluciones cuenta cuánto se "
+                             "mueven las voces y cuánto respetan el estilo. "
+                             "Acá decidís qué pesa más."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=380,
                      justify="left").pack(anchor="w", padx=16, pady=(0, 10))
 
@@ -6265,11 +7511,11 @@ class ChordWeaverApp(ctk.CTk):
                      text=tr("Consonancia en los acordes de reposo"),
                      font=FONT_BODY).pack(anchor="w", padx=16, pady=(16, 2))
         ctk.CTkLabel(balance,
-                     text=tr("Medida desde el bajo, como en el bajo cifrado: en un "
-                             "3-5-1 el bajo canta la tercera, así que los intervalos "
-                             "son de 3ra y 6ta, ambos consonantes. Elegí cuánto pesa: "
-                             "la última opción la vuelve regla dura y anula cualquier "
-                             "solución que no la cumpla."),
+                     text=tr("Se mide desde el bajo, como en el bajo cifrado. "
+                             "En un 3-5-1 el bajo canta la tercera y los "
+                             "intervalos son de 3ra y 6ta, los dos "
+                             "consonantes. La última opción la vuelve regla "
+                             "dura."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=380,
                      justify="left").pack(anchor="w", padx=16)
         self.cadence_menu = ctk.CTkOptionMenu(
@@ -6296,20 +7542,19 @@ class ChordWeaverApp(ctk.CTk):
             strict_switch.pack(anchor="w", padx=14, pady=(12, 4))
             blurb = ctk.CTkLabel(
                 strict,
-                text=tr("Coral al estilo Bach. Como el barroco pero más "
-                        "estricto: nunca duplica la sensible, exige que las "
-                        "séptimas resuelvan hacia abajo y vigila el espaciado "
-                        "entre voces."),
+                text=tr("Coral al estilo de Bach. Es más estricto que el "
+                        "barroco, nunca duplica la sensible, resuelve las "
+                        "séptimas hacia abajo y cuida el espaciado entre "
+                        "voces."),
                 font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=380,
                 justify="left")
             blurb.pack(anchor="w", padx=14, pady=(0, 12))
             for widget in (strict, strict_switch, blurb):
                 Tooltip(widget,
-                        tr("Las mismas reglas, pero pesando mucho más: salta "
+                        tr("Las mismas reglas, con mucho más peso. Salta "
                            "menos (3 semitonos en vez de 4), castiga el doble "
-                           "duplicar la sensible, exige la resolución de las "
-                           "séptimas y no tolera el solapamiento de voces. "
-                           "Escribe más ceñido y se mueve menos libremente."))
+                           "duplicar la sensible, exige que resuelvan las "
+                           "séptimas y no tolera voces solapadas."))
 
         if self.mode == "harmonise":
             ctk.CTkLabel(balance, text=tr("Armonización"),
@@ -6342,19 +7587,18 @@ class ChordWeaverApp(ctk.CTk):
                          font=scaled(("Segoe UI Semibold", 14))
                          ).pack(anchor="w", padx=16, pady=(6, 2))
             ctk.CTkLabel(balance,
-                         text=tr("Con los voicings especiales prendidos, cuánto "
-                                 "busca agregar novenas, oncenas o sextas en vez "
-                                 "de duplicar una nota."),
+                         text=tr("Cuánto busca agregar novenas, oncenas o "
+                                 "sextas en lugar de duplicar una nota."),
                          font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=360,
                          justify="left").pack(anchor="w", padx=16)
             ctk.CTkLabel(balance,
-                         text=tr("Hasta un tercio de la barra sólo agrega sextas, "
-                                 "que es el color más suave. Más allá entran "
-                                 "también novenas y oncenas."),
+                         text=tr("Hasta un tercio de la barra sólo agrega "
+                                 "sextas, el color más suave. Más arriba suma "
+                                 "novenas y oncenas."),
                          font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=360,
                          justify="left").pack(anchor="w", padx=16)
             self.manual_colour_slider = LabelledSlider(
-                balance, "sin color", "mucho", 0.0, 30.0,
+                balance, N("sin color"), N("mucho"), 0.0, 30.0,
                 getattr(self, "_manual_colour", 0.0))
             self.manual_colour_slider.pack(fill="x", padx=16, pady=(4, 14))
 
@@ -6822,6 +8066,12 @@ class ChordWeaverApp(ctk.CTk):
         # gone by then, and Tk raises rather than ignoring it.
         if not self.winfo_exists():
             return
+        if getattr(self, "_rendering", False):
+            # Mientras se dibuja una pantalla tapada, la vieja sigue viva y
+            # arriba: un resultado consumido ahora se dibujaba en ella y se
+            # perdía con ella un instante después. Se espera al cambio.
+            self._pump_id = self.after(30, self._drain_queue)
+            return
         try:
             latest_progress = None
             while True:
@@ -6885,8 +8135,8 @@ class ChordWeaverApp(ctk.CTk):
         ctk.CTkLabel(panel, text=tr("Buscando soluciones"),
                      font=scaled(("Segoe UI Semibold", 26))).pack()
         ctk.CTkLabel(panel,
-                     text=tr("El algoritmo prueba miles de repartos de voces y se "
-                             "queda con los tres más baratos."),
+                     text=tr("Prueba miles de repartos de voces y se queda "
+                             "con los mejores."),
                      font=scaled(("Segoe UI", 13)), text_color=TEXT_MUTED,
                      wraplength=520, justify="center").pack(pady=(8, 22))
 
@@ -6962,8 +8212,9 @@ class ChordWeaverApp(ctk.CTk):
                              text_color=TEXT_MUTED, wraplength=900, justify="left"
                              ).pack(anchor="w", pady=2)
             ctk.CTkLabel(self.results_container,
-                         text=tr("Probá aflojando alguna regla en la pantalla anterior "
-                                 "o ampliando los rangos vocales."),
+                         text=tr("Probá aflojar alguna regla en la pantalla "
+                                 "anterior o ampliar los rangos de las "
+                                 "voces."),
                          font=FONT_SMALL, text_color=WARN).pack(anchor="w", pady=(10, 0))
             self._show_results()
             return
@@ -7019,15 +8270,15 @@ class ChordWeaverApp(ctk.CTk):
         # y no siempre vuelven tres. Una progresión muy atada devuelve dos, y
         # las piezas del sendero devuelven una sola.
         ctk.CTkLabel(self.results_container, text=tr("Las mejores soluciones"),
-                     font=scaled(("Segoe UI Semibold", 20))).pack(anchor="w")
+                     font=scaled(("Georgia", 22, "bold"))).pack(anchor="w")
         # El costo sigue ordenándolas ---la primera es la más barata--- pero
         # ya no se muestra: es un número interno del algoritmo y a quien mira
         # la partitura no le dice nada. Lo que sí dice cuál es cuál es el
         # orden, y el punto del color en la que el programa eligió.
         ctk.CTkLabel(self.results_container,
-                     text=tr("La primera es la que el programa eligió; las otras "
-                             "mueven menos bien las voces o negocian algo más con "
-                             "las reglas del estilo."),
+                     text=tr("La primera es la que eligió el programa. Las "
+                             "otras mueven peor las voces o ceden más en las "
+                             "reglas del estilo."),
                      font=FONT_SMALL, text_color=TEXT_MUTED,
                      wraplength=900, justify="left"
                      ).pack(anchor="w", pady=(3, 0))
@@ -7036,11 +8287,28 @@ class ChordWeaverApp(ctk.CTk):
                          text_color=WARN, wraplength=900, justify="left"
                          ).pack(anchor="w", pady=2)
 
+        # La partitura o la tabla de nombres de nota. La partitura es lo que
+        # se lee; la tabla queda a un click, y es la única con más de cuatro
+        # voces porque el sistema tiene cuatro carriles.
+        notation = len(outcome.spec.voices) <= GRAND_VOICE_COUNT
+        if notation:
+            view_row = ctk.CTkFrame(self.results_container,
+                                    fg_color="transparent")
+            view_row.pack(fill="x", pady=(8, 0))
+            toggle = ctk.CTkSegmentedButton(
+                view_row, values=trs(["Partitura", "Tabla"]),
+                font=FONT_SMALL, height=26,
+                selected_color=self._mode_accent(),
+                selected_hover_color=ACCENT_HOVER,
+                command=lambda value: self._set_results_view(
+                    i18n.untr(value)))
+            toggle.set(tr("Tabla" if self._results_view == "table"
+                          else "Partitura"))
+            toggle.pack(side="right")
         table = ctk.CTkScrollableFrame(self.results_container,
                                        fg_color="transparent", height=330)
-        table.pack(fill="both", expand=True, pady=(10, 8))
-
-        voice_names = [v.name for v in outcome.spec.voices]
+        table.pack(fill="both", expand=True, pady=(6, 8))
+        self._results_table = table
         # Si este resultado va a pedir «Escuchá antes de seguir» --- ver
         # `_story_offer_continue` ---, ya se sabe acá: para la pieza
         # automática del sendero es `_story_piece_result`, sembrado más
@@ -7048,247 +8316,10 @@ class ChordWeaverApp(ctk.CTk):
         # `_story_after_run` ya haya abierto el candado, cosa que --- por
         # ese mismo orden --- corre antes que este bucle. Con eso alcanza
         # para saber, antes de dibujar ningún botón, cuáles hay que dorar.
-        story_gated = bool(getattr(self, "_story_piece_result", False)
-                           or getattr(self, "_story_continue_row", None)
-                           is not None)
-        for position, solution in enumerate(outcome.result.solutions, start=1):
-            quoted = (getattr(outcome, "set_piece", None) is not None
-                      and position == 1)
-            # Las piezas del relato salen con el dorado de los legendarios:
-            # no las eligió el algoritmo ni las escribió el usuario, están
-            # citadas, y son lo único que el sendero tiene para dar.
-            legendary = bool(getattr(self, "_story_piece_result", False))
-            block = ctk.CTkFrame(
-                table, fg_color=SET_PIECE_TINT if quoted else SURFACE_LIGHT,
-                corner_radius=12,
-                border_width=2 if legendary else 0,
-                border_color=GOLD if legendary else SURFACE_LIGHT)
-            block.pack(fill="x", pady=5)
-            heading = ctk.CTkFrame(block, fg_color="transparent")
-            heading.pack(fill="x", padx=14, pady=(10, 6))
-            # La primera opción es la que el algoritmo eligió; las otras dos
-            # son alternativas. Marcarla con el color del modo evita tener
-            # que comparar tres costos para saber cuál es cuál.
-            ctk.CTkLabel(heading, text="●", font=scaled(("Segoe UI", 12)),
-                         text_color=(SET_PIECE_TEXT if quoted
-                                     else self._mode_accent() if position == 1
-                                     else TEXT_MUTED)
-                         ).pack(side="left", padx=(0, 8))
-            ctk.CTkLabel(heading,
-                         text=(trf("Opción {position}  ·  {label}",
-                                   position=position,
-                                   label=outcome.set_piece.label)
-                               if quoted else trf("Opción {position}",
-                                                  position=position)),
-                         font=scaled(("Segoe UI Semibold", 13))).pack(side="left")
-
-            # Named devices for THIS option, right above its own grid.
-            found = getattr(outcome, "flourishes", None)
-            own = found.labels_for(position - 1) if found else []
-            for mark in own:
-                # Which chords each device covers. Two cadences of different
-                # kinds in one option were listed as two nameless lines over
-                # chords tinted the same colour, so the darker of the two
-                # looked as though it applied to both.
-                where = self._slot_span(mark.slots)
-                ctk.CTkLabel(block,
-                             text=trf("★  {label}{where} — {detail}",
-                                      label=tr(mark.label),
-                                      where=(" (%s)" % where) if where else "",
-                                      detail=tr(mark.detail)),
-                             font=FONT_SMALL, text_color=SET_PIECE_TEXT,
-                             wraplength=860, justify="left"
-                             ).pack(anchor="w", padx=14, pady=(0, 2))
-            play = ctk.CTkButton(
-                heading, text=tr("▶  Escuchar"), width=140, height=32,
-                font=FONT_SMALL,
-                fg_color=GOLD_DIM if story_gated else ACCENT,
-                hover_color=GOLD if story_gated else ACCENT_HOVER,
-                text_color="#1B1D22" if story_gated else None,
-                border_width=2 if story_gated else 0,
-                border_color=GOLD if story_gated else SURFACE_LIGHT)
-            play.configure(command=lambda sol=solution, btn=play,
-                           gated=story_gated: self._play_and_mark(
-                               sol, btn, gated))
-            if story_gated:
-                start_shimmer(play, period=110, option="border_color")
-            play.pack(side="right")
-            Tooltip(play, tr("Reproduce los acordes en orden con un sonido "
-                             "simple, respetando sus duraciones. Las notas de "
-                             "adorno no se incluyen."))
-            # Horizontal scrolling: a long piece ran off the edge with no
-            # way to reach the later bars.
-            # Height follows the number of voices. Fixed at 190 the last
-            # row fell outside the visible area, so a six-voice setting
-            # looked like it had lost its bass.
-            grid = ctk.CTkScrollableFrame(
-                block, fg_color="transparent", orientation="horizontal",
-                height=60 + 26 * len(voice_names))
-            grid.pack(fill="x", padx=14, pady=(0, 10))
-
-            # Each option carries its own chords. Reading them off the slot
-            # showed the same progression above all three, because the slot
-            # only remembers whichever chord the best solution chose.
-            # In harmonise mode each option was built from its own
-            # progression, so the chord row has to come from that option's
-            # slots rather than from the first one's.
-            option_slots = getattr(outcome, "alternate_slots", {}).get(
-                position - 1, outcome.spec.slots)
-
-            # Adónde viaja ESTA opción, escrito arriba del tramo violeta y
-            # centrado sobre él. El tinte decía que la pieza se había ido de
-            # casa y la cifra prefijada ---«V:ii»--- decía desde dónde, pero
-            # a qué tonalidad se llegó había que sacarlo de cabeza sumándole
-            # el intervalo a la tónica. El nombre es lo único que contesta la
-            # pregunta con la que uno mira ese tramo.
-            if self._modulation_banner(grid, option_slots, solution):
-                # La fila del cartel ocupa lugar: sin agrandar la rejilla, la
-                # voz más grave se caía fuera de la parte visible.
-                grid.configure(height=60 + 26 * len(voice_names) + 24)
-
-            for column, slot in enumerate(option_slots):
-                # Start from how THIS slot is voiced. The hand-written mode
-                # has no options list, so reading the name only inside the
-                # options branch left it showing the bare chord symbol and
-                # hiding every added colour tone.
-                label = voicing.symbol_with_added(slot.requirement.plan)
-                # Un silencio no tiene acorde. El motor le pone un do de
-                # relleno para que la lista de slots siga alineada con los
-                # compases, y ese do se estaba mostrando como si el usuario
-                # lo hubiera escrito.
-                resting = bool(getattr(slot, "is_rest", False))
-                flourishes = getattr(outcome, "flourishes", None)
-                # The quotation's symbols belong to ITS solution only; the
-                # other two are ordinary answers and keep their own chords.
-                quotation = getattr(outcome, "set_piece", None)
-                if (position == 1 and quotation
-                        and column < len(getattr(quotation, "symbols", []))):
-                    label = quotation.symbols[column]
-                if (position == 1 and flourishes
-                        and flourishes.sixth_slot == column
-                        and flourishes.sixth_symbol):
-                    label = flourishes.sixth_symbol
-                # A quotation's own labels win: they were set above and must
-                # not be overwritten by the slot's chord, which is where the
-                # six identical "Am" headers came from.
-                pinned = label
-                quoted_here = (position == 1 and quotation
-                               and column < len(getattr(quotation, "symbols", [])))
-                # The rewritten sixth has to survive the same way. Only the
-                # quotation was protected, so wherever the slot carries a
-                # list of options -- the generator and the harmoniser -- the
-                # chord was renamed from its plan a few lines down and the
-                # "6omit5" was lost. It only ever showed in the hand-written
-                # mode, which has no options to overwrite it.
-                sixth_here = bool(position == 1 and flourishes
-                                  and flourishes.sixth_slot == column
-                                  and flourishes.sixth_symbol)
-                keep_label = quoted_here or sixth_here
-                roman = ""
-                if slot.options and column < len(solution.choices):
-                    option = slot.options[min(solution.choices[column],
-                                              len(slot.options) - 1)]
-                    # Named as it is actually voiced: an added ninth shows
-                    # up as Cadd9 rather than as a plain C.
-                    label = (pinned if keep_label
-                             else voicing.symbol_with_added(option.requirement.plan))
-                    # A quotation names its own degrees. Reading them off
-                    # the slot showed "i" over the dominant in a cadence
-                    # whose chord symbol repeats.
-                    if quoted_here and column < len(quotation.romans):
-                        roman = quotation.romans[column]
-                    elif option.harmony is not None:
-                        roman = harmony.display_roman(option.harmony)
-                # A chord visited in another key is tinted, so where the
-                # piece travels is visible at a glance instead of having to
-                # be read out of the numerals.
-                marked = bool(flourishes
-                              and flourishes.marks_for(column, position - 1))
-                chosen_option = None
-                if slot.options and column < len(solution.choices):
-                    chosen_option = slot.options[
-                        min(solution.choices[column], len(slot.options) - 1)]
-                away = bool(chosen_option is not None
-                            and getattr(chosen_option.harmony, "key_area", ""))
-                # Un intercambio modal se marca en naranja. Sin marcarlos,
-                # la única forma de saber cuáles eran los prestados era leer
-                # los grados uno por uno y acordarse de cuáles había
-                # permitido uno mismo tres pantallas antes. Las dominantes
-                # aplicadas no cuentan: viajan en el mismo campo pero no son
-                # un préstamo del modo paralelo, y pintarlas de naranja
-                # habría dicho que el dial de intercambios las trajo.
-                lent = bool(chosen_option is not None
-                            and chosen_option.harmony is not None
-                            and chosen_option.harmony.is_borrowed
-                            and not harmony.is_applied_dominant(
-                                chosen_option.harmony))
-                header = ctk.CTkFrame(
-                    grid,
-                    fg_color=(SET_PIECE_TINT if marked or legendary
-                              else MODULATION_TINT if away
-                              else BORROWED_TINT if lent else "transparent"),
-                    corner_radius=6)
-                if lent and not away:
-                    Tooltip(header,
-                            tr("Intercambio modal: un acorde prestado del modo "
-                               "paralelo. Sigue en la misma tonalidad, con una "
-                               "nota de la escala cambiada."))
-                if marked:
-                    # The explanation lives in the banner above; the tooltip
-                    # repeats it here so a highlighted chord can be
-                    # identified without hunting for which device it belongs
-                    # to.
-                    # El nombre y la explicación se traducen por separado:
-                    # el renglón armado con los dos nunca sería una clave.
-                    Tooltip(header, "  ".join(
-                        f"{tr(m.label)}: {tr(m.detail)}"
-                        for m in flourishes.marks_for(column, position - 1)))
-                header.grid(row=1, column=column + 1, padx=2, sticky="ew")
-                chord_label = ctk.CTkLabel(
-                    header,
-                    text=session.REST_SYMBOL if resting else label,
-                    # El glifo del silencio vive en la fuente de símbolos, la
-                    # misma con la que el pentagrama dibuja sus claves.
-                    font=(scaled(("Segoe UI Symbol", 15)) if resting
-                          else scaled(("Segoe UI Semibold", 11))),
-                    width=64,
-                    text_color=(TEXT_MUTED if resting
-                                else SET_PIECE_TEXT if marked or legendary
-                                else MODULATION_TEXT if away
-                                else BORROWED_TEXT if lent else None))
-                chord_label.pack()
-                if resting:
-                    Tooltip(header, tr("Silencio: acá no suena nada."))
-                if legendary:
-                    # Desfasados por posición: el brillo recorre la
-                    # progresión de izquierda a derecha en vez de prenderse
-                    # entero de una vez.
-                    start_shimmer(chord_label, period=110, offset=column)
-                if roman and not resting:
-                    ctk.CTkLabel(header, text=roman, font=FONT_SMALL,
-                                 text_color=(MODULATION_TEXT if away
-                                             else BORROWED_TEXT if lent
-                                             else TEXT_MUTED), width=64).pack()
-            for voice_index in reversed(range(len(voice_names))):
-                # Una fila más abajo: la primera la ocupa el cartel de la
-                # modulación, que existe aunque esta opción no viaje.
-                display_row = len(voice_names) - voice_index + 1
-                ctk.CTkLabel(grid, text=tr(voice_names[voice_index]), font=FONT_SMALL,
-                             text_color=TEXT_MUTED, width=110, anchor="w"
-                             ).grid(row=display_row, column=0, sticky="w")
-                # Alineadas contra los slots de la partitura y no contra
-                # las de la solución: la búsqueda saltea los silencios, así
-                # que a partir del primero las dos listas iban corridas y
-                # cada acorde mostraba las notas del siguiente.
-                for column, chord in enumerate(
-                        session.voiced_slots(outcome.spec, solution)):
-                    ctk.CTkLabel(
-                        grid,
-                        text=(note_name(chord[voice_index])
-                              if voice_index < len(chord) else "·"),
-                        font=FONT_SMALL, width=64,
-                        text_color=None if chord else TEXT_MUTED
-                        ).grid(row=display_row, column=column + 1, padx=2)
+        self._results_gated = bool(
+            getattr(self, "_story_piece_result", False)
+            or getattr(self, "_story_continue_row", None) is not None)
+        self._draw_options()
 
         export_row = ctk.CTkFrame(self.results_container, fg_color="transparent")
         export_row.pack(fill="x", pady=(4, 0))
@@ -7313,6 +8344,17 @@ class ChordWeaverApp(ctk.CTk):
         self._heading(record.display_name,
                       tr("Las mismas tres opciones, tal como quedaron guardadas."))
 
+        notation = 0 < len(record.voice_names) <= GRAND_VOICE_COUNT
+        if notation:
+            toggle = ctk.CTkSegmentedButton(
+                self.body, values=trs(["Partitura", "Tabla"]),
+                font=FONT_SMALL, height=26,
+                selected_color=self._record_accent(record),
+                command=lambda value: self._set_results_view(
+                    i18n.untr(value)))
+            toggle.set(tr("Tabla" if self._results_view == "table"
+                          else "Partitura"))
+            toggle.pack(anchor="e", pady=(0, 4))
         scroll = ctk.CTkScrollableFrame(self.body, fg_color="transparent")
         scroll.pack(fill="both", expand=True, pady=(0, 6))
 
@@ -7344,6 +8386,23 @@ class ChordWeaverApp(ctk.CTk):
                 play.configure(command=lambda i=position - 1, b=play:
                                self._play_record(record, b, i))
                 play.pack(side="right")
+            if notation and self._results_view != "table":
+                beats, _, unit = record.time_signature.partition("/")
+                try:
+                    metre = (1, int(beats), int(unit or 4))
+                except ValueError:
+                    metre = (1, 4, 4)
+                durations = (list(record.durations)
+                             or [2.0] * len(record.chord_labels))
+                labels = [(label, record.romans[column]
+                           if column < len(record.romans) else "",
+                           label == history.REST_LABEL, None)
+                          for column, label in enumerate(record.chord_labels)]
+                self._result_staff(block, heading,
+                                   self._lanes_for_names(record.voice_names),
+                                   record.voice_names, pitches, durations,
+                                   labels, 0, [metre])
+                continue
             grid = ctk.CTkScrollableFrame(
                 block, fg_color="transparent", orientation="horizontal",
                 height=60 + 26 * len(record.voice_names))
@@ -7367,7 +8426,7 @@ class ChordWeaverApp(ctk.CTk):
             names = record.voice_names
             for voice_index in reversed(range(len(names))):
                 row = len(names) - voice_index
-                ctk.CTkLabel(grid, text=tr(names[voice_index]), font=FONT_SMALL,
+                ctk.CTkLabel(grid, text=i18n.tr_name(names[voice_index]), font=FONT_SMALL,
                              text_color=TEXT_MUTED, width=110, anchor="w"
                              ).grid(row=row, column=0, sticky="w")
                 for column, chord in enumerate(pitches):
@@ -7439,6 +8498,435 @@ class ChordWeaverApp(ctk.CTk):
                        for s in outcome.result.solutions],
         )
         history.add_record(record, self.history_path)
+
+    # -- las opciones del resultado ----------------------------------------
+
+    #: Cómo se muestran las opciones: "staff" (partitura) o "table".
+    _results_view = "staff"
+
+    def _set_results_view(self, view: str) -> None:
+        """Cambiar entre la partitura y la tabla, sin volver a buscar."""
+        self._results_view = "table" if view == "Tabla" else "staff"
+        if self.detour and self.detour[-1][0] == "record":
+            self._render()
+            return
+        self._draw_options()
+
+    def _draw_options(self) -> None:
+        """Dibujar las opciones del resultado en la vista elegida."""
+        table = getattr(self, "_results_table", None)
+        outcome = self.outcome
+        if table is None or outcome is None:
+            return
+        try:
+            for child in table.winfo_children():
+                child.destroy()
+        except tk.TclError:
+            return
+        voice_names = [v.name for v in outcome.spec.voices]
+        story_gated = self._results_gated
+        for position, solution in enumerate(outcome.result.solutions, start=1):
+            self._draw_option(table, outcome, position, solution,
+                              story_gated, voice_names)
+
+    def _draw_option(self, table, outcome, position: int, solution,
+                     story_gated: bool, voice_names: List[str]) -> None:
+        """Una opción: su encabezado, sus marcas y su música."""
+        quoted = (getattr(outcome, "set_piece", None) is not None
+                  and position == 1)
+        # Las piezas del relato salen con el dorado de los legendarios:
+        # no las eligió el algoritmo ni las escribió el usuario, están
+        # citadas, y son lo único que el sendero tiene para dar.
+        legendary = bool(getattr(self, "_story_piece_result", False))
+        block = ctk.CTkFrame(
+            table, fg_color=SET_PIECE_TINT if quoted else SURFACE_LIGHT,
+            corner_radius=12,
+            border_width=2 if legendary else 0,
+            border_color=GOLD if legendary else SURFACE_LIGHT)
+        block.pack(fill="x", pady=5)
+        heading = ctk.CTkFrame(block, fg_color="transparent")
+        heading.pack(fill="x", padx=14, pady=(10, 6))
+        # La primera opción es la que el algoritmo eligió; las otras dos
+        # son alternativas. Marcarla con el color del modo evita tener
+        # que comparar tres costos para saber cuál es cuál.
+        ctk.CTkLabel(heading, text="●", font=scaled(("Segoe UI", 12)),
+                     text_color=(SET_PIECE_TEXT if quoted
+                                 else self._mode_accent() if position == 1
+                                 else TEXT_MUTED)
+                     ).pack(side="left", padx=(0, 8))
+        ctk.CTkLabel(heading,
+                     text=(trf("Opción {position}  ·  {label}",
+                               position=position,
+                               label=outcome.set_piece.label)
+                           if quoted else trf("Opción {position}",
+                                              position=position)),
+                     font=scaled(("Segoe UI Semibold", 13))).pack(side="left")
+
+        # Named devices for THIS option, right above its own grid.
+        found = getattr(outcome, "flourishes", None)
+        own = found.labels_for(position - 1) if found else []
+        for mark in own:
+            # Which chords each device covers. Two cadences of different
+            # kinds in one option were listed as two nameless lines over
+            # chords tinted the same colour, so the darker of the two
+            # looked as though it applied to both.
+            where = self._slot_span(mark.slots)
+            ctk.CTkLabel(block,
+                         text=trf("★  {label}{where} — {detail}",
+                                  label=tr(mark.label),
+                                  where=(" (%s)" % where) if where else "",
+                                  detail=tr(mark.detail)),
+                         font=FONT_SMALL, text_color=SET_PIECE_TEXT,
+                         wraplength=860, justify="left"
+                         ).pack(anchor="w", padx=14, pady=(0, 2))
+        play = ctk.CTkButton(
+            heading, text=tr("▶  Escuchar"), width=140, height=32,
+            font=FONT_SMALL,
+            fg_color=GOLD_DIM if story_gated else ACCENT,
+            hover_color=GOLD if story_gated else ACCENT_HOVER,
+            text_color="#1B1D22" if story_gated else None,
+            border_width=2 if story_gated else 0,
+            border_color=GOLD if story_gated else SURFACE_LIGHT)
+        play.configure(command=lambda sol=solution, btn=play,
+                       gated=story_gated: self._play_and_mark(
+                           sol, btn, gated))
+        if story_gated:
+            start_shimmer(play, period=110, option="border_color")
+        play.pack(side="right")
+        Tooltip(play, tr("Reproduce los acordes en orden con un sonido "
+                         "simple, respetando sus duraciones. Las notas de "
+                         "adorno no se incluyen."))
+        # Each option carries its own chords. Reading them off the slot
+        # showed the same progression above all three, because the slot
+        # only remembers whichever chord the best solution chose.
+        # In harmonise mode each option was built from its own
+        # progression, so the chord row has to come from that option's
+        # slots rather than from the first one's.
+        option_slots = getattr(outcome, "alternate_slots", {}).get(
+            position - 1, outcome.spec.slots)
+        columns = self._option_columns(outcome, position, solution,
+                                       option_slots, legendary)
+        if (self._results_view != "table"
+                and len(voice_names) <= GRAND_VOICE_COUNT):
+            self._option_staff(block, heading, outcome, solution, columns,
+                               voice_names)
+        else:
+            self._option_table(block, outcome, solution, option_slots,
+                               columns, voice_names, legendary)
+
+    def _option_columns(self, outcome, position: int, solution,
+                        option_slots, legendary: bool) -> List[dict]:
+        """
+        Qué dice y de qué color va cada columna de una opción.
+
+        Lo usan la tabla y la partitura, para que las dos digan lo mismo:
+        el cifrado tal como está repartido, el grado, y si es una marca, una
+        visita a otra tonalidad o un intercambio modal.
+        """
+        flourishes = getattr(outcome, "flourishes", None)
+        quotation = getattr(outcome, "set_piece", None)
+        columns: List[dict] = []
+        for column, slot in enumerate(option_slots):
+            # Start from how THIS slot is voiced. The hand-written mode
+            # has no options list, so reading the name only inside the
+            # options branch left it showing the bare chord symbol and
+            # hiding every added colour tone.
+            label = voicing.symbol_with_added(slot.requirement.plan)
+            # Un silencio no tiene acorde. El motor le pone un do de
+            # relleno para que la lista de slots siga alineada con los
+            # compases, y ese do se estaba mostrando como si el usuario
+            # lo hubiera escrito.
+            resting = bool(getattr(slot, "is_rest", False))
+            # The quotation's symbols belong to ITS solution only; the
+            # other two are ordinary answers and keep their own chords.
+            quoted_here = bool(position == 1 and quotation
+                               and column < len(getattr(quotation, "symbols", [])))
+            if quoted_here:
+                label = quotation.symbols[column]
+            # The rewritten sixth has to survive the same way: wherever the
+            # slot carries a list of options -- the generator and the
+            # harmoniser -- the chord was renamed from its plan and the
+            # "6omit5" was lost.
+            sixth_here = bool(position == 1 and flourishes
+                              and flourishes.sixth_slot == column
+                              and flourishes.sixth_symbol)
+            if sixth_here:
+                label = flourishes.sixth_symbol
+            roman = ""
+            chosen_option = None
+            if slot.options and column < len(solution.choices):
+                chosen_option = slot.options[
+                    min(solution.choices[column], len(slot.options) - 1)]
+                # Named as it is actually voiced: an added ninth shows
+                # up as Cadd9 rather than as a plain C.
+                if not (quoted_here or sixth_here):
+                    label = voicing.symbol_with_added(
+                        chosen_option.requirement.plan)
+                # A quotation names its own degrees. Reading them off
+                # the slot showed "i" over the dominant in a cadence
+                # whose chord symbol repeats.
+                if quoted_here and column < len(quotation.romans):
+                    roman = quotation.romans[column]
+                elif chosen_option.harmony is not None:
+                    roman = harmony.display_roman(chosen_option.harmony)
+            marks = (flourishes.marks_for(column, position - 1)
+                     if flourishes else [])
+            # A chord visited in another key is tinted, so where the
+            # piece travels is visible at a glance.
+            away = bool(chosen_option is not None
+                        and getattr(chosen_option.harmony, "key_area", ""))
+            # Un intercambio modal se marca en naranja. Las dominantes
+            # aplicadas no cuentan: viajan en el mismo campo pero no son un
+            # préstamo del modo paralelo.
+            lent = bool(chosen_option is not None
+                        and chosen_option.harmony is not None
+                        and chosen_option.harmony.is_borrowed
+                        and not harmony.is_applied_dominant(
+                            chosen_option.harmony))
+            columns.append({
+                "label": label, "roman": roman, "resting": resting,
+                "marked": bool(marks), "marks": marks, "away": away,
+                "lent": lent, "duration": slot.duration_quarters,
+            })
+        return columns
+
+    @staticmethod
+    def _column_colour(column: dict, legendary: bool) -> Optional[str]:
+        """El color de un cifrado: marca, viaje o préstamo; None si ninguno."""
+        if column["resting"]:
+            return TEXT_MUTED
+        if column["marked"] or legendary:
+            return SET_PIECE_TEXT
+        if column["away"]:
+            return MODULATION_TEXT
+        if column["lent"]:
+            return BORROWED_TEXT
+        return None
+
+    def _option_table(self, block, outcome, solution, option_slots,
+                      columns: List[dict], voice_names: List[str],
+                      legendary: bool) -> None:
+        """La opción como tabla: un cifrado por columna y una voz por fila."""
+        # Horizontal scrolling: a long piece ran off the edge with no
+        # way to reach the later bars. Height follows the number of
+        # voices: fixed at 190 the last row fell outside the visible area,
+        # so a six-voice setting looked like it had lost its bass.
+        grid = ctk.CTkScrollableFrame(
+            block, fg_color="transparent", orientation="horizontal",
+            height=60 + 26 * len(voice_names))
+        grid.pack(fill="x", padx=14, pady=(0, 10))
+
+        # Adónde viaja ESTA opción, escrito arriba del tramo violeta y
+        # centrado sobre él. El nombre es lo único que contesta la pregunta
+        # con la que uno mira ese tramo.
+        if self._modulation_banner(grid, option_slots, solution):
+            # La fila del cartel ocupa lugar: sin agrandar la rejilla, la
+            # voz más grave se caía fuera de la parte visible.
+            grid.configure(height=60 + 26 * len(voice_names) + 24)
+
+        for column, info in enumerate(columns):
+            resting = info["resting"]
+            marked, away, lent = info["marked"], info["away"], info["lent"]
+            header = ctk.CTkFrame(
+                grid,
+                fg_color=(SET_PIECE_TINT if marked or legendary
+                          else MODULATION_TINT if away
+                          else BORROWED_TINT if lent else "transparent"),
+                corner_radius=6)
+            if lent and not away:
+                Tooltip(header,
+                        tr("Intercambio modal: un acorde prestado del modo "
+                           "paralelo. Sigue en la misma tonalidad, con una "
+                           "nota de la escala cambiada."))
+            if marked:
+                # El nombre y la explicación se traducen por separado: el
+                # renglón armado con los dos nunca sería una clave.
+                Tooltip(header, "  ".join(
+                    f"{tr(m.label)}: {tr(m.detail)}" for m in info["marks"]))
+            header.grid(row=1, column=column + 1, padx=2, sticky="ew")
+            chord_label = ctk.CTkLabel(
+                header,
+                text=session.REST_SYMBOL if resting else info["label"],
+                # El glifo del silencio vive en la fuente de símbolos, la
+                # misma con la que el pentagrama dibuja sus claves.
+                font=(scaled(("Segoe UI Symbol", 15)) if resting
+                      else scaled(("Segoe UI Semibold", 11))),
+                width=64,
+                text_color=self._column_colour(info, legendary))
+            chord_label.pack()
+            if resting:
+                Tooltip(header, tr("Silencio: acá no suena nada."))
+            if legendary:
+                # Desfasados por posición: el brillo recorre la progresión
+                # de izquierda a derecha en vez de prenderse entero.
+                start_shimmer(chord_label, period=110, offset=column)
+            if info["roman"] and not resting:
+                ctk.CTkLabel(header, text=info["roman"], font=FONT_SMALL,
+                             text_color=(MODULATION_TEXT if away
+                                         else BORROWED_TEXT if lent
+                                         else TEXT_MUTED), width=64).pack()
+        chords = session.voiced_slots(outcome.spec, solution)
+        for voice_index in reversed(range(len(voice_names))):
+            # Una fila más abajo: la primera la ocupa el cartel de la
+            # modulación, que existe aunque esta opción no viaje.
+            display_row = len(voice_names) - voice_index + 1
+            ctk.CTkLabel(grid, text=i18n.tr_name(voice_names[voice_index]),
+                         font=FONT_SMALL, text_color=TEXT_MUTED, width=110,
+                         anchor="w").grid(row=display_row, column=0,
+                                          sticky="w")
+            # Alineadas contra los slots de la partitura y no contra las de
+            # la solución: la búsqueda saltea los silencios, así que a
+            # partir del primero las dos listas iban corridas.
+            for column, chord in enumerate(chords):
+                ctk.CTkLabel(
+                    grid,
+                    text=(note_name(chord[voice_index])
+                          if voice_index < len(chord) else "·"),
+                    font=FONT_SMALL, width=64,
+                    text_color=None if chord else TEXT_MUTED
+                    ).grid(row=display_row, column=column + 1, padx=2)
+
+    #: El carril de cada tipo de voz en el sistema de dos pentagramas: el
+    #: bajo abajo de todo, el tenor en el segundo ---que se reparte entre
+    #: las dos claves nota por nota---, la contralto y la soprano arriba.
+    STAFF_LANES = {"B": 0, "Bar": 0, "T": 1, "A": 2, "MS": 2, "S": 3}
+
+    def _staff_lanes(self, voices) -> List[int]:
+        """En qué carril del sistema va cada voz, de grave a aguda."""
+        wanted = [self.STAFF_LANES.get(
+            getattr(getattr(voice, "voice_type", None), "key", ""), -1)
+            for voice in voices]
+        if -1 not in wanted and wanted == sorted(set(wanted)):
+            return wanted
+        return {1: [3], 2: [0, 3], 3: [0, 2, 3],
+                4: [0, 1, 2, 3]}.get(len(voices), list(range(len(voices))))
+
+    def _option_staff(self, block, heading, outcome, solution,
+                      columns: List[dict], voice_names: List[str]) -> None:
+        """
+        La opción como partitura: el sistema de dos pentagramas del
+        analizador, sólo para leer, con los cifrados arriba y el grado
+        abajo, pintados como en la tabla.
+
+        La tabla de nombres de nota decía lo mismo, pero se leía como una
+        planilla y no como música.
+        """
+        spec = outcome.spec
+        lanes = self._staff_lanes(spec.voices)
+        chords = session.voiced_slots(spec, solution)
+        durations = [slot.duration_quarters for slot in spec.slots]
+        # La melodía del Armonizador, como la escribió el usuario: la
+        # búsqueda la ve muestreada nota por acorde, y sin esto la partitura
+        # mostraba una melodía con la mitad de las notas.
+        written: Dict[int, List[Tuple[Optional[int], float]]] = {}
+        for voice in range(len(lanes)):
+            line = spec.line_for(voice) if hasattr(spec, "line_for") else None
+            if line is not None:
+                written[voice] = [event for bar in sorted(line.bars)
+                                  for event in line.bars[bar]]
+        legendary = bool(getattr(self, "_story_piece_result", False))
+        labels = [(info["label"], info["roman"], info["resting"],
+                   self._column_colour(info, legendary)) for info in columns]
+        signature = spec.time_signature
+        metres = [(1, signature.beats, signature.beat_type)]
+        last = (signature.beats, signature.beat_type)
+        for bar, metre in enumerate(
+                getattr(spec, "bar_time_signatures", None) or [], start=1):
+            if (metre.beats, metre.beat_type) != last:
+                metres.append((bar, metre.beats, metre.beat_type))
+                last = (metre.beats, metre.beat_type)
+        self._result_staff(block, heading, lanes, voice_names, chords,
+                           durations, labels, getattr(spec, "key_hint", None)
+                           or 0, metres, written)
+
+    def _result_staff(self, block, heading, lanes: List[int],
+                      voice_names: List[str], chords, durations: List[float],
+                      labels: List[tuple], fifths: int,
+                      metres: List[Tuple[int, int, int]],
+                      written: Optional[Dict[int, list]] = None) -> None:
+        """
+        Dibujar un resultado en el sistema de dos pentagramas, sólo para leer.
+
+        Lo comparten la pantalla de resultados y el detalle del historial.
+        ``labels`` va una por columna: (cifrado, grado, silencio, color).
+        """
+        accent = self._mode_accent()
+        grand = GrandStaff(
+            block, editable=False,
+            colours={"surface": SURFACE_LIGHT, "text": TEXT_NORMAL,
+                     "muted": TEXT_MUTED, "accent": accent,
+                     "glow": mix(SURFACE_LIGHT, accent, 0.18)})
+        grand.set_key(fifths, metres[0][1], metres[0][2])
+        grand.set_metres(metres)
+        lines: List[List[Tuple[Optional[int], float]]] = [
+            [] for _ in range(GRAND_VOICE_COUNT)]
+        onsets: List[float] = []
+        moment = 0.0
+        for column, duration in enumerate(durations):
+            chord = chords[column] if column < len(chords) else []
+            onsets.append(moment)
+            for voice, lane in enumerate(lanes):
+                lines[lane].append(
+                    (chord[voice] if voice < len(chord) else None, duration))
+            moment += duration
+        for voice, events in (written or {}).items():
+            if (voice < len(lanes)
+                    and abs(sum(d for _p, d in events) - moment) < 1e-6):
+                lines[lanes[voice]] = list(events)
+        grand.load(lines)
+        grand.annotations = []
+        grand.symbol_colours = {}
+        # Sin las líneas punteadas de `flags`: en jazz casi todo acorde cae
+        # en algún ii-V, y la partitura quedaba rayada de punta a punta. El
+        # cifrado en dorado ya dice lo mismo.
+        for column, (label, roman, resting, colour) in enumerate(labels):
+            if column >= len(onsets) or resting:
+                continue
+            onset = onsets[column]
+            grand.annotations.append(
+                (onset, label, [tr(roman)] if roman else []))
+            if colour:
+                grand.symbol_colours[onset] = colour
+        grand.redraw()
+        grand.pack(fill="x", padx=14, pady=(0, 10))
+
+        # Qué nota es, al pasar el mouse: la tabla lo decía de entrada, y la
+        # partitura lo contesta a pedido sin ocupar lugar.
+        reading = ctk.CTkLabel(heading, text="", font=FONT_SMALL,
+                               text_color=TEXT_MUTED)
+        reading.pack(side="left", padx=(16, 0))
+
+        def hovered(hit) -> None:
+            text = ""
+            if hit is not None:
+                lane, position = hit
+                try:
+                    pitch = lines[lane][position][0]
+                    voice = lanes.index(lane)
+                except (IndexError, ValueError):
+                    pitch = None
+                if pitch is not None and voice < len(voice_names):
+                    text = "%s  ·  %s" % (i18n.tr_name(voice_names[voice]),
+                                          note_name(pitch))
+            try:
+                reading.configure(text=text)
+            except tk.TclError:
+                pass
+
+        grand.on_hover = hovered
+
+    def _lanes_for_names(self, names: List[str]) -> List[int]:
+        """Los carriles de unas voces guardadas por nombre (el historial)."""
+        by_label = {voice.label: key for key, voice in VOICE_CATALOG.items()}
+        by_label.update({"Bass": "B", "Baritone": "Bar", "Mezzo-soprano": "MS"})
+        voices = []
+        for name in names:
+            base, _, number = name.rpartition(" ")
+            if not (base and number.isdigit()):
+                base = name
+            voices.append(SimpleNamespace(
+                voice_type=SimpleNamespace(key=by_label.get(base, ""))))
+        return self._staff_lanes(voices)
 
     def _show_results(self) -> None:
         """Reveal the finished results panel in one go."""
@@ -7520,7 +9008,7 @@ class ChordWeaverApp(ctk.CTk):
 
     def _export_dialog(self) -> None:
         folder = filedialog.askdirectory(
-            title="Elegí dónde guardar la partitura",
+            title=tr("Elegí dónde guardar la partitura"),
             initialdir=history.default_output_directory(),
         )
         if folder:
@@ -7564,7 +9052,7 @@ class ChordWeaverApp(ctk.CTk):
         --- así que ésas quedan con el borde neutro de las tarjetas: inventar
         un color sería peor que no tener ninguno.
         """
-        for key, _n, _s, _b, _st, accent, _icon in MODE_CARDS:
+        for key, _n, _s, accent, _icon in MODE_CARDS:
             if key == record.mode:
                 return accent
         return BORDER_SOFT
@@ -7572,7 +9060,7 @@ class ChordWeaverApp(ctk.CTk):
     @staticmethod
     def _record_icon(record) -> str:
         """El mismo signo que lleva la tarjeta de ese modo en la portada."""
-        for key, _n, _s, _b, _st, _accent, icon in MODE_CARDS:
+        for key, _n, _s, _accent, icon in MODE_CARDS:
             if key == record.mode:
                 return icon
         return "·"
@@ -7581,10 +9069,9 @@ class ChordWeaverApp(ctk.CTk):
         self._award({"history_open"})
         records = history.load_history(self.history_path)
         self._heading(
-            tr("Últimas producciones"),
-            tr("Las diez más recientes, guardadas al lado del programa. Se anota "
-               "cada corrida que termina, se haya exportado o no. El color del "
-               "recuadro es el del modo con el que se hizo."))
+            tr("Historial"),
+            tr("Las diez últimas corridas, exportadas o no. El color de cada "
+               "recuadro es el del modo que se usó."))
         if not records:
             empty = ctk.CTkFrame(self.body, fg_color=SURFACE_LIGHT,
                                  corner_radius=12)
@@ -7593,8 +9080,8 @@ class ChordWeaverApp(ctk.CTk):
                          font=scaled(("Segoe UI Semibold", 14))
                          ).pack(anchor="w", padx=18, pady=(16, 2))
             ctk.CTkLabel(empty,
-                         text=tr("Cada corrida que termina se anota sola. Generá "
-                                 "una partitura y volvé acá."),
+                         text=tr("Cuando generes una partitura, va a aparecer "
+                                 "acá."),
                          font=FONT_SMALL, text_color=TEXT_MUTED
                          ).pack(anchor="w", padx=18, pady=(0, 16))
             return
@@ -7638,7 +9125,8 @@ class ChordWeaverApp(ctk.CTk):
             # Sin los costos, por lo mismo que se sacaron de la pantalla de
             # resultados: un número que sólo significa algo comparado con
             # otro de la misma corrida no dice nada suelto en una lista.
-            voices = ", ".join(record.voice_names or record.voice_keys)
+            voices = ", ".join(i18n.tr_name(name) for name in
+                               (record.voice_names or record.voice_keys))
             details = (trf("{voice_keys} voces  ·  {voices}  ·  "
                            "{time_signature}  ·  {bar_count} compases",
                            voice_keys=len(record.voice_keys), voices=voices,
@@ -7662,8 +9150,8 @@ class ChordWeaverApp(ctk.CTk):
                 play.configure(command=lambda r=record, b=play:
                                self._play_record(r, b))
                 play.pack(side="left")
-                Tooltip(play, tr("Reproduce la primera opción tal como quedó "
-                                 "guardada, con sus duraciones."))
+                Tooltip(play, tr("Toca la primera opción tal como quedó "
+                                 "guardada."))
             if record.solutions:
                 detail = ctk.CTkButton(
                     buttons, text=tr("Ver detalle"), width=110, height=28,
@@ -7736,7 +9224,7 @@ class ChordWeaverApp(ctk.CTk):
     #: el ojo pierde el salto de línea y hay que releer.
     BOOK_COLUMN = 620
 
-    def _screen_book(self, _payload=None) -> None:
+    def _screen_book(self, payload=None) -> None:
         self._award({"book_read"})
         written, total = book.counts(self._lore_unlocked)
 
@@ -7769,6 +9257,13 @@ class ChordWeaverApp(ctk.CTk):
         ctk.CTkLabel(toc, text=tr("Índice"), font=FONT_SMALL,
                      text_color=TEXT_MUTED).pack(anchor="w", padx=16,
                                                  pady=(14, 6))
+        # Abierto en una entrada dada ---lo hace la escuelita, que cita una
+        # por lección---: se elige el capítulo de esa entrada y, ya dibujado,
+        # se baja hasta ella. Sin esto «Abrir en el libro» dejaba al lector
+        # en el capítulo que hubiera tenido abierto la vez anterior.
+        found = book.find(payload) if isinstance(payload, str) else None
+        if found is not None:
+            self._book_chapter = found[0]
         chosen = min(getattr(self, "_book_chapter", 0),
                      len(book.CHAPTERS) - 1)
         self._book_chapter = chosen
@@ -7812,6 +9307,22 @@ class ChordWeaverApp(ctk.CTk):
             columns, fg_color=PAPER, corner_radius=14)
         self.book_page.grid(row=0, column=1, sticky="nsew")
         self._show_chapter(chosen)
+        if found is not None:
+            self.after(80, lambda key=payload: self._scroll_book_to(key))
+
+    def _scroll_book_to(self, key: str) -> None:
+        """Bajar la página del libro hasta el título de una entrada."""
+        heading = getattr(self, "_book_headings", {}).get(key)
+        page = getattr(self, "book_page", None)
+        if heading is None or page is None:
+            return
+        try:
+            self.update_idletasks()
+            offset = heading.winfo_rooty() - page.winfo_rooty()
+            total = max(1, page.winfo_height())
+            page._parent_canvas.yview_moveto(max(0.0, (offset - 18) / total))
+        except (tk.TclError, AttributeError):
+            pass
 
     def _show_chapter(self, index: int) -> None:
         """Abrir un capítulo. Sólo se rearma la página, no la pantalla."""
@@ -7876,6 +9387,9 @@ class ChordWeaverApp(ctk.CTk):
             child.destroy()
         chapter = book.CHAPTERS[self._book_chapter]
         wrap = self.BOOK_COLUMN
+        #: El título de cada entrada, para poder bajar hasta una
+        #: (`_scroll_book_to`).
+        self._book_headings: Dict[str, tk.Label] = {}
 
         host = tk.Frame(page, bg=PAPER)
         host.pack(anchor="n", padx=30, pady=(30, 34))
@@ -7907,6 +9421,7 @@ class ChordWeaverApp(ctk.CTk):
                 fg=INK if open_now else INK_FAINT, wraplength=wrap,
                 justify="left", anchor="w")
             heading.pack(anchor="w", pady=(22, 6))
+            self._book_headings[entry.key] = heading
             # Y el que además es legendario se escribe con oro, abierto o
             # cerrado: es lo que lo distingue de los tres apartados que tiene
             # al lado, que se consiguen trabajando.
@@ -8260,16 +9775,16 @@ class ChordWeaverApp(ctk.CTk):
     # -- el aviso de arriba a la izquierda ----------------------------------
 
     #: Cuántos avisos pueden estar en pantalla a la vez. Una corrida puede
-    #: cerrar media docena de logros de golpe, y apilarlos todos llenaría la
-    #: ventana de arriba abajo; el más viejo se va para dejar lugar.
-    MAX_TOASTS = 4
+    #: cerrar media docena de logros de golpe: los que no entran esperan en
+    #: fila (`_toast_backlog`) y salen cuando se va uno. Con cuatro a la vez
+    #: tapaban media pantalla, y cerrando el más viejo para hacer lugar se
+    #: perdían avisos que nadie llegaba a leer.
+    MAX_TOASTS = 2
 
     def _show_toast(self, achievement, heading_text: str = "") -> None:
-        while len(self.toasts) >= self.MAX_TOASTS:
-            # Sacado de la lista antes de cerrarlo: `close` avisa de vuelta
-            # para que se saque, y si ya estuviera cerrado no avisaría y el
-            # bucle no terminaría nunca.
-            self.toasts.pop(0).close()
+        if len(self.toasts) >= self.MAX_TOASTS:
+            self._toast_backlog.append((achievement, heading_text))
+            return
         toast = Toast(self, achievement, on_close=self._drop_toast,
                       heading_text=heading_text)
         self.toasts.append(toast)
@@ -8296,6 +9811,11 @@ class ChordWeaverApp(ctk.CTk):
         if toast in self.toasts:
             self.toasts.remove(toast)
         self._reflow_toasts()
+        if self._toast_backlog and len(self.toasts) < self.MAX_TOASTS:
+            achievement, heading_text = self._toast_backlog.pop(0)
+            # En el próximo respiro: `close` avisa desde adentro de su propio
+            # `destroy`, y armar otro cartel ahí mismo lo dibuja a medias.
+            self.after(120, lambda: self._show_toast(achievement, heading_text))
 
     def _reflow_toasts(self) -> None:
         """
@@ -9155,7 +10675,7 @@ class ChordWeaverApp(ctk.CTk):
         header = ctk.CTkFrame(self.body, fg_color="transparent")
         header.pack(fill="x", pady=(0, 6))
         ctk.CTkLabel(header, text=tr("Logros"),
-                     font=scaled(("Segoe UI Semibold", 20))).pack(side="left")
+                     font=scaled(("Georgia", 22, "bold"))).pack(side="left")
         ctk.CTkLabel(header, text=trf("{done} de {total}",
                                       done=done, total=total), font=FONT_SMALL,
                      text_color=TEXT_MUTED).pack(side="left", padx=12)
@@ -9388,9 +10908,10 @@ class ChordWeaverApp(ctk.CTk):
         header = ctk.CTkFrame(self.body, fg_color="transparent")
         header.pack(fill="x", pady=(0, 8))
         ctk.CTkLabel(header, text=tr("Experimentador de armónicos"),
-                     font=scaled(("Segoe UI Semibold", 20))).pack(side="left")
+                     font=scaled(("Georgia", 22, "bold"))).pack(side="left")
         ctk.CTkLabel(header,
-                     text=tr("mirá de qué está hecha una nota, y desarmala"),
+                     text=tr("apagá, subí o desafiná los armónicos de una "
+                             "nota"),
                      font=FONT_SMALL, text_color=TEXT_MUTED
                      ).pack(side="left", padx=12)
 
@@ -9427,7 +10948,8 @@ class ChordWeaverApp(ctk.CTk):
                      # que las de la aplicación, así que la preferencia de
                      # tamaño de letra también lo agranda a él.
                      "font": scaled},
-            on_experiment=self._experimented)
+            on_experiment=self._experimented,
+            on_instrument=self._use_instrument)
         # `new` y no `n`: que ocupe el ancho entero de su columna. Con
         # `n` el panel medía lo que pedían sus partes y quedaba más
         # angosto que el lugar reservado.
@@ -9446,10 +10968,10 @@ class ChordWeaverApp(ctk.CTk):
         header = ctk.CTkFrame(self.body, fg_color="transparent")
         header.pack(fill="x", pady=(0, 8))
         ctk.CTkLabel(header, text=tr("Analizador"),
-                     font=scaled(("Segoe UI Semibold", 20))).pack(side="left")
+                     font=scaled(("Georgia", 22, "bold"))).pack(side="left")
         ctk.CTkLabel(header,
-                     text=tr("escribí o traé una partitura, y mirá qué está "
-                             "haciendo"),
+                     text=tr("escribí o importá una partitura para "
+                             "analizarla"),
                      font=FONT_SMALL, text_color=TEXT_MUTED
                      ).pack(side="left", padx=12)
 
@@ -9509,6 +11031,114 @@ class ChordWeaverApp(ctk.CTk):
             return
         for key in self.visits.record_experiment():
             self._open_visit(key)
+
+    # -- la escuelita ---------------------------------------------------------
+    #
+    # Pantalla propia, igual que el analizador y el experimentador, y por el
+    # mismo motivo es un desvío y no un paso del carrusel. El widget entero
+    # está en `school.py` y lo que se enseña y cómo se corrige en
+    # `engine/school.py`; acá queda el enganche: qué colores, qué logros
+    # entrega lo que el alumno escribe, cómo se abre el libro en la página
+    # citada y la graduación.
+
+    def _screen_school(self, _payload=None) -> None:
+        """La escuelita, a pantalla completa."""
+        header = ctk.CTkFrame(self.body, fg_color="transparent")
+        header.pack(fill="x", pady=(0, 8))
+        ctk.CTkLabel(header, text=tr("Escuelita"),
+                     font=scaled(("Georgia", 22, "bold"))).pack(side="left")
+        ctk.CTkLabel(header,
+                     text=tr("ejercicios de escritura corregidos por el "
+                             "analizador"),
+                     font=FONT_SMALL, text_color=TEXT_MUTED
+                     ).pack(side="left", padx=12)
+        self.school_screen = school.School(
+            self.body,
+            colours={"panel": SURFACE_LIGHT, "surface": SURFACE,
+                     "raised": SURFACE_RAISED, "text": TEXT_NORMAL,
+                     "muted": TEXT_MUTED,
+                     "faint": mix(TEXT_MUTED, SURFACE, 0.45),
+                     "accent": ACCENT, "accent_hover": ACCENT_HOVER,
+                     "gold": GOLD, "gold_dim": GOLD_DIM, "ok": OK_GREEN,
+                     "error": ERROR, "border": BORDER_SOFT,
+                     "glow": mix(SURFACE_LIGHT, ACCENT, 0.18),
+                     # La cita del libro se dibuja con los colores del
+                     # libro: se tiene que leer como el libro hablando, no
+                     # como la escuelita resumiendo.
+                     "paper": PAPER, "paper_edge": PAPER_EDGE, "ink": INK,
+                     "ink_muted": INK_MUTED, "ink_faint": INK_FAINT,
+                     "rule": RULE, "font": scaled},
+            progress=self.school, memory=self.school_memory,
+            entry_written=self._lore_unlocked,
+            on_book=self._open_book_at,
+            on_lab=lambda: self._open_detour("lab"),
+            on_analysed=self._analysed,
+            on_played=lambda: self._award({"first_playback"}),
+            on_finished=self._open_graduation)
+        self.school_screen.pack(fill="both", expand=True)
+        # Si la ceremonia quedó a medias ---se cerró el programa en el
+        # medio---, vuelve a esperar acá: la graduación se marca al terminar
+        # la escena, no al aprobar el último ejercicio.
+        if self.school.graduation_due():
+            self.after(900, self._open_graduation)
+
+    def _open_book_at(self, key: str) -> None:
+        """Abrir el libro en una entrada, encima de lo que se estaba haciendo.
+
+        No reemplaza el desvío: «Volver» tiene que devolver a la lección que
+        citó la entrada, con el ejercicio como estaba.
+        """
+        self._open_detour("book", payload=key)
+
+    #: Los ruidos de la graduación: los de los tres que vienen.
+    GRADUATION_SOUNDS = ("plainchant", "blip_gregory", "clavier", "blip_bach",
+                         "blip_creator")
+
+    def _open_graduation(self) -> None:
+        """
+        La graduación: tres escenas seguidas, de un solo pestañeo largo.
+
+        Se encolan juntas en la misma cola de las visitas, así la cola hace
+        lo que ya sabe hacer: la pantalla no vuelve al programa entre una y
+        otra, y lo que hay que hacer al final ---la marca, el logro--- se
+        hace cuando termina la **última**.
+        """
+        if getattr(self, "_graduation_queued", False):
+            return
+        if (self.scene is not None or self.overlay is not None
+                or self.celebrations):
+            # Hay otra cosa a pantalla completa ---una escena, la animación
+            # de una estrella---: dos cosas encima de la ventana se tapan
+            # entre sí. Se vuelve a preguntar cuando la pantalla quede libre.
+            self.after(1500, self._open_graduation)
+            return
+        self._graduation_queued = True
+        scenes = curriculum.GRADUATION
+        for position, (speaker, lines, name, dream) in enumerate(scenes):
+            for sound in self.VISIT_SOUNDS.get(speaker, ()):
+                ambience.summon(sound)
+            last = position == len(scenes) - 1
+            self._queue_scene(
+                speaker, lines, reveal_name=name,
+                title=curriculum.GRADUATION_TITLE, dream=dream,
+                after=self._graduated if last else None)
+        self._when_sounds(self.GRADUATION_SOUNDS, self._advance_scenes)
+
+    def _graduated(self) -> None:
+        """
+        La ceremonia terminó: recién ahora se da por vista y se entrega el
+        logro, igual que en las visitas. Cerrar el programa en el medio no
+        le cuesta al usuario la escena.
+        """
+        self._graduation_queued = False
+        self.school.mark_graduated()
+        self._award([curriculum.AWARD])
+        screen = getattr(self, "school_screen", None)
+        if screen is not None:
+            try:
+                screen._draw_trail()
+            except tk.TclError:
+                pass
 
     # -- el modo historia ---------------------------------------------------
     #
@@ -9930,7 +11560,7 @@ class ChordWeaverApp(ctk.CTk):
         self._story_notice(
             "El camino se ha liberado",
             trf("Algo te está esperando en el {value}.",
-                value=self.MODE_NAMES.get(step.where, 'programa')),
+                value=tr(self.MODE_NAMES.get(step.where, 'programa'))),
             heading="Se enciende el oro")
 
     # -- las trabas de los botones dorados ----------------------------------
@@ -10076,25 +11706,25 @@ class ChordWeaverApp(ctk.CTk):
         """
         panel = ctk.CTkFrame(master, fg_color=SURFACE_LIGHT, corner_radius=16,
                              border_width=2, border_color=GOLD_DIM)
-        panel.pack(fill="x", padx=8, pady=(2, 6))
+        panel.pack(fill="x", padx=8, pady=(0, 6))
         row = ctk.CTkFrame(panel, fg_color="transparent")
-        row.pack(fill="x", padx=24, pady=14)
+        row.pack(fill="x", padx=(18, 12), pady=6)
 
-        mark = ctk.CTkLabel(row, text="✦", font=scaled(("Segoe UI Symbol", 30)),
+        mark = ctk.CTkLabel(row, text="✦", font=scaled(("Segoe UI Symbol", 20)),
                             text_color=GOLD)
-        mark.pack(side="left", padx=(0, 16))
+        mark.pack(side="left", padx=(0, 10))
         texts = ctk.CTkFrame(row, fg_color="transparent")
         texts.pack(side="left", fill="x", expand=True)
         title = ctk.CTkLabel(texts, text=tr("Hay alguien esperando"),
-                             font=scaled(("Georgia", 18, "bold")),
+                             font=scaled(("Georgia", 15, "bold")),
                              text_color=GOLD, anchor="w")
-        title.pack(anchor="w")
+        title.pack(side="left")
         ctk.CTkLabel(texts,
                      text=tr("No golpeó la puerta, no hizo ruido y no se fue. "
                              "Vas a tener que atender vos."),
                      font=FONT_SMALL, text_color=TEXT_MUTED, anchor="w",
-                     justify="left").pack(anchor="w", pady=(2, 0))
-        button = ctk.CTkButton(row, text=tr("Atender"), width=150, height=40,
+                     justify="left").pack(side="left", padx=(16, 0))
+        button = ctk.CTkButton(row, text=tr("Atender"), width=130, height=32,
                                corner_radius=12,
                                font=scaled(("Segoe UI Semibold", 14)),
                                fg_color="transparent", border_width=2,
@@ -10133,60 +11763,62 @@ class ChordWeaverApp(ctk.CTk):
         step = self.story.current
         panel = ctk.CTkFrame(master, fg_color=SURFACE_LIGHT, corner_radius=16,
                              border_width=2, border_color=GOLD_DIM)
-        left = ctk.CTkFrame(panel, fg_color="transparent")
-        left.pack(side="left", fill="x", expand=True, padx=(24, 10), pady=11)
-
+        # Un solo renglón, debajo del estante: el recuerdo del sendero, su
+        # título, lo que hay que hacer y, a la derecha, el tramo. Con las
+        # herramientas del mismo tamaño que los modos no entra más que eso
+        # en la ventana más chica; el detalle de la consigna va en la ayuda
+        # emergente.
+        row = ctk.CTkFrame(panel, fg_color="transparent")
+        row.pack(fill="x", padx=(18, 20), pady=8)
+        ctk.CTkLabel(row, text=path.keepsake_icon,
+                     font=scaled(("Segoe UI Symbol", 18)),
+                     text_color=GOLD_DIM).pack(side="left", padx=(0, 10))
         title = ctk.CTkLabel(
-            left, text=tr(path.title(path.key in self.story.finished)),
-            font=scaled(("Georgia", 18, "bold")), text_color=GOLD, anchor="w")
-        title.pack(anchor="w")
+            row, text=tr(path.title(path.key in self.story.finished)),
+            font=scaled(("Georgia", 14, "bold")), text_color=GOLD, anchor="w")
+        title.pack(side="left")
         start_shimmer(title)
 
         if step is None:
-            ctk.CTkLabel(left, text=tr("Recorrido hasta el final."),
+            ctk.CTkLabel(row, text=tr("Recorrido hasta el final."),
                          font=scaled(("Segoe UI", 12)), text_color=TEXT_MUTED,
-                         anchor="w").pack(anchor="w", pady=(4, 0))
+                         anchor="w").pack(side="left", padx=(16, 0))
         else:
             ctk.CTkLabel(
-                left,
-                text=trf("Tramo {step} de {total_steps}  ·  {title}  ·  en "
-                         "el {value}",
-                         step=self.story.step + 1,
-                         total_steps=self.story.total_steps(),
-                         title=step.title,
-                         value=self.MODE_NAMES.get(step.where, '')),
-                font=FONT_SMALL, text_color=TEXT_MUTED, anchor="w"
-                ).pack(anchor="w", pady=(4, 2))
-            ctk.CTkLabel(left, text=tr(step.goal),
-                         font=scaled(("Segoe UI", 13)), text_color=TEXT_NORMAL,
-                         anchor="w", justify="left", wraplength=760
-                         ).pack(anchor="w")
-            ctk.CTkLabel(left, text=tr(step.hint), font=FONT_SMALL,
-                         text_color=TEXT_MUTED, anchor="w", justify="left",
-                         wraplength=760).pack(anchor="w", pady=(3, 0))
-            # Lo único que se pide antes de seguir: leer. Va grande y en
-            # dorado porque es la acción, no una nota al pie --- y porque el
-            # usuario viene de una escena donde se lo pidieron y tiene que
-            # encontrarlo sin buscar.
+                row, text=trf("Tramo {step} de {total}  ·  en el {where}",
+                              step=self.story.step + 1,
+                              total=self.story.total_steps(),
+                              where=tr(self.MODE_NAMES.get(step.where, ''))),
+                font=FONT_SMALL, text_color=TEXT_MUTED, anchor="e"
+                ).pack(side="right", padx=(16, 0))
+            wrap = max(320, self.winfo_width() - 640)
             if step.gate and not self.story.gate_open(step.gate):
+                # Lo único que se pide antes de seguir: leer. Ocupa el lugar
+                # de la consigna, que hasta leerlo no se puede cumplir, y va
+                # en dorado porque es la acción. Si lo que hay que leer está
+                # en el libro, tocarlo lo abre; cómo se cumple, en la ayuda
+                # emergente.
                 pending = ctk.CTkLabel(
-                    left, text=trf("📖  {locked}",
-                                   locked=tr(step.locked_text)),
-                    font=scaled(("Georgia", 16, "bold")),
-                    text_color=GOLD, anchor="w", justify="left",
-                    wraplength=760)
-                pending.pack(anchor="w", pady=(8, 0))
+                    row, text=trf("📖  {locked}",
+                                  locked=tr(step.locked_text)),
+                    font=scaled(("Segoe UI Semibold", 13)), text_color=GOLD,
+                    anchor="w", justify="left", wraplength=wrap)
+                pending.pack(side="left", padx=(16, 0))
                 start_shimmer(pending)
-                ctk.CTkLabel(
-                    left, text=tr(self._story_gate_how(step)),
-                    font=FONT_SMALL, text_color=TEXT_MUTED, anchor="w",
-                    justify="left", wraplength=760
-                    ).pack(anchor="w", pady=(2, 0))
-
-        mark = ctk.CTkLabel(panel, text=path.keepsake_icon,
-                            font=scaled(("Segoe UI Symbol", 34)),
-                            text_color=GOLD_DIM)
-        mark.pack(side="right", padx=(10, 26))
+                Tooltip(pending, tr(self._story_gate_how(step)))
+                if step.gate in story.BOOK_GATES:
+                    pending.configure(cursor="hand2")
+                    bind_deeply(descendants(pending), "<Button-1>",
+                                lambda _e: self._open_detour("book",
+                                                             replace=True))
+            else:
+                goal = ctk.CTkLabel(row, text=tr(step.goal),
+                                    font=scaled(("Segoe UI", 13)),
+                                    text_color=TEXT_NORMAL, anchor="w",
+                                    justify="left", wraplength=wrap)
+                goal.pack(side="left", padx=(16, 0))
+                if step.hint:
+                    Tooltip(goal, tr(step.hint))
         panel.pack(fill="x", padx=8, pady=(0, 6))
 
     def _story_golden_button(self, master):
@@ -10268,7 +11900,7 @@ class ChordWeaverApp(ctk.CTk):
         menu = getattr(self, "key_menu", None)
         if menu is not None:
             try:
-                label = menu.get()
+                label = i18n.untr(menu.get())
             except tk.TclError:
                 pass
         fifths = next((f for name, f in self.KEY_SIGNATURES if name == label), 0)
@@ -10347,13 +11979,16 @@ class ChordWeaverApp(ctk.CTk):
                 (self._staff_index(pitch), length)
                 for pitch, _start, length in piece.melody]
             # La línea es otra: lo que el usuario hubiera marcado apuntaba a
-            # notas que ya no están.
+            # notas que ya no están. Los accidentes también: un sostenido
+            # que quedara de antes alteraba una nota de la pieza del tramo.
             self.staff.marked = set()
             self.staff.blocked = set()
+            self.staff.accidentals = {}
             self.staff.redraw()
             self._melody_notes = list(self.staff.notes)
             self._melody_marks = set()
             self._melody_skips = set()
+            self._melody_accidentals = {}
         except (tk.TclError, AttributeError):
             pass
         self._story_hear_melody(piece)
@@ -11148,6 +12783,12 @@ class ChordWeaverApp(ctk.CTk):
         segunda vez. Forzada se juega entera, recompensas incluidas, y se
         puede repetir todas las veces que haga falta.
         """
+        # La graduación tiene su propia variable: no es una visita del
+        # catálogo, es la escena con que termina la escuelita, y llegar a
+        # ella de verdad lleva treinta y tres ejercicios.
+        if curriculum.graduation_forced() and self.scene is None:
+            self._open_graduation()
+            return
         key = visitors.forced()
         if not key or self.scene is not None:
             return
@@ -11274,6 +12915,12 @@ def main() -> None:
         return
 
     app = ChordWeaverApp()
+    # Después del cartel de idioma o del de versión nueva, la ventana del
+    # programa es la segunda que se abre en el mismo proceso, y Windows le
+    # da el foco a otra cosa cuando la primera se cierra: aparecía detrás de
+    # todo o minimizada, y quien había apretado «Ahora no» creía que el
+    # programa se había cerrado.
+    app.after(150, app.bring_to_front)
     app.mainloop()
 
 

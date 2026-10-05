@@ -23,6 +23,7 @@ from engine import history, session
 from engine.export import TimeSignature
 from engine.fitness import GENRE_PROFILES
 from engine.ga import GAConfig
+from engine.i18n import trf
 from engine.theory import VOICE_CATALOG, note_name
 
 
@@ -40,7 +41,7 @@ def parse_time_signature(text: str) -> TimeSignature:
     except ValueError:
         raise argparse.ArgumentTypeError(
             trf("compás inválido: {value!r}. Se escribe como 4/4 o 6/8.",
-                value=text))
+                value=text)) from None
     if top < 1 or bottom < 1:
         raise argparse.ArgumentTypeError(
             trf("compás inválido: {value!r}. Los dos números tienen que "

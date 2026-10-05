@@ -151,6 +151,7 @@ def apply_sixth(
     locked: Sequence[bool],
     voice_count: int,
     rng: random.Random,
+    frozen: Sequence = (),
 ) -> Optional[Tuple[int, int]]:
     """
     Rewrite one chord as a sixth and force its neighbour into parallel fifths.
@@ -162,6 +163,10 @@ def apply_sixth(
 
     Edits ``chords`` in place. Returns the sixth's slot, the forced
     neighbour, and which voice carries the sixth.
+
+    ``frozen`` dice, lugar por lugar, qué voces no se pueden tocar: la
+    melodía que el usuario escribió en el armonizador. Ni la quinta que se
+    vuelve sexta ni el intercambio del vecino pueden caer en una de ellas.
     """
     options = eligible_sixth_slots(chords, locked, voice_count)
     if not options:
@@ -186,6 +191,8 @@ def apply_sixth(
         )
         if fifth_voice is None:
             continue
+        if slot < len(frozen) and fifth_voice in frozen[slot]:
+            continue
 
         sixth = chord[fifth_voice] + 2          # a whole tone up from the fifth
         moved = list(chord)
@@ -208,6 +215,8 @@ def apply_sixth(
             # dramatising an avoided parallel.
             chords[slot] = moved
             return slot, slot, fifth_voice
+        if neighbour < len(frozen) and {fifth_voice, holder} & set(frozen[neighbour]):
+            continue
         forced = list(other)
         forced[fifth_voice], forced[holder] = forced[holder], forced[fifth_voice]
         if forced != sorted(forced) or set(forced) != set(other):
@@ -282,8 +291,8 @@ def find_marks(
             if secondary:
                 marks.append(Mark(
                     "secondary_two_five", f"ii-V hacia {current.roman}",
-                    "El mismo giro de siempre, pero apuntado a otro grado: "
-                    "toma prestada la dominante de donde va y aterriza ahí.",
+                    "Un ii-V que apunta a otro grado. Toma prestada la "
+                    "dominante del acorde de llegada y resuelve en él.",
                     (index - 2, index - 1, index),
                 ))
             if (index >= 2
@@ -292,8 +301,8 @@ def find_marks(
                     and current.roman in ("I", "i")):
                 marks.append(Mark(
                     "two_five", "ii-V-I",
-                    "El giro que sostiene casi todo el repertorio: la "
-                    "subdominante prepara la dominante y ésta resuelve.",
+                    "La subdominante prepara la dominante, que resuelve en la "
+                    "tónica. Es la base de casi todo el repertorio de jazz.",
                     (index - 2, index - 1, index),
                 ))
             # The tritone substitute, resolving down a semitone as the
@@ -315,8 +324,8 @@ def find_marks(
                 marks.append(Mark(
                     "plagal_minor" if minor else "plagal",
                     "Cadencia plagal menor" if minor else "Cadencia plagal",
-                    ("La subdominante menor cierra sobre la tónica: el mismo "
-                     "gesto que el plagal mayor, más oscuro."
+                    ("La subdominante menor cierra sobre la tónica. Es la "
+                     "cadencia plagal con un color más oscuro."
                      if minor else
                      "La subdominante cierra directamente sobre la tónica, "
                      "sin pasar por la dominante."),
@@ -329,8 +338,8 @@ def find_marks(
         if previous.roman == "V" and current.roman in ("vi", "VI"):
             marks.append(Mark(
                 "deceptive", "Cadencia rota",
-                "El V prepara la tónica y cae en el sexto grado: la "
-                "resolución se posterga y la frase sigue.",
+                "El V anuncia la tónica pero va al sexto grado, y la frase "
+                "sigue.",
                 (index - 1, index),
             ))
 
@@ -380,9 +389,9 @@ def _six_four_marks(options, chords, contexts=None) -> List[Mark]:
             continue
         marks.append(Mark(
             "six_four", "Cadencial 6/4",
-            "El V con su quinta en el bajo, la fundamental encima y la "
-            "tercera arriba: la fórmula que anuncia la cadencia y retrasa "
-            "un momento la resolución.",
+            "El V con la quinta en el bajo, la fundamental encima y la "
+            "tercera arriba. Anuncia la cadencia y demora un momento la "
+            "resolución.",
             (index,),
         ))
     return marks

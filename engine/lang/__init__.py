@@ -23,7 +23,7 @@ _CACHE: Dict[str, Dict[str, str]] = {}
 #: Qué módulos forma cada idioma. El castellano no tiene: es el original.
 PARTS = {
     "en": ("en_app", "en_screens", "en_tools", "en_engine", "en_story",
-           "en_book"),
+           "en_book", "en_school"),
 }
 
 

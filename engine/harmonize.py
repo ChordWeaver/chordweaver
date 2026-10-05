@@ -30,13 +30,17 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from .harmony import (
     DOMINANT,
     GRAMMARS,
+    MINOR_MODES,
     MODES,
     grammar_cost,
     Mode,
     ChordOption,
+    borrowed_options,
     build_chord_pool,
+    diatonic_options,
     function_of,
 )
+from .theory import FLAT_NAMES, LETTER_SEMITONES, SHARP_NAMES, parse_chord
 from engine.i18n import tr, trf, trs
 
 #: Melody notes shorter than this are never harmonised on their own.
@@ -166,6 +170,18 @@ class HarmonySpot:
     #: el modo --- el quinto es "V" en mayor y "v" en menor --- y lo que se
     #: quiere fijar es la función, que no cambia.
     allowed_degrees: Tuple[int, ...] = ()
+    #: La nota fuera de la escala que este lugar sostiene cuando sube (o, en
+    #: jazz, baja) un semitono a la siguiente: el acorde de este lugar no se
+    #: elige de la tonalidad sino de los que **apuntan a esa nota** --- su
+    #: dominante, y en barroco y jazz también su séptimo grado. Ver
+    #: :func:`pin_chromatic_approaches`.
+    approach: Optional["ChromaticApproach"] = None
+    #: La clase de altura adonde resuelve el acorde del lugar anterior,
+    #: cuando ese acorde es una dominante aplicada forzada por una nota
+    #: cromática. El acorde que tiene esa nota de fundamental se premia: un
+    #: mi mayor debajo de un sol sostenido promete un la menor, y cumplir la
+    #: promesa es lo que hace que el sol sostenido se escuche como sensible.
+    resolution_pc: Optional[int] = None
 
 
 def bar_events(melody: Melody,
@@ -239,13 +255,29 @@ def harmony_spots(melody: Melody) -> List[HarmonySpot]:
         after = (last.bar_index > final.bar_index
                  or (last.bar_index == final.bar_index
                      and last.offset_quarters > final.offset_quarters + 1e-6))
-        if not already and after:
-            final.duration_quarters = max(
-                0.5, last.offset_quarters - final.offset_quarters)
+        gap = last.offset_quarters - final.offset_quarters
+        if (not already and after and last.bar_index == final.bar_index
+                and gap < MIN_DURATION - 1e-6):
+            # La nota cae a menos de una corchea del último tiempo fuerte
+            # ---una semicorchea en 2,25 de un cuatro por cuatro, que sólo
+            # llega importada---. Estirar ese lugar a la duración mínima y
+            # abrir otro desde la nota hasta la barra los superponía: el
+            # compás sumaba cuatro negras y cuarto. `spot_for_note` ya sabe
+            # qué hacer con un pedazo tan corto: corre el lugar entero hasta
+            # la nota y le da lo de antes al lugar anterior del compás.
+            spot_for_note(spots, last)
+        elif not already and after:
+            final.duration_quarters = max(MIN_DURATION, gap)
+            # Hasta la barra y no hasta el final de la nota: lo que sobra del
+            # último compás es del último acorde. Con la duración de la nota,
+            # un último compás incompleto ---«re do» en un tres por cuatro---
+            # sumaba de menos, y como la melodía se escribe completa hasta la
+            # barra, en el MusicXML las otras voces entraban corridas.
             spots.append(HarmonySpot(
                 bar_index=last.bar_index,
                 offset_quarters=last.offset_quarters,
-                duration_quarters=last.duration_quarters,
+                duration_quarters=(melody.bar(last.bar_index).quarters
+                                   - last.offset_quarters),
             ))
 
         # Y nada de acordes después de que la melodía terminó. Una línea que
@@ -262,12 +294,37 @@ def harmony_spots(melody: Melody) -> List[HarmonySpot]:
                    < (end_bar, end_offset - 1e-6)]
         if trimmed and len(trimmed) < len(spots):
             # Lo que ocupaban los que se van se lo queda el que queda: el
-            # acorde final se estira hasta donde llegaba el último, así que
-            # los compases siguen sumando lo que dice el compás y la nota
-            # final se sostiene con un acorde solo en vez de con tres.
-            trimmed[-1].duration_quarters += sum(
-                spot.duration_quarters for spot in spots[len(trimmed):])
+            # acorde final se estira hasta la barra, así que el compás sigue
+            # sumando lo que dice su cifra y la nota final se sostiene con
+            # un acorde solo en vez de con tres.
+            #
+            # Pero sólo lo de **su** compás. Los compases enteros que
+            # quedaron vacíos después de la melodía ---tres compases
+            # escritos de cuatro--- no tienen acorde ni nota que escribir y
+            # se caen de la partitura; sumándoselos al último, ése pasaba a
+            # medir ocho negras en un cuatro por cuatro y el MusicXML salía
+            # inválido.
+            closing = trimmed[-1]
+            closing.duration_quarters += sum(
+                spot.duration_quarters for spot in spots[len(trimmed):]
+                if spot.bar_index == closing.bar_index)
             spots = trimmed
+
+        # La nota final lleva un acorde solo, aunque dure varios tiempos
+        # fuertes. Partida en dos, la redonda del final recibía un IV y
+        # después el I, la cadencia de verdad quedaba un lugar antes y la
+        # pieza cerraba V, IV, I: un paso para atrás justo antes de llegar.
+        anchor = next((spot for spot in spots
+                       if spot.bar_index == last.bar_index
+                       and abs(spot.offset_quarters
+                               - last.offset_quarters) < 1e-6), None)
+        held = {id(spot) for spot in spots
+                if spot.bar_index == last.bar_index
+                and spot.offset_quarters > last.offset_quarters + 1e-6}
+        if anchor is not None and held:
+            anchor.duration_quarters += sum(
+                spot.duration_quarters for spot in spots if id(spot) in held)
+            spots = [spot for spot in spots if id(spot) not in held]
 
     # Y las notas que el usuario marcó, al final: se les abre un lugar
     # propio si no cayó ninguno encima. Va después del recorte porque el
@@ -306,9 +363,9 @@ def drop_skipped_spots(
         return spots
     kept: List[HarmonySpot] = []
     for index, spot in enumerate(spots):
-        pool = _pool_for_bar(melody.bar(spot.bar_index), settings)
+        pool, extra = _spot_pool(melody, spot, settings)
         note = spot.required_note or choose_note_for_spot(
-            melody, spot, pool, settings.allow_colour)
+            melody, spot, pool + extra, settings.allow_colour)
         if (note is None or not note.skip_harmonise
                 or spot.required_note is not None):
             kept.append(spot)
@@ -533,7 +590,11 @@ def _pool_for_bar(
     settings: HarmonisationSettings,
 ) -> List[ChordOption]:
     """The chords available in one bar's key."""
-    borrowed = ["iv", "bVII"] if settings.allow_borrowed else []
+    # Los préstamos son del menor paralelo. En una tonalidad menor ya son
+    # suyos: el iv y el VII estaban dos veces, y el VII con nombre de
+    # préstamo.
+    borrowed = (["iv", "bVII"] if settings.allow_borrowed
+                and bar.mode.key not in MINOR_MODES else [])
     return build_chord_pool(bar.tonic, bar.mode, borrowed,
                             settings.with_sevenths)
 
@@ -608,6 +669,438 @@ def pin_leading_tone(
         here.allowed_degrees = usable
 
 
+# ---------------------------------------------------------------------------
+# Las notas fuera de la escala
+# ---------------------------------------------------------------------------
+
+def key_of_ending(last_pitch: Optional[int], tonic: int) -> Tuple[int, str]:
+    """
+    La tonalidad de una melodía dentro de su armadura, por la nota final.
+
+    Una armadura sirve para dos tonalidades y el Armonizador elegía siempre
+    la mayor. Una melodía en La menor se armonizaba en Do, y su sol
+    sostenido salía como un la bemol con un Reb o un Fa menor debajo. Casi
+    toda melodía que termina lo hace en su tónica, así que si termina en la
+    relativa menor, es menor.
+
+    El menor es el natural, que tiene la escala de la armadura. Así lo que
+    el pentagrama pinta de naranja es lo mismo que el armonizador trata como
+    cromático, y el sol sostenido que sube a la recibe su dominante por la
+    regla de la nota cromática.
+    """
+    relative = (tonic + 9) % 12
+    if last_pitch is not None and last_pitch % 12 == relative:
+        return relative, "minor"
+    return tonic, "major"
+
+
+def out_of_scale(pitch: int, bar: MelodyBar) -> bool:
+    """¿Esta altura cae fuera de la escala del compás?"""
+    return pitch % 12 not in bar.mode.pitch_classes(bar.tonic)
+
+
+#: Los estilos donde la nota cromática que sube un semitono puede llevar,
+#: además de su dominante, el séptimo grado de la nota a la que va: el
+#: G#dim debajo de un sol sostenido que sube a la. Es el mismo trítono que el
+#: Mi mayor sin la fundamental, y es vocabulario barroco y de jazz; en el
+#: coral y en el gregoriano se queda la dominante sola.
+LEADING_APPROACH_GENRES = ("classical", "jazz")
+
+#: Con qué probabilidad sale el séptimo grado en vez de la dominante, donde
+#: se lo permite. Menos de la mitad a propósito: la dominante es la
+#: respuesta de manual y el séptimo grado un color que aparece de a ratos.
+LEADING_APPROACH_CHANCE = 0.3
+
+#: Los estilos donde la nota cromática que **baja** un semitono también
+#: pide un acorde propio. Sólo el jazz tiene uno que la contenga y apunte a
+#: la nota siguiente: la sustitución tritonal (subV7), cuya fundamental es
+#: justamente la nota que baja. En los demás estilos ninguna dominante de la
+#: nota de llegada contiene un semitono por encima de ella, así que la nota
+#: se armoniza con las reglas de siempre.
+TRITONE_APPROACH_GENRES = ("jazz",)
+
+#: Premio para el acorde que tiene de fundamental la nota a la que resuelve
+#: una dominante aplicada forzada. Tiene que ganarle a la diferencia de
+#: lugar en el acorde --- la nota de llegada es su fundamental, que cuesta
+#: más que la tercera de cualquier otro --- y además a la ventana de azar de
+#: `harmonise`. Con -140 la diferencia quedaba adentro de esa ventana y un
+#: Mi mayor debajo de un sol sostenido resolvía en Fa una de cada tres.
+RESOLUTION_REWARD = -190.0
+
+#: Costo de una dominante aplicada elegida para sostener una nota cromática
+#: ---no la de la regla, que es forzada--- cuando el acorde siguiente no es
+#: aquél al que apunta. La gramática del estilo ya lo cobra, pero se lleva
+#: un sexto de lo que pesa la melodía, y un Si mayor que salta a un Fa
+#: ganaba de taquito sobre un La bemol mayor: la tercera le gana a la
+#: quinta. Una dominante que no resuelve no es un color sino una promesa
+#: rota, y para una nota cromática casi siempre hay un préstamo que la
+#: sostiene sin prometer nada.
+UNRESOLVED_APPLIED = 90.0
+
+#: Castigo para un acorde que deja afuera a una nota cromática que le toca
+#: sostener. Con el color prendido, un acorde de la tonalidad podía tomar la
+#: nota cromática como sexta o novena y ganarle a uno que la tiene adentro:
+#: la nota fuera de la escala sonaba como adorno de un acorde que la ignora,
+#: que es exactamente lo contrario de lo que se pidió.
+CHROMATIC_OUTSIDE = 150.0
+
+#: Lo que se le cobra a una dominante aplicada en el gregoriano: el modal no
+#: tiene función de dominante, y la mezcla de modos es su manera de alterar
+#: una nota. Sólo pesa cuando hay un préstamo que también la sostiene.
+APPLIED_IN_MODAL = 60.0
+
+
+@dataclass(frozen=True)
+class ChromaticApproach:
+    """Una nota fuera de la escala que va por semitono a la siguiente."""
+
+    note: MelodyNote
+    target: MelodyNote
+    #: True si sube a la nota siguiente (es su sensible); False si baja.
+    rising: bool
+
+    @property
+    def target_pc(self) -> int:
+        return self.target.pitch % 12
+
+
+def chromatic_approach(melody: Melody, note: MelodyNote,
+                       genre_key: str) -> Optional[ChromaticApproach]:
+    """
+    Si esta nota cumple la regla de la nota cromática, cómo la cumple.
+
+    La regla: una nota fuera de la escala que **sube un semitono** a la
+    siguiente es la sensible de esa nota, y lleva debajo su dominante. Y en
+    jazz, la que **baja un semitono** lleva la sustitución tritonal de la
+    dominante de la nota de llegada. Se mide en alturas reales y no en
+    clases de altura: un sol sostenido que salta una séptima abajo a un la
+    no es una sensible resolviendo, es un salto.
+    """
+    if note.is_rest or note.skip_harmonise:
+        return None
+    if note.duration_quarters < MIN_DURATION - 1e-6:
+        # Una semicorchea cromática es una nota de paso y no pide acorde.
+        # En el pentagrama del Armonizador no se puede escribir ninguna;
+        # llega importada, y abrirle un acorde propio partía el compás en
+        # pedazos más cortos que cualquier acorde que este programa escribe.
+        return None
+    if not out_of_scale(note.pitch, melody.bar(note.bar_index)):
+        return None
+    following = melody.next_after(note.bar_index, note.offset_quarters)
+    if following is None:
+        return None
+    step = following.pitch - note.pitch
+    if step == 1:
+        return ChromaticApproach(note, following, True)
+    if step == -1 and genre_key in TRITONE_APPROACH_GENRES:
+        return ChromaticApproach(note, following, False)
+    return None
+
+
+def chromatic_approaches(melody: Melody,
+                         genre_key: str) -> List[ChromaticApproach]:
+    """Todas las notas de la melodía que cumplen la regla, en orden."""
+    found: List[ChromaticApproach] = []
+    for note in _sounding_notes(melody):
+        approach = chromatic_approach(melody, note, genre_key)
+        if approach is not None:
+            found.append(approach)
+    return found
+
+
+#: Intervalos de cada calidad que se arma acá, para elegir cómo se escribe
+#: la fundamental.
+_QUALITY_INTERVALS = {
+    "": (0, 4, 7), "m": (0, 3, 7), "7": (0, 4, 7, 10),
+    "dim": (0, 3, 6), "dim7": (0, 3, 6, 9),
+}
+#: Cuántas letras arriba de la fundamental se escribe cada intervalo.
+_INTERVAL_LETTERS = {0: 0, 3: 2, 4: 2, 6: 4, 7: 4, 9: 6, 10: 6}
+_LETTER_ORDER = "CDEFGAB"
+
+
+def _spelling_cost(name: str, root_pc: int, intervals: Sequence[int]) -> int:
+    """Cuántas alteraciones lleva un acorde escrito desde esa fundamental."""
+    start = _LETTER_ORDER.index(name[0])
+    cost = 0
+    for interval in intervals:
+        letter = _LETTER_ORDER[(start + _INTERVAL_LETTERS[interval]) % 7]
+        alteration = ((root_pc + interval - LETTER_SEMITONES[letter] + 6)
+                      % 12) - 6
+        # Un doble sostenido o un doble bemol cuenta mucho más: un la
+        # sostenido mayor con do doble sostenido es el mismo sonido que un
+        # si bemol mayor y nadie lo escribe así.
+        cost += abs(alteration) + (3 if abs(alteration) > 1 else 0)
+    return cost
+
+
+def _root_name(root_pc: int, quality: str, prefer_flats: bool) -> str:
+    """
+    El nombre de la fundamental que escribe el acorde con menos alteraciones.
+
+    Con `SHARP_NAMES` solo, la dominante de un mi bemol salía la sostenido
+    mayor, con do doble sostenido de tercera. Se prueban los dos nombres y
+    gana el que altera menos notas; el empate lo decide el acorde: las
+    dominantes suben a su nota y se escriben con sostenidos, la sustitución
+    tritonal baja y se escribe con bemoles.
+    """
+    intervals = _QUALITY_INTERVALS[quality]
+    sharp, flat = SHARP_NAMES[root_pc], FLAT_NAMES[root_pc]
+    sharp_cost = _spelling_cost(sharp, root_pc, intervals)
+    flat_cost = _spelling_cost(flat, root_pc, intervals)
+    # Una alteración de ventaja para el lado preferido, y el empate también
+    # es suyo: el Gb7 que baja a fa lleva cuatro bemoles y el F#7 tres
+    # sostenidos, y el que se escribe es el Gb7.
+    if prefer_flats:
+        return flat if flat_cost - 1 <= sharp_cost else sharp
+    return sharp if sharp_cost - 1 <= flat_cost else flat
+
+
+_PLAIN_ROMAN = ("I", "II", "III", "IV", "V", "VI", "VII")
+
+
+def degree_roman(pc: int, bar: MelodyBar) -> str:
+    """
+    El nombre romano de la nota a la que apunta un acorde aplicado.
+
+    Para una nota de la escala es la cifra de su tríada ---"vi", "ii"---,
+    que es como se escribe un V/vi. Para una nota fuera de la escala, el
+    grado de abajo con sostenido y, si no lo hay, el de arriba con bemol.
+    """
+    scale = bar.mode.pitch_classes(bar.tonic)
+    pc %= 12
+    if pc in scale:
+        degree = scale.index(pc)
+        return diatonic_options(bar.tonic, bar.mode)[degree].roman
+    for degree, member in enumerate(scale):
+        if (member + 1) % 12 == pc:
+            return "#" + _PLAIN_ROMAN[degree]
+    # La segunda aumentada de la menor armónica deja dos notas entre el
+    # sexto y la sensible, y la de arriba ---el sol natural en La menor--- no
+    # es un semitono arriba de ningún grado: salía «V/?». Es la séptima
+    # natural, un semitono abajo de la sensible, y así la escribe el resto
+    # del programa: bVII, el mismo nombre que tiene como préstamo.
+    for degree, member in enumerate(scale):
+        if (member - 1) % 12 == pc:
+            return "b" + _PLAIN_ROMAN[degree]
+    return "?"
+
+
+def _made_option(root_pc: int, quality: str, roman: str,
+                 prefer_flats: bool = False,
+                 scale_degree: int = 0) -> ChordOption:
+    """Un acorde fuera de la tonalidad, escrito con su nombre de verdad."""
+    chord = parse_chord(_root_name(root_pc, quality, prefer_flats) + quality)
+    return ChordOption(
+        chord=chord, label=chord.symbol, roman=roman,
+        scale_degree=scale_degree, root_pc=root_pc,
+        # Viajan como los préstamos porque no son de la tonalidad, igual que
+        # las dominantes aplicadas del Generador.
+        is_borrowed=scale_degree == 0,
+    )
+
+
+def applied_dominant(target_pc: int, bar: MelodyBar,
+                     with_seventh: bool) -> ChordOption:
+    """
+    La dominante de una nota: el acorde mayor una quinta arriba de ella.
+
+    Cuando la nota es la tónica no es una dominante aplicada sino **el**
+    quinto grado ---el V del menor armónico, por ejemplo--- y se nombra y se
+    archiva así, para que la cadencia lo reconozca.
+    """
+    root = (target_pc + 7) % 12
+    quality = "7" if with_seventh else ""
+    if target_pc % 12 == bar.tonic % 12:
+        return _made_option(root, quality, "V", scale_degree=5)
+    return _made_option(root, quality,
+                        "V/" + degree_roman(target_pc, bar))
+
+
+def applied_leading(target_pc: int, bar: MelodyBar,
+                    with_seventh: bool) -> ChordOption:
+    """El séptimo grado de una nota: el disminuido sobre su sensible."""
+    root = (target_pc - 1) % 12
+    quality = "dim7" if with_seventh else "dim"
+    numeral = "vii°7" if with_seventh else "vii°"
+    if target_pc % 12 == bar.tonic % 12:
+        return _made_option(root, quality, numeral)
+    return _made_option(root, quality,
+                        numeral + "/" + degree_roman(target_pc, bar))
+
+
+def tritone_substitute(target_pc: int, bar: MelodyBar) -> ChordOption:
+    """La sustitución tritonal de la dominante de una nota: un semitono arriba."""
+    root = (target_pc + 1) % 12
+    roman = ("subV" if target_pc % 12 == bar.tonic % 12
+             else "subV/" + degree_roman(target_pc, bar))
+    return _made_option(root, "7", roman, prefer_flats=True)
+
+
+def approach_options(
+    approach: ChromaticApproach,
+    bar: MelodyBar,
+    settings: "HarmonisationSettings",
+    picker: Optional[random.Random] = None,
+) -> List[ChordOption]:
+    """
+    Los acordes que pueden ir debajo de una nota que cumple la regla.
+
+    Subiendo, la dominante de la nota siguiente ---con séptima donde el
+    estilo las usa--- y, en barroco y jazz, su séptimo grado, que sale con
+    menos probabilidad. Sin `picker` se devuelven todos: es la pregunta de
+    la vista previa, que no elige acorde. Bajando (sólo en jazz), la
+    sustitución tritonal.
+    """
+    target = approach.target_pc
+    if not approach.rising:
+        return [tritone_substitute(target, bar)]
+    dominant = [applied_dominant(target, bar, settings.with_sevenths)]
+    leading: List[ChordOption] = []
+    if settings.genre_key in LEADING_APPROACH_GENRES:
+        leading.append(applied_leading(
+            target, bar,
+            settings.with_sevenths and settings.genre_key == "jazz"))
+    if picker is None:
+        return dominant + leading
+    if leading and picker.random() < LEADING_APPROACH_CHANCE:
+        return leading
+    return dominant
+
+
+#: Los préstamos que se ofrecen para sostener una nota cromática. Son todos
+#: los del catálogo menos los que tienen dueño: la sexta napolitana es un
+#: giro del barroco y la sustitución tritonal del jazz.
+_CHROMATIC_BORROWED = ("iv", "v", "bII", "bIII", "bVI", "bVII", "iiø")
+
+
+def chromatic_options(pc: int, bar: MelodyBar,
+                      settings: "HarmonisationSettings") -> List[ChordOption]:
+    """
+    Los acordes fuera de la tonalidad que tienen adentro esta nota.
+
+    Es lo que el motor ya sabe escribir: las dominantes aplicadas de cada
+    grado, los préstamos del modo paralelo ---que de paso dan las mediantes
+    cromáticas, el bIII y el bVI--- y, en jazz, la sustitución tritonal de
+    cada dominante. Ninguno es de la tonalidad: una nota cromática en un
+    tiempo fuerte se escucha mejor sostenida por un acorde que la tiene que
+    metida a la fuerza en uno que no.
+    """
+    pc %= 12
+    scale = bar.mode.pitch_classes(bar.tonic)
+    sevenths = settings.with_sevenths
+    applied: List[ChordOption] = []
+    # Desde la tónica: en menor su dominante es el acorde que sostiene la
+    # sensible subida, y no está en la escala. En mayor no agrega nada,
+    # porque el V ya es de la tonalidad y no tiene ninguna nota cromática.
+    for degree in range(7):
+        applied.append(applied_dominant(scale[degree], bar, False))
+        if sevenths or settings.genre_key == "jazz":
+            applied.append(applied_dominant(scale[degree], bar, True))
+        if settings.genre_key == "jazz":
+            applied.append(tritone_substitute(scale[degree], bar))
+
+    borrowed: List[ChordOption] = []
+    if settings.allow_borrowed:
+        keys = list(_CHROMATIC_BORROWED)
+        if settings.genre_key in ("classical", "chorale"):
+            keys.append("N6")
+        if settings.genre_key == "jazz":
+            keys.append("subV")
+        borrowed = borrowed_options(bar.tonic, keys, sevenths)
+
+    def holds(option: ChordOption) -> bool:
+        return pc in {option.chord.pitch_class_of(t) for t in option.chord.tones}
+
+    out: List[ChordOption] = []
+    seen = set()
+    for option in borrowed + applied:
+        if not holds(option):
+            continue
+        key = (option.root_pc, frozenset(option.chord.pitch_classes),
+               option.chord.bass_pc)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(option)
+    return out
+
+
+def _applied_target(option: ChordOption) -> Optional[int]:
+    """Adónde apunta una dominante aplicada, o None si no es una."""
+    if option.roman.startswith("V/"):
+        return (option.root_pc + 5) % 12
+    if option.roman.startswith("subV"):
+        return (option.root_pc - 1) % 12
+    return None
+
+
+def pin_chromatic_approaches(
+    melody: Melody,
+    spots: List[HarmonySpot],
+    settings: "HarmonisationSettings",
+) -> None:
+    """
+    Darle su acorde a cada nota cromática que va por semitono a la siguiente.
+
+    La nota recibe un lugar propio ---como si el usuario la hubiera
+    marcado--- limitado a los acordes de :func:`approach_options`. Y la nota
+    de llegada también recibe el suyo, con premio para el acorde que la
+    tiene de fundamental: una dominante que suena un tiempo y resuelve
+    debajo de otra nota es una promesa que el oído escucha y que después no
+    pasa.
+
+    La nota de llegada se abre **antes** que la cromática. Al revés, si la
+    cromática es corta, partir su lugar para la llegada podía correrlo
+    entero sobre la nota siguiente, y la dominante terminaba debajo de la
+    resolución.
+    """
+    for approach in chromatic_approaches(melody, settings.genre_key):
+        if not approach.target.skip_harmonise:
+            landing = spot_for_note(spots, approach.target)
+            if landing is not None:
+                if landing.required_note is None:
+                    landing.required_note = approach.target
+                landing.resolution_pc = approach.target_pc
+        here = spot_for_note(spots, approach.note)
+        if here is not None:
+            here.required_note = approach.note
+            here.approach = approach
+            here.allowed_degrees = ()
+
+
+def _spot_pool(
+    melody: Melody,
+    spot: HarmonySpot,
+    settings: "HarmonisationSettings",
+) -> Tuple[List[ChordOption], List[ChordOption]]:
+    """
+    Los acordes de un lugar: los de la tonalidad y, aparte, los cromáticos.
+
+    Los cromáticos son los que sostienen alguna nota fuera de la escala que
+    este lugar podría estar armonizando ---la del tiempo, la que viene
+    enseguida o la que el usuario marcó---. Viajan aparte porque no pasan
+    por el sorteo de los préstamos: están porque hacen falta.
+    """
+    bar = melody.bar(spot.bar_index)
+    pool = _pool_for_bar(bar, settings)
+    candidates = [spot.required_note,
+                  melody.sounding_at(spot.bar_index, spot.offset_quarters),
+                  melody.next_after(spot.bar_index, spot.offset_quarters)]
+    extra: List[ChordOption] = []
+    seen = set()
+    for note in candidates:
+        if note is None or note.is_rest:
+            continue
+        if not out_of_scale(note.pitch, melody.bar(note.bar_index)):
+            continue
+        if note.pitch % 12 in seen:
+            continue
+        seen.add(note.pitch % 12)
+        extra.extend(chromatic_options(note.pitch, bar, settings))
+    return pool, extra
+
+
 def harmonise(
     melody: Melody,
     settings: HarmonisationSettings,
@@ -625,19 +1118,20 @@ def harmonise(
     if not spots:
         return []
     pin_leading_tone(melody, spots, settings)
+    pin_chromatic_approaches(melody, spots, settings)
 
     chosen: List[Optional[ChordOption]] = [None] * len(spots)
 
     for index in range(len(spots) - 1, -1, -1):
         spot = spots[index]
         bar = melody.bar(spot.bar_index)
-        pool = _pool_for_bar(bar, settings)
+        pool, extra = _spot_pool(melody, spot, settings)
         at_rest = index in (0, len(spots) - 1)
 
         # Una nota marcada no se discute: el lugar existe porque alguien
         # pidió un acorde para ella.
         spot.note = spot.required_note or choose_note_for_spot(
-            melody, spot, pool, settings.allow_colour)
+            melody, spot, pool + extra, settings.allow_colour)
 
         if spot.forced_roman:
             pinned = next((o for o in pool if o.roman == spot.forced_roman), None)
@@ -648,15 +1142,46 @@ def harmonise(
         following = chosen[index + 1] if index + 1 < len(chosen) else None
         scored: List[Tuple[float, ChordOption]] = []
         allowed = spot.allowed_degrees
-        for option in pool:
+        chromatic = (spot.note is not None and not spot.note.is_rest
+                     and out_of_scale(spot.note.pitch,
+                                      melody.bar(spot.note.bar_index)))
+        if spot.approach is not None:
+            # La regla de la nota cromática: el acorde no se elige de la
+            # tonalidad, se elige entre los que apuntan a la nota siguiente.
+            candidates = approach_options(spot.approach, bar, settings, picker)
+            free = {id(option) for option in candidates}
+        else:
+            # Los cromáticos entran sólo si la nota que se armoniza es
+            # cromática. Con una nota de la escala no hacen falta, y sin el
+            # sorteo de los préstamos aparecerían en cualquier lado.
+            candidates = pool + (extra if chromatic else [])
+            free = {id(option) for option in extra}
+        for option in candidates:
             if allowed and option.scale_degree not in allowed:
                 continue
-            if not _borrowed_allowed(option, index, len(spots), settings, picker):
+            if (id(option) not in free
+                    and not _borrowed_allowed(option, index, len(spots),
+                                              settings, picker)):
                 continue
             cost = 0.0
             if spot.note is not None:
                 cost += melodic_weight(note_fit(
                     option, spot.note.pitch, settings.allow_colour, at_rest))
+                if chromatic and spot.note.pitch % 12 not in set(
+                        option.chord.pitch_classes):
+                    cost += CHROMATIC_OUTSIDE
+            if (settings.genre_key == "gregorian" and id(option) in free
+                    and spot.approach is None
+                    and option.roman.startswith(("V/", "subV"))):
+                cost += APPLIED_IN_MODAL
+            if (spot.resolution_pc is not None
+                    and option.root_pc == spot.resolution_pc):
+                cost += RESOLUTION_REWARD
+            if (id(option) in free and spot.approach is None
+                    and _applied_target(option) is not None
+                    and (following is None or following.root_pc
+                         != _applied_target(option))):
+                cost += UNRESOLVED_APPLIED
             cost += _progression_cost(option, following, bar, settings, index,
                                       len(spots))
             scored.append((cost, option))
@@ -697,12 +1222,13 @@ def planned_notes(
     if not spots:
         return []
     pin_leading_tone(melody, spots, settings)
+    pin_chromatic_approaches(melody, spots, settings)
     seen = set()
     out: List[MelodyNote] = []
     for spot in spots:
-        pool = _pool_for_bar(melody.bar(spot.bar_index), settings)
+        pool, extra = _spot_pool(melody, spot, settings)
         note = spot.required_note or choose_note_for_spot(
-            melody, spot, pool, settings.allow_colour)
+            melody, spot, pool + extra, settings.allow_colour)
         if note is None:
             continue
         where = (note.bar_index, note.offset_quarters)

@@ -76,7 +76,7 @@ Distribución:
 - passing: `engine/passing.py`
 - flourishes: `engine/flourish.py`
 - exportación: `engine/export.py`
-- audio: `engine/audio.py`
+- audio: `engine/audio.py` (cuándo suena cada nota) + `engine/timbre.py` (cómo suena: timbres y lector de WAV)
 - persistencia: `engine/history.py`
 - logros: `engine/achievements.py`
 - libro: `engine/book.py`
@@ -90,10 +90,11 @@ Distribución:
 - pentagrama (una línea y sistema de dos): `staff.py`
 - experimentador de armónicos: `spectrum.py`
 - analizador (pantalla): `analyzer.py`
+- escuelita: `engine/school.py` (lecciones, corrección, progreso, graduación) + `school.py` (pantalla)
 - aviso de version nueva: `engine/updates.py` (consulta) + `updater.py` (cartel)
 - idiomas: `engine/i18n.py` (motor) + `engine/lang/` (catálogos) + `chooser.py` (cartel de la primera vez)
 
-`staff.py`, `spectrum.py`, `analyzer.py`, `updater.py` y `chooser.py` no importan `app.py`: reciben la paleta por parámetro (`colours=...`). No agregarles un import de la aplicación.
+`staff.py`, `spectrum.py`, `analyzer.py`, `school.py`, `updater.py`, `chooser.py` y `homeart.py` no importan `app.py`: reciben la paleta por parámetro (`colours=...`). No agregarles un import de la aplicación.
 
 ### Contrapunto
 
@@ -114,6 +115,7 @@ Para detalles de reglas, excepciones y orden de chequeos: `MUSIC_LOGIC.md`, secc
 - `app.py` desactiva finalizadores de ciertos objetos Tk para evitar que GC termine ejecutando Tk desde el hilo de búsqueda. No revertir sin entender el problema.
 - `harmonize.py` trabaja hacia atrás (desde el final hacia el inicio) porque el siguiente reposo condiciona la función del acorde actual.
 - Los silencios se omiten en la búsqueda. **`solution.slots` NO está alineado con `spec.slots`.** Cuando haga falta alinear solución con partitura, usar `session.voiced_slots(spec, solution)`.
+- **`outcome.spec.slots` no son los acordes de todas las opciones**: en el Armonizador cada una tiene su progresión (`alternate_slots`, y `spec.slots` es la del primer intento, no la que quedó primera) y en el Generador la cita lleva los suyos. Para exportar, rotular o marcar una opción: `session.solution_slots(outcome, i)`.
 - Los adornos se manejan aparte de los acordes porque tienen duraciones parciales y voces individuales. La duración total del compás debe seguir sumando lo mismo.
 - `flourish.py` corre después de la búsqueda, sobre el ganador; no meterlo en el fitness salvo que se rediseñe explícitamente la función objetivo.
 - En armonización, la partitura exportada usa la línea real del usuario (`MelodyLine`), no la versión muestreada que vio el AG.
@@ -125,6 +127,10 @@ Para detalles de reglas, excepciones y orden de chequeos: `MUSIC_LOGIC.md`, secc
 - Una nota marcada lleva `MelodyNote.must_harmonise` y `required_note`; no permitir que el selector la ignore.
 - La sensible final puede forzar dominante mediante `harmonize.pin_leading_tone`.
 - No crear acordes después de que terminó la melodía: los tiempos sobrantes del último compás pertenecen al último segmento que realmente ocupa la melodía.
+- **Nota fuera de la escala** (`harmonize.pin_chromatic_approaches`): si sube un semitono a la siguiente se marca sola y su lugar queda limitado a `approach_options` (V/x; en barroco y jazz también vii°/x con `LEADING_APPROACH_CHANCE`); en jazz la que baja lleva subV/x. La nota de llegada se abre **antes** que la cromática (al revés, una cromática corta podía quedar corrida sobre la llegada). `harmonise`, `planned_notes` y `drop_skipped_spots` eligen la nota del lugar con el mismo `_spot_pool`: si uno no lo usa, el pentagrama marca una cosa y suena otra. Los acordes cromáticos (`chromatic_options`) no pasan por el sorteo de `_borrowed_allowed` y sólo entran cuando la nota del lugar es cromática.
+- **La armadura del Armonizador es mayor o menor según la nota final** (`harmonize.key_of_ending`, desde `_build_melody`), y el menor es el **natural**: es el que tiene la escala de la armadura, así que lo que el pentagrama pinta de naranja sigue siendo lo que el motor trata como cromático. Con el armónico se separan.
+- La nota final lleva un acorde solo (`harmony_spots`) y el último acorde va con la fundamental en el bajo (`session._close_on_the_root`). Sin lo segundo, a tres voces con la melodía en la tónica, casi toda armonización terminaba invertida.
+- La melodía del Armonizador guarda los accidentes **aparte** de `staff.notes`: `StaffEditor.accidentals` (posición → alteración), y la app los guarda en `_melody_accidentals` y los pasa a `_build_melody(alterations=...)`. `notes` sigue siendo de pares porque media aplicación los desempaca así; meterles un tercer elemento rompe en silencio cada uno de esos lugares.
 
 ## Silencios, reproducción y adornos
 
@@ -132,6 +138,8 @@ Para detalles de reglas, excepciones y orden de chequeos: `MUSIC_LOGIC.md`, secc
 - `build_settings` puede usar un pitch de relleno para mantener la alineación interna; visualmente manda `is_rest`, nunca ese pitch.
 - Los adornos vacían el slot de acorde durante su duración y se reproducen como voces parciales con tiempos propios.
 - Los adornos se indexan por slot de búsqueda, por lo que cualquier acceso contra `spec.slots` debe reubicar primero con la misma lógica que `voiced_slots`.
+- La sexta de Bach (`apply_flourishes` → `flourish.apply_sixth`) reescribe `best.slots`, así que cuenta candados y voces fijas (`pinned_voices`, la melodía del armonizador) **sobre los slots que suenan**, y `FlourishResult.sixth_slot`/`forced_slot` vuelven en columnas de la partitura. Contados sobre `spec.slots`, un silencio corría los candados y la sexta reescribía un acorde con candado.
+- `export.DIVISIONS_PER_QUARTER` es 48 y la cola de una figura se reparte en divisiones enteras: con 8, un tercio de negra se redondeaba, la voz sumaba de más que el `<backup>` y las voces siguientes salían corridas. No bajarlo. Lo vigila `TestExportRoundTrip`.
 
 ## Cython: filo importante
 
@@ -170,6 +178,8 @@ El build es de carpeta, no `--onefile`: el programa necesita persistencia junto 
 
 `export.ScoreSpec.fifths` existe para el analizador --- los tres modos que generan escriben en Do y lo dejan en cero. `_note_xml` escribe `<accidental>` sólo cuando la alteración **difiere** de la armadura; con `fifths=0` eso es exactamente lo de siempre.
 
+**Sin consola, `sys.stdout` y `sys.stderr` son `None`** y cualquier `write` mata el ejecutable al arrancar («Failed to execute script 'app'»). customtkinter escribe un aviso al importarse cuando Windows no le carga la fuente de formas, y eso pasa con rutas de más de 260 caracteres. `app.py` llama a `console.guard_streams()` **antes** del primer import de customtkinter (lo vigila `TestConsoleless`) y después `_rescue_widget_fonts()` vuelve a cargar las fuentes desde la carpeta temporal. Desde el fuente nunca se ve: hay consola. Para probar un build, abrir el `.exe` sin consola desde una carpeta profunda.
+
 Los assets del programa deben resolverse desde `program_directory()`. En modo congelado los assets de PyInstaller están bajo `_internal/`; `base_directory()` es para datos del usuario y no debe usarse para localizar `assets/`.
 
 ## Persistencia
@@ -180,8 +190,10 @@ Los datos de usuario incluyen:
 - `story.json`
 - `eggs.json`
 - `visitors.json`
+- `school.json`
 - preferencias/settings
 - `output/`
+- `chordweaver.log` (lo que se escribe a consola cuando no hay consola; ver `engine.console`)
 
 `DEFAULT_SETTINGS` es una **lista blanca**: si se agrega una preferencia nueva y no se suma allí, se guarda y luego desaparece al recargar.
 
@@ -193,9 +205,11 @@ Los datos de usuario incluyen:
 
 `tests.py` también puede escribir historial porque algunas rutas llaman `export_outcome`. Por eso la suite debe ejecutarse con aislamiento de datos.
 
-`uitest.Session` debe usarse para tests de GUI: redirige historial, logros, historia, huevos, visitas y preferencias a descartables. No abrir `ChordWeaverApp` directamente desde un script de test que pueda persistir datos.
+`uitest.Session` debe usarse para tests de GUI: redirige historial, logros, historia, huevos, visitas, escuelita y preferencias a descartables. No abrir `ChordWeaverApp` directamente desde un script de test que pueda persistir datos.
 
-Las preferencias pueden leerse del archivo real para probar una configuración real, pero las escrituras del test deben ir al archivo descartable.
+`uitest` fija `CHORDWEAVER_DATA_DIR` al importarse (con `setdefault`), así que las preferencias también se leen del descartable. Para probar una configuración real, copiar su `settings.json` ahí; las escrituras del test nunca van al archivo real.
+
+`uitest.Session` abre la ventana **fuera de la pantalla principal** (`_placed`: `CHORDWEAVER_TEST_ORIGIN`, o la primera pantalla secundaria que haya): una suite abre decenas de ventanas y se le ponían encima a quien estaba trabajando. Pasarle sólo el tamaño. Un script que use `uitest` y genere con el AG tiene que ir debajo de `if __name__ == "__main__":` --- los procesos del pool se lanzan con `spawn`, vuelven a correr el script y cada uno abría su propia ventana.
 
 ## UI / Tk
 
@@ -207,7 +221,11 @@ Las preferencias pueden leerse del archivo real para probar una configuración r
 - `CTkFrame` puede dibujar fondos incluso con apariencia transparente; no crear cientos de frames CTk para contenido plano si basta un `tk.Frame`/`tk.Label`.
 - **Un `CTkFrame` sin hijos mide 200×200.** No dejar uno vacío dentro de una franja de un renglón: la franja de la tonalidad del analizador pasaba a medir cuatro veces lo suyo cuando la pieza no tenía cadencias ni acordes ajenos que poner en él.
 - Las filas masivas de listas (p. ej. logros) usan widgets Tk simples por rendimiento.
-- `_render()` desmonta temporalmente `self.body` mientras reconstruye la pantalla para evitar repaints parciales.
+- `_render()` tiene **doble búfer**: cada pantalla es un marco nuevo `place`-ado dentro de `self.stage`, se arma y se dibuja **debajo** de la vieja (`lower`, que Windows recorta) y recién ahí se sube. `self.body` se reasigna en cada render: no guardar referencias al marco viejo. customtkinter dibuja sus esquinas al recibir tamaño, así que armarlo desmapeado no alcanzaba: aparecía por tramos.
+- La pantalla inicial **no se rearma** al volver: queda puesta debajo de la actual y `_refresh_home` rehace sólo logros, libro y sendero. Lo que obligue a rearmarla entera va en `_home_signature` (idioma, escala, cantidad de tarjetas); una tarjeta nueva con estado propio tiene que refrescarse ahí o entrar en la firma.
+- Un `_render` pedido mientras otro dibuja (un click o un timer atendido en el `update()` interno) **sólo marca `_render_again`**, y el redibujado se agenda una vez al terminar. No agendarlo con `after_idle` desde la rama de reentrada: el mismo `update()` lo vuelve a correr, se reagenda y el programa se cuelga para siempre. Por lo mismo `_drain_queue` no consume la cola mientras `_rendering`: la pantalla vieja sigue viva y un resultado dibujado ahí se pierde.
+- **El resultado se ve como partitura** (`_option_staff`: un `GrandStaff(editable=False)` por opción) y la tabla de nombres de nota queda a un click (`_set_results_view`); con más de cuatro voces sólo hay tabla, porque el sistema tiene cuatro carriles (`STAFF_LANES` reparte las voces por tipo). Las dos vistas leen las mismas columnas de `_option_columns`: lo nuevo que se quiera mostrar de un acorde va ahí, o una vista lo dice y la otra no. En la partitura el tinte de la tabla es el color del cifrado (`GrandStaff.symbol_colours`), y `uitest.chord_headers`/`tinted` leen las dos.
+- Los avisos de logro son **dos a la vista** (`MAX_TOASTS`); el resto espera en `_toast_backlog` y entra cuando se va uno. Cerrar el más viejo para hacer lugar perdía avisos que nadie llegaba a leer.
 - Animar preferentemente color y coordenadas de widgets `place`-ados; evitar animar geometría de layouts empaquetados.
 - `ACCENT` y `ACCENT_HOVER` son variables: `_apply_accent()` las cambia según el modo. Elementos creados una sola vez pueden necesitar actualización manual.
 - El tutorial se inicia sólo la primera vez; `uitest` debe desactivarlo en memoria, no persistiendo ese cambio en los datos reales.
@@ -215,7 +233,7 @@ Las preferencias pueden leerse del archivo real para probar una configuración r
 Además del recorrido de bienvenida hay **guías de pantalla** (`SCREEN_GUIDES`): la misma clase `Tutorial` con otra lista de pasos, que se abre sola la primera vez que se llega a los acordes, al pentagrama o a las reglas. Reglas que importan:
 - Un paso con `screen` navega el carrusel; una guía no lleva ninguno y por eso no mueve nada (`Tutorial.navigates`). No agregarle `screen` a una guía.
 - La guía se da por vista **al abrirse**, no al terminar: la pantalla se rearma sola por varios motivos y marcándola al final volvía a aparecer sin que se la pudiera sacar de encima.
-- `_render()` cierra la guía abierta antes de armar nada. Sus velos están puestos sobre la ventana y no sobre `body`, así que sin eso sobreviven al rearmado.
+- `_render()` cierra la guía abierta antes de armar nada. Sus velos están puestos en píxeles sobre la ventana y no sobre `body`, así que sin eso sobreviven al rearmado; por lo mismo el recorrido se redibuja solo cuando la ventana cambia de tamaño (`Tutorial._on_configure`, agrupado con un `after` y sólo si el tamaño cambió). Cerrarlo del todo es `close()`, que desata sus enlaces con `unbind_one`; `_clear()` sólo borra el dibujo entre un paso y otro. No usar `unbind(secuencia, funcid)` sobre la ventana: hasta Python 3.12 borra también el `<Configure>` de customtkinter.
 - La dispara cada pantalla al final de armarse, no el carrusel: el blanco de un paso puede ser un widget que la pantalla crea sola.
 - «Ver el tutorial otra vez» vacía `guides_seen`. Es la única manera de volver a verlas.
 - `uitest` las apaga con `guides_enabled = False`, en memoria.
@@ -229,17 +247,21 @@ Las claves internas no cambian al renombrar tarjetas visibles:
 
 `TUTORIAL_STEPS` sigue el orden visible de las tarjetas. Si se mueve una tarjeta, revisar también los pasos del tutorial.
 
-La pantalla inicial va **3 + 2 + 2**: los tres modos arriba; debajo las dos herramientas (`TOOL_CARDS`: experimentador y analizador) tan anchas entre las dos como las tres de arriba; debajo logros y libro, mitad y mitad; y al final el cartel del sendero. Las dos herramientas usan la misma clase `Card` que los modos pero con dos viñetas en vez de tres pasos: quedan en cuatro quintos del alto, que es lo que hace que el cartel del sendero siga entrando.
+La pantalla inicial va **3 + 3 + 2**: los tres modos arriba; debajo, con su título, las tres herramientas (`TOOL_CARDS`), del mismo tamaño que los modos y cada una debajo de uno; debajo logros y libro, mitad y mitad; y al final, en **un solo renglón**, el cartel del sendero o la llamada a la puerta. Cada tarjeta lleva un dibujo de `homeart.py` (`Card(picture=...)`) y no icono: el de un modo es lo que ponés vos, una flecha y lo que escribe el programa, y lo de la izquierda es distinto en cada uno, que es lo que los distingue sin leer. El título de la pantalla va sin bajada. **Medido contra la ventana mínima (1180×880), entra todo con el cartel del sendero de un renglón y poco más**: un renglón de más en cualquier tarjeta, o el cartel en dos, lo deja afuera. Se probó el cartel en el estante (logros a un cuarto de ancho no entran) y al lado del título (feo).
+
+El dibujo se rehace en el `<Configure>` de su lienzo con el ancho real: el de `wraplength` es el del momento de armar la pantalla, y maximizar después lo dejaba corto.
 
 Las dos tarjetas del estante ---logros y libro--- van con `sticky="nsew"` y la fila con peso: los logros llevan cinco estrellas de cuerpo 26 y el libro no, así que sin eso quedaban de distinto alto.
 
 En la cabecera van tres atajos y en este orden: **libro, logros e historial**. Se empaquetan con `side="right"`, así que en el código están al revés --- el primero que se crea es el que queda más a la derecha. El libro (`self.book_button`) funciona desde cualquier pantalla: se consulta justo cuando aparece una palabra que no se entiende, y eso pasa en cualquier punto del programa.
 
-`MODE_FLAGS` es el cartelito que va **dentro** de la tarjeta, al lado del nombre (`Card(flag=...)`), y vale para los tres modos y para las dos herramientas: es lo que hay que saber antes de elegir. Hoy lo lleva el analizador.
+`MODE_FLAGS` es el cartelito que va **dentro** de la tarjeta, al lado del nombre (`Card(flag=...)`), y vale para los tres modos y para las herramientas: es lo que hay que saber antes de elegir. Hoy lo lleva el analizador.
 
 El límite de compases de la interfaz (`MAX_BARS`) es sólo de UI; el motor/CLI no debe asumir ese límite.
 
-`_mode_accent` mira **primero** `TOOL_CARDS` y después `MODE_CARDS`: el experimentador y el analizador tiñen la interfaz con su color igual que los tres modos.
+La pantalla de voces muestra los registros de `range_overrides` (por posición en el orden del motor), no los del catálogo: con los del catálogo, volver a la pantalla y apretar «Siguiente» borraba en silencio un atajo (`VOICE_PRESETS`) o un registro tocado a mano. El botón del atajo encendido se decide **comparando lo que está en las casillas** (`_voice_preset_matching`), no recordando el último click.
+
+`_mode_accent` mira **primero** `TOOL_CARDS` y después `MODE_CARDS`: las tres herramientas tiñen la interfaz con su color igual que los tres modos.
 
 El cartel de donación tiene dos maneras y cada una en su recuadro (`_donation_card`): `DONATION_ALIAS` sirve sólo dentro de Argentina y `DONATION_LINK` es la de afuera. Poner sólo el alias dejaba a media humanidad mirando un dato que no puede usar.
 
@@ -249,6 +271,7 @@ Estos sistemas son funcionalmente secundarios al motor musical. Mantener separad
 - `story.json`: progreso del sendero.
 - `eggs.json`: huevos.
 - `visitors.json`: visitas.
+- `school.json`: escuelita (ejercicios aprobados y si la graduación se vio).
 - `achievements.json`: logros.
 
 Un personaje nuevo va en `cinematic.STAGING`, `SPEAKERS` y `POSES`. `staging_for()` **no falla** si falta: devuelve otra puesta y la escena se dibuja igual, con el cielo y los ruidos de quien no es. Lo vigila `TestVisitors.test_every_visitor_has_a_staging_of_its_own`.
@@ -265,7 +288,7 @@ No agregar huevos al sistema de logros: que sean secretos forma parte de su func
 
 La descripción de un logro puede llevar un tramo entre `**` en negrita: `achievements.runs()` la parte en tramos y `plain()` la devuelve sin marcas. La lista de logros dibuja los tramos ---una etiqueta cada uno, en fila y sin envolver, así que la negrita es para señalar una palabra y no un párrafo--- y el aviso y el cartel del legendario usan `plain()`.
 
-Las variables de entorno de depuración/fuerza (`CHORDWEAVER_VISIT`, `CHORDWEAVER_VISION`, `CHORDWEAVER_PACT`, `CHORDWEAVER_TOMB`, etc.) existen para reproducir escenas difíciles de alcanzar manualmente.
+Las variables de entorno de depuración/fuerza (`CHORDWEAVER_VISIT`, `CHORDWEAVER_VISION`, `CHORDWEAVER_PACT`, `CHORDWEAVER_TOMB`, `CHORDWEAVER_GRADUATION`, etc.) existen para reproducir escenas difíciles de alcanzar manualmente.
 
 ## Analizador
 
@@ -274,14 +297,17 @@ Las variables de entorno de depuración/fuerza (`CHORDWEAVER_VISIT`, `CHORDWEAVE
 Reglas que se rompen solas si se las ignora:
 
 - **El compás no es uno solo.** `Score.metres` lleva los cambios ---`(compás, tiempos, figura)`--- y de ahí salen `metre_at`, `metrics_at` y `bar_grid`. Todo lo que mida un tiempo fuerte tiene que preguntar por el compás de **esa** barra: `quarters_per_bar` y `beat_quarters` son sólo el compás de arranque. Forzar la pieza al primero corre la grilla desde el cambio hasta el final.
+- **Un compás partido en la repetición son dos mitades de un mismo compás** (`importer._plan_bars`): el 7 de dos tiempos y el 7a de uno suman uno, con el mismo número, y un cambio de compás que llega en la segunda mitad rige desde el siguiente. Estirando cada mitad a un compás entero, seis de ocho corales de Bach quedaban corridos desde la repetición hasta el final.
+- La anacrusa es el compás 0 en el análisis (`Score.bar_grid`) y en el sistema (`GrandStaff.pickup`, que el analizador fija al importar). Sin la del sistema, las barras dibujadas quedaban corridas respecto de lo que el análisis decía de cada compás.
 - **Se lee un acorde por tiempo, no por vertical.** Cada nota de paso cambia la vertical sin cambiar la armonía; leer vertical por vertical devuelve una progresión de fantasía. Ver `harmonic_segments`.
-- **El piso de tres es de voces escritas y de la pieza entera** (`MIN_VOICES_FOR_CHORD`). Medido en alturas distintas, un coral que dobla la fundamental y omite la quinta no llega a tres en ninguna vertical y se quedaba sin análisis; aplicado tiempo por tiempo, un compás con tres acordes salía cifrado una sola vez.
+- **Hay dos pisos.** El de la pieza: con menos de tres voces escritas (`MIN_VOICES_FOR_CHORD`) no hay análisis. Y el del tramo (`_too_thin`): un tiempo con una sola línea, o con dos notas que no recorren tres clases de altura, no abre un acorde propio; se suma al de antes o al de después si cabe entero en él (una nota tenida que las otras voces completan), una racha de tiempos flacos se lee junta (`_thin_run`) y si nada cabe queda sin nombre. Tres notas juntas alcanzan siempre aunque se doblen: no medir el piso en alturas distintas, o el coral que dobla la fundamental se queda sin acordes. Al decidir si un tramo cabe se descuentan las notas con forma de adorno (`_heard(real=True)`).
 - **Antes de leer acordes se descuentan las notas con forma de adorno** (`_ornament_shaped` + `Sonority.ornamental`, factor `ORNAMENT_WEIGHT`). Sin ese paso, un si de paso convierte un Do en Do maj7 --- la lectura falsa explica el 100% del material y gana.
 - Una nota con forma de adorno **sólo** cuenta como tal si alguna otra voz sostiene. Cuatro voces moviéndose a la vez es un cambio de acorde.
 - El descuento por nota floja (`SUPPORT_SHARE`) se aplica **sólo a la séptima**. Se probó con las cuatro notas y convertía un V6/5 en vii°: en una textura arpegiada la fundamental de un acorde invertido suena poco por definición.
 - `_same_harmony` (unión de segmentos) exige **mismo bajo**. Sin eso, los seis acordes del bajo cromático descendente se leían como uno.
 - **Las paralelas y las quintas ocultas se importan de `engine.fitness`.** No escribir una segunda copia: se desincroniza en el primer cambio y el analizador pasaría a aprobar lo que el generador prohíbe. Lo vigila `TestAnalysisCounterpoint.test_the_rules_come_from_the_evaluator`.
-- **El movimiento se mide contra la nota anterior de cada voz, no contra la vertical de al lado** (`_previous_notes`, que devuelve `(nota anterior, cuándo empezó, cuándo empezó la de ahora)`). En un coral las dos cosas coinciden; en una textura arpegiada las voces entran por turno, y mirando la vertical vecina la que todavía no atacó sale «quieta»: las terceras paralelas del bajo y el alto del preludio de Bach se leían «oblicuo» y sus quintas paralelas no las veía nadie. Las paralelas y octavas se buscan sobre **esas mismas** notas, así que se marcan también cuando las dos voces se mueven una tras otra.
+- **El movimiento se mide contra la nota anterior de cada voz, no contra la vertical de al lado** (`_previous_notes`, que devuelve `(nota anterior, cuándo empezó, cuándo empezó la de ahora)`). En un coral las dos cosas coinciden; en una textura arpegiada las voces entran por turno, y mirando la vertical vecina la que todavía no atacó sale «quieta»: las terceras paralelas del bajo y el alto del preludio de Bach se leían «oblicuo» y sus quintas paralelas no las veía nadie. Las paralelas y octavas se buscan sobre **esas mismas** notas, así que se marcan también cuando las dos voces se mueven una tras otra **dentro de un mismo tiempo** (`_beat_of`). En tiempos distintos no son paralelas: la que se movió antes ya está quieta y cada paso es oblicuo (mi-si, mi-la, re-la tiene una cuarta en el medio). Decisión del autor; no volver a la regla vieja.
+- **El estilo decide si una paralela es falta** (`analyse(score, genre=...)`, que lee `forbid_parallel_*` de `GENRE_PROFILES`; en la pantalla, `analyzer.STYLES` en la cabecera del panel de contrapunto). Sin estilo se juzga como barroco, que es lo que usa la escuelita.
 - Volver a atacar la misma nota **empieza una nota nueva**: repetir es quedarse quieto, y de ahí salen «quieto» y «oblicuo». Un silencio de menos de una negra (`QUIET_ENOUGH`) no corta la voz --- así se escriben los arpegios, con cada nota un pelo más corta que su figura --- y sin ese margen ninguna nota del preludio venía de ningún lado.
 - Las dos notas de partida tienen que haber **sonado juntas**. Cuando no se cruzaron, la que viene sosteniendo desde mucho antes ---una pedal, una redonda debajo de un arpegio--- cuenta como quieta y el paso es oblicuo. El mismo paso no se anota dos veces (`registered`), o el paralelo de dos voces largas aparecía una vez por cada corchea de arriba.
 - Las cadencias de cita (frigia, Vivaldi, bajo cromático) se leen de `harmony.SET_PIECES`, que es de donde el generador las saca para citarlas. Lo vigila `TestAnalysisCadences.test_the_quotations_come_from_the_generator`.
@@ -306,7 +332,7 @@ Del lado de la pantalla:
 - Los rótulos van sobre la **cabeza de la nota** (`_onset_x`) y no sobre el borde izquierdo del tramo: la nota se dibuja en su centro, así que con una redonda el cifrado quedaba sesenta píxeles a la izquierda de lo que describe.
 - Un movimiento se dibuja como **una sola marca entre las dos voces del par** (`GrandStaff.motions`): el trazo las une y cada una lleva su flecha. Con una flecha por voz de la nota que deja a la que toma, se leía como una voz moviéndose consigo misma.
 - `Analyzer._lanes` se rehace **después** de analizar, por nombre: `analyse()` reordena las voces por registro y la correspondencia hecha antes señalaba la voz de al lado.
-- Los silencios se **dibujan** con trazos y no con signos de Unicode: los caracteres musicales no están en todas las fuentes de sistema y el de negra salía como un rectángulo vacío.
+- Los silencios, como todos los signos, salen de la fuente musical propia (ver «Pentagrama: la fuente musical») y **nunca** de los caracteres musicales de Unicode en una fuente de sistema: no están en todas y el de negra salía como un rectángulo vacío.
 - Debajo del sistema va el cifrado del bajo **en columna** (`FIGURE_ROWS`, tres renglones) y el grado no va: escritos los dos al lado del cifrado americano no se leía ninguno.
 - El sistema usa su propia escala (`GRAND_LINE_GAP`, `GRAND_STEP`) y no la del pentagrama de una línea: acá hay dos pentagramas, el hueco, y arriba y abajo los rótulos, y todo eso comparte la ventana con los tres paneles. `GRAND_TOP_MARGIN` tiene que dejar entrar la nota más aguda --- con el margen viejo, una nota sobre la quinta línea se dibujaba encima del cifrado y una bien aguda se dibujaba fuera del lienzo.
 - El alto del lienzo se recalcula en cada dibujo contra la nota más grave; el margen de arriba es fijo porque de él salen las cuentas del click.
@@ -314,12 +340,37 @@ Del lado de la pantalla:
 - `staff.index_for_pitch()` + `staff.accidental_for()` + `staff.pitch_at()` forman un ida y vuelta **exacto** en toda armadura. Es lo que permite importar, escribir en el pentagrama y analizar sin que cambie una nota. Lo vigila `TestAnalysisWriting`.
 - El sistema **no** es una escalera continua: cada clave tiene su propia geometría (`_y_for(index, treble)`) y la voz decide en cuál se escribe (`staff_of`, mitad grave al fa). Se probó con la escalera corrida entera --- que es lo exacto --- y los dos pentagramas se leen como una sola grilla de diez líneas.
 - **El tenor (`GrandStaff.SPLIT_VOICE`) se reparte nota por nota**: del do central (`MIDDLE_C`) para arriba se escribe en la clave de sol y para abajo en la de fa, que es lo que hace falta para escribir piano. Por eso `staff_of` recibe la altura y hay que preguntarle **por cada nota** --- dibujo, blanco del mouse, marca de la voz activa y cifrado ---; sin la altura contesta el pentagrama de siempre.
-- El editor llega hasta **cuatro voces**. Una partitura con más se recorta a las cuatro más graves y se avisa.
+- El editor llega hasta **cuatro voces**. Una partitura con más se reduce **momento a momento** (`importer.kept_voices`): la nota más grave, la más aguda y las dos del medio que más clases de altura agregan, y se avisa. Quedándose con las cuatro líneas más graves, una partitura de piano perdía la melodía.
 - Se reanaliza solo, con espera (`REANALYSE_MS`); el hilo del sonido no toca Tk (`_watch_sound`, igual que `_when_done`).
 
-Exportación: `session.export_analysis()` --- **un hueco por compás** y una línea escrita por voz (`ScoreSpec.voice_lines`, `line_for`), no un hueco por sonoridad: cortando en cada vertical, una redonda del bajo salía partida en semicorcheas ligadas. Cada voz se escribe con sus propias figuras (`_writable_pieces`, con ligaduras), la armadura decide cómo se escribe cada nota (`spell_by_key` → `theory.spell_in_key`), `pickup` marca el primer compás incompleto y `bar_time_signatures` los cambios de compás. **No** anota en el historial: un análisis no es una corrida del motor.
+Exportación: `session.export_analysis()` --- **un hueco por compás** y una línea escrita por voz (`ScoreSpec.voice_lines`, `line_for`), no un hueco por sonoridad: cortando en cada vertical, una redonda del bajo salía partida en semicorcheas ligadas. Cada voz se escribe con sus propias figuras (`_writable_pieces`, con ligaduras), la armadura decide cómo se escribe cada nota (`spell_by_key` → `theory.spell_in_key`), `pickup` marca el primer compás incompleto y `bar_time_signatures` los cambios de compás. Una nota que cruza la barra viaja como `(altura, duración, True)` (`session._written_bar`) y el exportador la liga en MusicXML y la sostiene en MIDI; sin la marca, una síncopa volvía reatacada. **No** anota en el historial: un análisis no es una corrida del motor.
 
 `assets/partituras/` trae el Preludio BWV 846 (ocho compases) para que haya algo que importar el primer día; `Analyzer.examples_directory()` es lo que abre ahí el diálogo. Lo vigila `TestAnalysisExample`, y `TestAnalysisReadsWhatWeWrite` comprueba que lo que exportan los tres modos vuelva a entrar por acá.
+
+## Pentagrama: la fuente musical
+
+`staff.py` dibuja con Bravura (SMuFL, SIL OFL 1.1) a través de `staff.Engraver`, y con trazos si la fuente no está. Lo vigila `TestMusicFontStaff`.
+
+- Vive en `assets/fonts/Bravura.otf` (con `OFL.txt`) y se resuelve con `program_directory()`. Se carga **en privado y una vez** (`load_music_font`: `AddFontResourceExW` + `FR_PRIVATE`). Con una ruta de más de 259 caracteres Windows la rechaza: se carga una copia de `%TEMP%/ChordWeaver-fonts/`. Si igual falla, o fuera de Windows, `Engraver.engraved` es False y todo sale por trazos; ningún camino puede levantar una excepción.
+- **Calibración:** en SMuFL un cuerpo son cuatro espacios, así que la fuente se pide a `-(4 × espacio)` (negativo = píxeles en Tk) y la cabeza cae justa entre dos líneas. Tk no ancla un texto en su línea de base: cada signo se ancla `nw` en `y - ascenso` (`Engraver.glyph`). Los anchos (`WIDTHS`) y anclas salen de `Bravura.json`.
+- Se pasa como descripción `("Bravura", -px)`, nunca como `tkfont.Font` (se borra solo desde `__del__`, en cualquier hilo). `music_font` comprueba que Tk encontró **esa** familia: si no, Windows contesta Arial sin quejarse.
+- Las notas empiezan en `left_margin()` ---clave + armadura + compás medidos---, no en `LEFT_MARGIN`/`GRAND_LEFT_MARGIN`, que son sólo el mínimo. Dibujo y click leen el mismo valor; usar la constante corre los clicks.
+- `GrandStaff.redraw` rehace sólo lo de encima (capas con `OVERLAY_TAG`) si `_score_signature` no cambió, y `StaffEditor.redraw` no redibuja si `_signature` no cambió. Lo nuevo que dependa de las notas va en la firma; lo nuevo dibujado encima, en una capa con su marca. Si no, queda viejo en pantalla. Mover el resaltado bajó de ~15 a ~3 ms.
+- El accidente que se **dibuja** sigue la regla del compás (`displayed_accidentals`; en el sistema, por pentagrama): un sol después de un sol sostenido lleva becuadro aunque no tenga accidente propio. Lo que **suena** es la altura de cada nota, que no cambia.
+- Colores de la melodía del Armonizador, un canal por pregunta (`note_look`): **naranja = fuera de la escala**, **halo dorado = lleva acorde** (la de la escala con acorde, además, dorada), anillo = la marcó el usuario. La leyenda la dibuja `legend_swatch` con la misma función. No codificar «lleva acorde» sólo con un color: naranja y dorado tienen que poder estar en la misma nota.
+
+## Escuelita
+
+`engine/school.py` (lecciones, corrección, `Progress`, guion de la graduación; puro) + `school.School` (pantalla, desvío `"school"`). Cinco unidades en orden ---movimientos, armonías, cadencias, estilos, serie armónica---, una lección se abre cuando la anterior está aprobada entera.
+
+- **El juez es el analizador.** Los ejercicios de escritura se le pasan enteros a `analysis.analyse`; las reglas de estilo salen de `GENRE_PROFILES` y se detectan con las funciones de `fitness`/`style`; la serie armónica, de `engine/harmonics`. No escribir una corrección propia: aprobaría lo que el analizador marca en rojo.
+- **La tonalidad la pone la consigna** (`school.read`): el analizador lee los acordes y el contrapunto como siempre, y la función y la cadencia se vuelven a pedir con la tonalidad del ejercicio. Sola, una frase de cuatro acordes que termina en una rota se lee en la tonalidad del sexto grado.
+- Cada ejercicio trae `solution` y `mistake`, que no ve nadie: `TestSchool` exige que la primera apruebe, que la segunda falle **diciendo el compás**, y que el fragmento de partida no esté ya resuelto. Cambiar un fragmento obliga a revisar los tres.
+- Una respuesta elegida mal **no dice cuál era la buena** (`_wrong_choice`, `HINTS`): dice qué tiene de malo la elegida y dónde mirar. Diciéndola, el segundo intento era copiar.
+- Cada lección cita una entrada del libro (`cite`, `quote`); `book.find` la ubica y `_screen_book(payload=clave)` abre el libro ahí. Si la entrada está cerrada se muestra la pista y no el texto: casi siempre la abre el ejercicio de esa lección, porque lo que el alumno **entrega** pasa por `_analysed` y gana los logros que gana en el analizador. El fragmento de partida no pasa nunca por ahí.
+- Lo dado no se toca: el pentagrama no sabe de voces fijas, así que `School._guard` deshace en el próximo respiro (`after_idle`, nunca adentro del aviso de cambio) lo que cambie una casilla de `school.locked()`.
+- Las palabras sueltas que llegan a `tr()` desde una variable ---movimientos, cadencias--- están marcadas en `school.GLOSSARY` con `N()`: sin acento la cosecha del catálogo no las ve. Los nombres de las voces salen de `theory.VOICE_CATALOG` (`school.VOICE_NAMES`) y se traducen en `en_engine`.
+- La graduación son tres escenas encoladas juntas (Gregorio, Bach, el creador; nunca los del sendero, que cada usuario conoce uno). Se marca y entrega `legend_born` en `_graduated`, al terminar la **última**. Bach dice «Treinta y tres ejercicios»: lo vigila un test.
 
 ## Experimentador de armónicos
 
@@ -378,6 +429,7 @@ Exportación: `session.export_analysis()` --- **un hueco por compás** y una lí
 - El parametro `on_ready` de `notice()` es el enganche del arnes de pruebas: no
   puede dispararse en `after(0)` porque `CTk.mainloop` llama a `update()` antes
   de entrar al bucle, y el cartel se destruiria abajo de sus propios pies.
+- `notice()` cierra **escondiendo primero** el cartel y después `quit()` y `destroy()`, cada uno en su `try`, y al salir del bucle lo destruye igual (`finally`). Con todo en un mismo `try`, una falla dejaba el cartel en pantalla al lado del programa. Y `main()` llama `bring_to_front` al abrir la ventana del programa: es la segunda del proceso, y Windows le daba el foco a otra cosa al cerrarse la primera, así que aparecía detrás de todo o minimizada y parecía que el programa se había cerrado al apretar «Ahora no».
 
 ## Los dos idiomas
 
@@ -419,6 +471,7 @@ nueva sin traducir sale en castellano, no vacía.
 - `DEFAULT_SETTINGS["language"]` arranca **vacío**, no en `"es"`: vacío es
   «no lo eligió nadie todavía», que es lo que hace que se pregunte una sola
   vez en la vida de la instalación.
+- Los nombres de voz de `theory.VOICE_CATALOG` están en castellano (son la clave). Se muestran y se exportan con `i18n.tr_name`, que traduce «Bajo 2» como nombre más número y entiende los nombres en inglés que guardaba el historial viejo.
 - Los nombres de nota los decide el idioma (`i18n.note_name`, `say_letter`):
   solfeo en castellano, letras en inglés. `analysis.spanish_note` y
   `analyzer.spanish_pitch` bajan ahí.
@@ -452,6 +505,16 @@ Restricciones que importan para mantenimiento:
 - la cama de ambiente debe mantenerse por debajo de las voces.
 
 No hace falta documentar aquí la receta acústica concreta de cada sonido salvo que una implementación posterior rompa un contrato de mezcla.
+
+### Timbres de reproducción
+
+Toda nota musical que el programa toca ---resultados, melodía, historial, analizador, sendero--- pasa por `audio.render_chords` → `timbre.mix`. Un sonido nuevo de la pieza no se sintetiza en otro lado: así lo alcanza el timbre elegido en el engranaje (`settings["timbre"]`, `settings["timbre_path"]`). Quedan afuera a propósito `ambience` (la habitación, no la pieza) y `harmonics.play` (ahí el timbre es el experimento).
+
+- `timbre.SAMPLE_RATE` es la fuente y `audio` lo reexporta: `audio` importa `timbre`, al revés sería circular.
+- El volumen de cada timbre se **mide** (LUFS con compuerta, `timbre.loudness`) contra la cuerda pulsada, que vale 1 por definición; no se anota a mano. Retocar una receta no obliga a recalibrar nada. `audio.encode` baja la pieza entera si pasa del techo, nunca recorta.
+- `timbre.use()` que falla deja el timbre **de siempre**, no el anterior. Al arrancar, un WAV que ya no está no cambia la preferencia guardada: suena el de siempre y el engranaje dice por qué.
+- En el trozo `smpl` el final del bucle es **inclusivo** (lo escribe así `harmonics.write_instrument` y lo lee así `timbre.read_sample`).
+- `play_chords` lee el timbre en el hilo que llama: el hilo del sonido no consulta preferencias.
 
 ## Archivos sensibles
 

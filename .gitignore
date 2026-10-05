@@ -20,12 +20,14 @@ output/
 
 # --- Datos del usuario (history.base_directory) ---
 # No son código: son el historial, los logros, el sendero del modo
-# historia, los huevos encontrados, las visitas y las preferencias.
+# historia, los huevos encontrados, las visitas, la escuelita y las
+# preferencias.
 history.json
 achievements.json
 story.json
 eggs.json
 visitors.json
+school.json
 settings.json
 
 # --- Entornos y herramientas locales ---
@@ -40,3 +42,6 @@ desktop.ini
 .DS_Store
 .vscode/
 .idea/
+
+# --- Registro del programa (engine.console), cuando corre sin consola ---
+chordweaver.log

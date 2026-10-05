@@ -206,6 +206,12 @@ CATALOG: Tuple[Achievement, ...] = (
     # eso lo nombra como lo nombra la escena.
     Achievement("echoes_past", "Ecos del pasado",
                 "Escuchá la historia completa de **aquel hombre**.", 3),
+    # El de la escuelita. Se entrega al terminar la escena de la graduación
+    # y no al aprobar el último ejercicio, igual que los de las visitas: lo
+    # que se premia es haber llegado al final, y el final es la ceremonia.
+    # La descripción no dice quién viene, por lo mismo que las otras.
+    Achievement("legend_born", "Nace una leyenda",
+                "Aprobá las cinco unidades de la **escuelita**.", 3),
 
     # -- legendarios --------------------------------------------------------
     # Las descripciones no dicen cómo se consiguen: se muestran en itálica y

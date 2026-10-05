@@ -115,6 +115,31 @@ def tr(text: str) -> str:
     return _catalog.get(text, text)
 
 
+#: Los nombres de voz que guardaba el historial antes de que el catálogo de
+#: voces pasara a castellano. Una corrida vieja dice «Bass»; sin esto, con la
+#: interfaz en castellano seguía diciendo «Bass».
+_OLD_VOICE_NAMES = {"Bass": "Bajo", "Baritone": "Barítono",
+                    "Mezzo-soprano": "Mezzosoprano"}
+
+
+def tr_name(name: str) -> str:
+    """
+    El nombre de una voz en el idioma en curso, con su número si lo tiene.
+
+    Dos voces del mismo tipo se llaman «Bajo 1» y «Bajo 2», y `tr()` busca
+    la frase entera: ninguna de las dos está en el catálogo y salían en
+    castellano con la interfaz en inglés. Se traduce el nombre y se le
+    vuelve a pegar el número.
+    """
+    if not isinstance(name, str) or not name:
+        return name
+    base, _, number = name.rpartition(" ")
+    if not (base and number.isdigit()):
+        base, number = name, ""
+    base = _OLD_VOICE_NAMES.get(base, base)
+    return tr(base) + (" " + number if number else "")
+
+
 def trf(text: str, *args, **kwargs) -> str:
     """
     Traducir y después rellenar los huecos: ``trf("Paso {n}", n=3)``.

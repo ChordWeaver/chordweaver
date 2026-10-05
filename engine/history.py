@@ -29,8 +29,9 @@ _OUTPUT_DIRNAME = "output"
 
 #: Variable de entorno que muda TODOS los datos a otra carpeta.
 #:
-#: Los seis archivos del usuario --- historial, logros, sendero, huevos,
-#: visitas y preferencias --- y la carpeta `output/` cuelgan de
+#: Los archivos del usuario --- historial, logros, sendero, huevos,
+#: visitas, escuelita, preferencias y el registro --- y la carpeta `output/`
+#: cuelgan de
 #: :func:`base_directory`, así que moverla los mueve a todos de una vez.
 #:
 #: Existe por una razón concreta: cada script de prueba que abre la ventana
@@ -197,20 +198,29 @@ class ProductionRecord:
             moment = datetime.fromisoformat(self.timestamp)
         except (ValueError, TypeError):
             return self.timestamp
+        from engine import i18n
         today = datetime.now().date()
         days = (today - moment.date()).days
         clock = moment.strftime("%H:%M")
         if days == 0:
-            return f"hoy {clock}"
+            return i18n.trf("hoy {clock}", clock=clock)
         if days == 1:
-            return f"ayer {clock}"
-        months = ("ene", "feb", "mar", "abr", "may", "jun",
-                  "jul", "ago", "sep", "oct", "nov", "dic")
-        return f"{moment.day} {months[moment.month - 1]} {clock}"
+            return i18n.trf("ayer {clock}", clock=clock)
+        month = i18n.tr(self.MONTHS[moment.month - 1])
+        return i18n.trf("{day} {month} {clock}", day=moment.day,
+                        month=month, clock=clock)
+
+    #: Los meses abreviados, para `when`. Se traducen al mostrarse.
+    MONTHS = ("ene", "feb", "mar", "abr", "may", "jun",
+              "jul", "ago", "sep", "oct", "nov", "dic")
 
     @property
     def display_name(self) -> str:
-        pieces = [p for p in (self.mode_label, self.genre_label) if p]
+        # Cada pedazo en el idioma de la pantalla: el título se arma acá y
+        # `tr()` sobre la frase ya armada no encuentra nunca la clave.
+        from engine import i18n
+        pieces = [i18n.tr(p) for p in (self.mode_label, self.genre_label)
+                  if p]
         return f"{self.when}  ·  {'  ·  '.join(pieces)}"
 
 
@@ -313,6 +323,13 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     #: aparecer. Va acá y no en un archivo propio porque es exactamente lo
     #: mismo que `tutorial_seen`: una preferencia sobre cuánto se explica.
     "guides_seen": [],
+    #: Con qué timbre suenan las reproducciones: una clave de
+    #: `engine.timbre.TIMBRES`. Una clave que no existe ---la guardó una
+    #: versión más nueva--- suena con la de siempre.
+    "timbre": "pluck",
+    #: El WAV del timbre «muestra cargada». Se guarda aunque se elija otro
+    #: timbre después, para que volver a la muestra no pida buscarlo de nuevo.
+    "timbre_path": "",
 }
 
 

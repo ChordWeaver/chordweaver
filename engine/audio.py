@@ -6,6 +6,10 @@ The point is to hear the voice leading immediately, without exporting a file
 and opening something else. Fidelity is not the goal -- a plain plucked tone
 is enough to judge whether the voices move well.
 
+Este módulo decide **cuándo** suena cada nota; **cómo** suena lo decide
+`engine.timbre`, que es por donde pasan todas las notas que el programa toca
+y donde vive el timbre elegido en la configuración.
+
 Everything is synthesised here and written to a WAV, then handed to whatever
 the operating system already uses to play sound. Going through MIDI would
 mean depending on a synthesiser being installed, which is exactly the kind of
@@ -14,17 +18,18 @@ thing that works on the developer's machine and nowhere else.
 
 from __future__ import annotations
 
-import math
 import os
 import platform
-import struct
 import subprocess
+import sys
 import tempfile
 import threading
 import wave
+from array import array
 from typing import Callable, Optional, Sequence
 
-SAMPLE_RATE = 44100
+from . import timbre as timbres
+from .timbre import SAMPLE_RATE
 
 #: Seconds per quarter note: a quarter at 96 bpm. Slow enough to hear the
 #: inner voices, quick enough that eight bars do not become a chore.
@@ -39,23 +44,6 @@ def midi_to_frequency(midi: int) -> float:
     return 440.0 * (2.0 ** ((midi - 69) / 12.0))
 
 
-def _voice_sample(frequency: float, t: float, duration: float) -> float:
-    """
-    One voice at time ``t``: a decaying tone with a couple of overtones.
-
-    A bare sine sounds like a test signal and makes it oddly hard to follow
-    separate voices. A little second and third harmonic, plus a plucked
-    decay, is enough for the ear to pick the lines apart.
-    """
-    envelope = math.exp(-2.2 * t / max(duration, 0.05))
-    attack = min(1.0, t / 0.012)      # a short fade-in avoids a click
-    angle = 2.0 * math.pi * frequency * t
-    tone = (math.sin(angle)
-            + 0.32 * math.sin(2.0 * angle)
-            + 0.14 * math.sin(3.0 * angle))
-    return tone * envelope * attack
-
-
 def render_chords(
     chords: Sequence[Sequence[int]],
     durations: Sequence[float],
@@ -63,6 +51,7 @@ def render_chords(
     melody: Sequence = (),
     quarter_seconds: Optional[float] = None,
     voices: Sequence = (),
+    timbre: Optional[timbres.Choice] = None,
 ) -> bytes:
     """
     Render a progression to 16-bit mono PCM.
@@ -76,99 +65,46 @@ def render_chords(
     their slot into the next one, which is what keeps the result from
     sounding like a row of disconnected blocks.
 
-    The envelope is computed once per distinct duration and the waveform is
-    built with a running phase rather than a sine call per sample, because
-    the naive version took over a second for four chords -- long enough for
-    the button to feel broken on a full piece.
+    Qué onda tiene cada nota lo decide `engine.timbre`: acá sólo se dice
+    cuándo empieza, cuánto dura y con qué ganancia, y ``timbre`` pide uno
+    en particular en vez del que está puesto (es lo que usa el botón de
+    probar de la configuración). Ese módulo sintetiza una vez por altura y
+    duración, que es lo que hace que una pieza entera no tarde: un coral
+    repite las mismas notas acorde tras acorde.
     """
     if not chords and not melody and not voices:
         return b""
     beat = quarter_seconds or SECONDS_PER_QUARTER
 
-    if not chords and not voices:
-        # A melody on its own: the buffer is sized from the line instead.
-        span = max((start + length for _p, start, length in melody), default=0.0)
-        total_samples = int((span * beat + tail_seconds) * SAMPLE_RATE)
-        buffer = [0.0] * total_samples
-        envelopes: dict = {}
-
-        def envelope_for(duration: float, length: int) -> list:
-            key = (round(duration, 3), length)
-            if key not in envelopes:
-                shape = []
-                for offset in range(length):
-                    t = offset / SAMPLE_RATE
-                    shape.append(math.exp(-2.2 * t / max(duration, 0.05))
-                                 * min(1.0, t / 0.012))
-                envelopes[key] = shape
-            return envelopes[key]
-
-        for pitch, start_quarters, length_quarters in melody:
-            duration = length_quarters * beat
-            start = int(start_quarters * beat * SAMPLE_RATE)
-            length = min(int((duration + tail_seconds) * SAMPLE_RATE),
-                         max(0, total_samples - start))
-            if length <= 0:
-                continue
-            shape = envelope_for(duration, length)
-            step = 2.0 * math.pi * midi_to_frequency(pitch) / SAMPLE_RATE
-            angle = 0.0
-            for offset in range(length):
-                tone = (math.sin(angle) + 0.32 * math.sin(2.0 * angle)
-                        + 0.14 * math.sin(3.0 * angle))
-                buffer[start + offset] += 1.5 * VOICE_GAIN * tone * shape[offset]
-                angle += step
-        frames = bytearray()
-        for value in buffer:
-            clamped = -1.0 if value < -1.0 else (1.0 if value > 1.0 else value)
-            frames += struct.pack("<h", int(clamped * 32767))
-        return bytes(frames)
-
+    # La duración total: lo que suman los acordes, y también lo que ocupan
+    # las voces sueltas ---las de un acorde adornado--- y la melodía: un
+    # adorno al final de la última nota cae fuera de lo que suman los
+    # acordes y quedaría cortado.
     total_quarters = sum(durations[i] if i < len(durations) else 2.0
                          for i in range(len(chords)))
-    # Las voces sueltas ---las de un acorde adornado--- se miden también:
-    # un adorno al final de la última nota cae fuera de lo que suman los
-    # acordes y quedaría cortado.
     total_quarters = max(
         [total_quarters]
-        + [start + length for _p, start, length in voices])
+        + [start + length for _p, start, length in voices]
+        + [start + length for _p, start, length in melody])
     total_samples = int((total_quarters * beat + tail_seconds) * SAMPLE_RATE)
-    buffer = [0.0] * total_samples
 
-    envelopes: dict = {}
+    events = []
 
-    def envelope_for(duration: float, length: int) -> list:
-        key = (round(duration, 3), length)
-        if key not in envelopes:
-            shape = []
-            for offset in range(length):
-                t = offset / SAMPLE_RATE
-                shape.append(math.exp(-2.2 * t / max(duration, 0.05))
-                             * min(1.0, t / 0.012))
-            envelopes[key] = shape
-        return envelopes[key]
+    def place(pitch, start_seconds: float, seconds: float, gain: float,
+              start: Optional[int] = None) -> None:
+        if start is None:
+            start = int(start_seconds * SAMPLE_RATE)
+        length = min(int((seconds + tail_seconds) * SAMPLE_RATE),
+                     max(0, total_samples - start))
+        if length > 0:
+            events.append((int(pitch), start, seconds, length, gain))
 
     position = 0.0
     for index, chord in enumerate(chords):
         quarters = durations[index] if index < len(durations) else 2.0
         duration = quarters * beat
-        start = int(position * SAMPLE_RATE)
-        length = min(int((duration + tail_seconds) * SAMPLE_RATE),
-                     max(0, total_samples - start))
-        if length <= 0:
-            position += duration
-            continue
-        shape = envelope_for(duration, length)
-
         for pitch in chord:
-            step = 2.0 * math.pi * midi_to_frequency(pitch) / SAMPLE_RATE
-            angle = 0.0
-            for offset in range(length):
-                tone = (math.sin(angle)
-                        + 0.32 * math.sin(2.0 * angle)
-                        + 0.14 * math.sin(3.0 * angle))
-                buffer[start + offset] += VOICE_GAIN * tone * shape[offset]
-                angle += step
+            place(pitch, position, duration, VOICE_GAIN)
         position += duration
 
     # Las voces de un acorde adornado vienen sueltas, cada una con su
@@ -176,46 +112,43 @@ def render_chords(
     # las otras sostienen, y eso no se puede decir con una lista de
     # acordes. Suenan al mismo volumen que el resto --- son el resto.
     for pitch, start_quarters, length_quarters in voices:
-        duration = length_quarters * beat
-        start = int(start_quarters * beat * SAMPLE_RATE)
-        length = min(int((duration + tail_seconds) * SAMPLE_RATE),
-                     max(0, total_samples - start))
-        if length <= 0:
-            continue
-        shape = envelope_for(duration, length)
-        step = 2.0 * math.pi * midi_to_frequency(pitch) / SAMPLE_RATE
-        angle = 0.0
-        for offset in range(length):
-            tone = (math.sin(angle) + 0.32 * math.sin(2.0 * angle)
-                    + 0.14 * math.sin(3.0 * angle))
-            buffer[start + offset] += VOICE_GAIN * tone * shape[offset]
-            angle += step
+        place(pitch, start_quarters * beat, length_quarters * beat,
+              VOICE_GAIN)
 
     # A given melody is laid over the top with its own rhythm. Chords are
     # only placed on strong beats, so playing the harmonisation alone left
     # out every note between them -- most of the tune, in other words.
+    # A touch louder than the accompaniment, so the tune leads.
     for pitch, start_quarters, length_quarters in melody:
-        duration = length_quarters * beat
-        start = int(start_quarters * beat * SAMPLE_RATE)
-        length = min(int((duration + tail_seconds) * SAMPLE_RATE),
-                     max(0, total_samples - start))
-        if length <= 0:
-            continue
-        shape = envelope_for(duration, length)
-        step = 2.0 * math.pi * midi_to_frequency(pitch) / SAMPLE_RATE
-        angle = 0.0
-        for offset in range(length):
-            tone = (math.sin(angle) + 0.32 * math.sin(2.0 * angle)
-                    + 0.14 * math.sin(3.0 * angle))
-            # A touch louder than the accompaniment, so the tune leads.
-            buffer[start + offset] += 1.5 * VOICE_GAIN * tone * shape[offset]
-            angle += step
+        place(pitch, start_quarters * beat, length_quarters * beat,
+              1.5 * VOICE_GAIN)
 
-    frames = bytearray()
-    for value in buffer:
-        clamped = -1.0 if value < -1.0 else (1.0 if value > 1.0 else value)
-        frames += struct.pack("<h", int(clamped * 32767))
-    return bytes(frames)
+    buffer = timbres.mix(events, total_samples, timbre)
+    return encode(buffer)
+
+
+#: Hasta dónde puede llegar la mezcla. Por encima, la pieza entera se baja
+#: en vez de recortarse: un recorte agrega armónicos que nadie tocó y con
+#: varias voces suena a parlante roto.
+CEILING = 0.97
+
+
+def encode(buffer: Sequence[float]) -> bytes:
+    """
+    La mezcla a PCM de 16 bits.
+
+    Con un timbre muy picudo ---el ataque del clave, el chillido de la
+    flauta--- seis voces juntas pueden pasarse del techo aunque suenen
+    igual de fuerte que la cuerda de siempre. Entonces se baja todo junto:
+    el volumen lo iguala `engine.timbre` por sonoridad, y esto es sólo la
+    red que impide que se rompa.
+    """
+    peak = max((abs(value) for value in buffer), default=0.0)
+    scale = 32767.0 * (CEILING / peak if peak > CEILING else 1.0)
+    frames = array("h", [int(value * scale) for value in buffer])
+    if sys.byteorder == "big":
+        frames.byteswap()
+    return frames.tobytes()
 
 
 def write_wav(path: str, frames: bytes) -> None:
@@ -260,6 +193,7 @@ def play_chords(
     melody: Sequence = (),
     quarter_seconds: Optional[float] = None,
     voices: Sequence = (),
+    timbre: Optional[timbres.Choice] = None,
 ) -> threading.Thread:
     """
     Render and play a progression on a background thread.
@@ -267,13 +201,18 @@ def play_chords(
     Returns the thread so the caller can tell whether playback is still
     going; ``on_finished`` fires when it ends, so a button can restore
     itself.
+
+    El timbre se lee **al empezar**, en el hilo que llama: si el usuario lo
+    cambia mientras esto suena, la pieza termina con el que empezó.
     """
+    if timbre is None:
+        timbre = timbres.current()
     def work() -> None:
         path = ""
         try:
             frames = render_chords(chords, durations, melody=melody,
                                    quarter_seconds=quarter_seconds,
-                                   voices=voices)
+                                   voices=voices, timbre=timbre)
             handle = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
             path = handle.name
             handle.close()

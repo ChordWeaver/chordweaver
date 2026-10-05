@@ -42,7 +42,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from . import harmony
-from .fitness import direct_perfect_violation, parallel_interval_violation
+from .fitness import (GENRE_PROFILES, direct_perfect_violation,
+                      parallel_interval_violation)
 from .theory import (FLAT_NAMES, LETTER_SEMITONES, LETTER_STEPS,
                      SHARP_NAMES)
 from engine.i18n import tr, trf, trs
@@ -238,6 +239,11 @@ class Sonority:
     #: Qué voces están, en esta vertical, tocando una nota con forma de
     #: adorno. Pesan menos a la hora de decidir el acorde.
     ornamental: Tuple[int, ...] = ()
+    #: Qué voces sostienen acá una cuarta (o segunda) suspendida que resuelve
+    #: dentro del mismo tiempo (`_suspension_inside`). Pesan como adorno al
+    #: leer el acorde pero, a diferencia de las de arriba, el cifrado las
+    #: sigue viendo: un continuista sí escribe el 4 de un retardo.
+    resolving: Tuple[int, ...] = ()
 
     @property
     def end(self) -> float:
@@ -263,7 +269,12 @@ class Sonority:
 ORNAMENT_WEIGHT = 0.15
 
 
-def _ornament_shaped(part: Part) -> set:
+#: Lo más que puede durar una escapada, en negras. Más larga que una
+#: corchea deja de oírse como un adorno de paso y pasa a ser melodía.
+ESCAPE_MAX = 0.5
+
+
+def _ornament_shaped(part: Part, score: Optional[Score] = None) -> set:
     """
     Los comienzos de las notas de una voz que tienen forma de adorno.
 
@@ -271,6 +282,12 @@ def _ornament_shaped(part: Part) -> set:
     conjunto y no dura más que sus vecinas. Es el perfil de la nota de paso
     y de la bordadura, que juntas son la enorme mayoría de las notas ajenas
     que hay escritas.
+
+    Y la escapada, cuando se sabe dónde caen los tiempos: entra por grado,
+    sale por salto en la dirección contraria, es corta y cae fuera del
+    tiempo. Es el adorno de las cadencias de los corales ---mi-fa#-re sobre
+    un La--- y sin descontarla el fa# de paso convertía la dominante en un
+    Fa# menor con séptima.
 
     Esto corre **antes** de leer los acordes y es lo que impide que un si de
     paso sobre un acorde de do convierta al acorde en un do con séptima
@@ -283,11 +300,19 @@ def _ornament_shaped(part: Part) -> set:
         before, note, after = notes[index - 1], notes[index], notes[index + 1]
         if not (1 <= abs(note.pitch - before.pitch) <= 2):
             continue
-        if not (1 <= abs(after.pitch - note.pitch) <= 2):
+        if note.duration > before.duration:
             continue
-        if note.duration > before.duration or note.duration > after.duration:
-            continue
-        marked.add(round(note.onset, 6))
+        if 1 <= abs(after.pitch - note.pitch) <= 2:
+            if note.duration > after.duration:
+                continue
+            marked.add(round(note.onset, 6))
+        elif (score is not None and abs(after.pitch - note.pitch) >= 3
+              and (note.pitch > before.pitch) != (after.pitch > note.pitch)
+              and note.duration <= ESCAPE_MAX + EPSILON):
+            bar, offset = bar_and_offset(score, note.onset)
+            per_bar, beat = score.metrics_at(bar)
+            if not is_strong(offset, per_bar, beat):
+                marked.add(round(note.onset, 6))
     return marked
 
 
@@ -342,7 +367,7 @@ def verticalise(score: Score) -> List[Sonority]:
     points = _boundaries(score)
     result: List[Sonority] = []
     cursors = [0] * len(score.parts)
-    shaped = [_ornament_shaped(part) for part in score.parts]
+    shaped = [_ornament_shaped(part, score) for part in score.parts]
     for start, end in zip(points, points[1:]):
         if end - start <= EPSILON:
             continue
@@ -388,7 +413,17 @@ def metric_weight(offset: float, per_bar: float, beat_quarters: float) -> float:
     """
     if abs(offset) <= EPSILON:
         return 1.0
-    if per_bar >= 3.0 * beat_quarters and abs(offset - per_bar / 2.0) <= EPSILON:
+    # La mitad del compás es fuerte sólo si cae en un tiempo: el tercero del
+    # cuatro por cuatro, el segundo pulso del seis por ocho. En un compás de
+    # tres no cae en ninguno ---la mitad de un tres por cuatro es la corchea
+    # que sigue al segundo tiempo--- y contándola como fuerte, en un coral en
+    # tres la nota de paso de esa corchea pesaba casi como un primer tiempo.
+    half = per_bar / 2.0
+    on_a_beat = (beat_quarters > 0
+                 and abs(half / beat_quarters - round(half / beat_quarters))
+                 <= EPSILON)
+    if (per_bar >= 3.0 * beat_quarters and on_a_beat
+            and abs(offset - half) <= EPSILON):
         return 0.85                     # la mitad del compás
     if beat_quarters > 0 and abs(offset / beat_quarters
                                  - round(offset / beat_quarters)) <= EPSILON:
@@ -743,6 +778,12 @@ class Segment:
     #: incluidos. El cifrado las necesita para saber si una nota del acorde
     #: llegó a sonar en algún momento.
     sounding_pcs: Tuple[int, ...] = ()
+    #: Cuando la lectura es un acorde con sexta agregada: esa lectura y la
+    #: séptima que explica las mismas notas ---Do6 y Lam7/Do son el mismo
+    #: puñado---. Cuál de las dos se nombra lo decide la tonalidad
+    #: (`_read_added_sixth`), que todavía no se conoce cuando se leen los
+    #: acordes.
+    added_sixth: Optional[Tuple[ChordReading, ChordReading]] = None
     # -- lo que agrega el análisis funcional --------------------------------
     roman: str = ""
     #: El grado solo, sin la cifra de inversión pegada. `roman` es lo que se
@@ -789,10 +830,74 @@ def _weights_over(
             # el oído toma como fundamento, y sin este empujón una nota de
             # paso en una voz interna podía cambiar el acorde entero.
             share = weight * (1.35 if pitch == bass else 1.0)
-            if voice in sonority.ornamental:
+            if voice in sonority.ornamental or voice in sonority.resolving:
                 share *= ORNAMENT_WEIGHT
             weights[pitch % 12] = weights.get(pitch % 12, 0.0) + share
     return weights
+
+
+def _heard(sonorities: Sequence[Sonority], indices: Sequence[int],
+           real: bool = False) -> set:
+    """
+    Las clases de altura que suenan en el tramo, tenidas incluidas.
+
+    Con ``real``, sin las notas con forma de adorno: para decidir si un
+    tramo cabe en un acorde se descuentan igual que al leerlo. Contándolas,
+    un re de paso sobre un bajo solo en do no cabía en el Do de al lado y el
+    tiempo quedaba sin nombre en medio de dos Do.
+    """
+    return {pitch % 12 for i in indices
+            for voice, pitch in enumerate(sonorities[i].pitches)
+            if pitch is not None
+            and not (real and (voice in sonorities[i].ornamental
+                               or voice in sonorities[i].resolving))}
+
+
+def _too_thin(sonorities: Sequence[Sonority], indices: Sequence[int]) -> bool:
+    """
+    Un tramo con demasiado poco material para nombrar un acorde propio.
+
+    El piso de tres voces de la pieza no alcanza: en una pieza a cuatro
+    voces, un tiempo en el que canta la soprano sola tiene una nota, y esa
+    nota salía cifrada como acorde --- un fa suelto pasaba a ser Fa mayor
+    con grado y función. Se mide sobre lo que **suena** en el tramo,
+    tenidas incluidas, y de dos maneras a la vez: cuántas notas suenan
+    juntas como máximo y cuántas clases de altura se oyen en todo el tramo.
+
+    Con tres notas juntas siempre alcanza, aunque se doblen en octavas: es
+    el coral que dobla la fundamental y omite la quinta. Con dos alcanza si
+    entre las dos recorren tres clases de altura --- un bajo de Alberti
+    debajo de una melodía dibuja el acorde aunque nunca suenen tres a la
+    vez ---. Una línea sola no alcanza nunca: una melodía no es un acorde.
+    """
+    widest = max((len(sonorities[i].sounding) for i in indices), default=0)
+    if widest >= MIN_VOICES_FOR_CHORD:
+        return False
+    if widest <= 1:
+        return True
+    return len(_heard(sonorities, indices)) < MIN_VOICES_FOR_CHORD
+
+
+def _thin_run(sonorities: Sequence[Sonority], indices: Sequence[int],
+              best: Optional[ChordReading]) -> Optional[ChordReading]:
+    """
+    La lectura de una racha de tramos flacos seguidos, o None.
+
+    Se nombra sólo si hubo al menos dos voces sonando juntas --- una línea
+    sola no es un acorde aunque arpegie --- y si **todas** las notas que se
+    oyen son del acorde leído. Lo segundo es lo que separa a dos voces que
+    dibujan una tríada de un dúo que camina por grados: el dúo junta cinco
+    clases de altura que ningún acorde explica.
+    """
+    if best is None:
+        return None
+    widest = max((len(sonorities[i].sounding) for i in indices), default=0)
+    if widest < 2:
+        return None
+    heard = _heard(sonorities, indices, real=True)
+    if len(heard) < MIN_VOICES_FOR_CHORD:
+        return None
+    return best if heard <= set(best.pitch_classes) else None
 
 
 def _window_indices(sonorities: Sequence[Sonority],
@@ -810,6 +915,124 @@ SPLIT_THRESHOLD = 0.72
 #: Cuánto tiene que mejorar la lectura al partir un tiempo para que valga la
 #: pena partirlo. Sin margen, cualquier adorno consigue su propio acorde.
 SPLIT_GAIN = 0.12
+
+#: Las tríadas con las que se arma un tiempo partido. La aumentada no: en
+#: medio tiempo casi siempre es una apoyatura sobre una tríada mayor.
+_TRIADS = ("", "m", "dim")
+
+
+def _two_triads(whole: ChordReading,
+                halves: Sequence[Optional[ChordReading]]) -> bool:
+    """
+    ¿El acorde de séptima de este tiempo es la suma de dos tríadas seguidas?
+
+    Es el otro caso en que un tiempo tiene dos acordes, y el umbral de
+    `SPLIT_THRESHOLD` no lo ve porque el tiempo entero lee **bien**: sol-si
+    bemol-re en la primera corchea y mi bemol-sol-si bemol en la segunda
+    suman un Mi bemol con séptima mayor que explica todo, y la lectura
+    "Mibmaj7/Sol" salía en lugar de vi - IV6, que es lo que está escrito. En
+    los corales de Bach el ritmo armónico baja a la corchea todo el tiempo.
+
+    Se pide mucho para partir, porque partir de más es justo lo que hay que
+    evitar ---una nota de paso no abre un acorde---: las dos mitades leen
+    cada una una tríada con su fundamental y su tercera, con fundamentales
+    distintas, cada una explica su mitad al menos tan bien como la séptima
+    explica el tiempo, y entre las dos son exactamente las notas de esa
+    séptima. Una nota de paso no llega a esto: ya entra con su peso de
+    adorno, y la mitad donde suena no lee una tríada completa por ella.
+    """
+    if len(whole.pitch_classes) < 4 or len(halves) != 2:
+        return False
+    for half in halves:
+        if half is None or half.quality not in _TRIADS:
+            return False
+        if {_ROOT, _THIRD} & set(half.missing) or half.extra:
+            return False
+        if half.score < whole.score:
+            return False
+    first, second = halves
+    if first.root_pc == second.root_pc:
+        return False
+    return (set(first.pitch_classes) | set(second.pitch_classes)
+            == set(whole.pitch_classes))
+
+
+#: Las suspendidas, con la nota que suspende (semitonos sobre la
+#: fundamental) y adónde puede resolver, también en semitonos sobre la
+#: fundamental: la cuarta baja a la tercera, mayor o menor; la segunda sube
+#: a la tercera o baja a la fundamental, que es el retardo de novena.
+_SUSPENDED_TONE = {"sus4": (5, (3, 4)), "7sus4": (5, (3, 4)),
+                   "sus2": (2, (3, 4, 0))}
+
+
+def _suspension_inside(sonorities: Sequence[Sonority], indices: Sequence[int],
+                       reading: ChordReading, start: float, end: float) -> bool:
+    """
+    Marcar la cuarta suspendida que resuelve dentro del mismo tiempo.
+
+    Una cuarta que suena en la primera corchea del tiempo y baja a la
+    tercera en la segunda es un retardo, no un acorde suspendido: el acorde
+    de ese tiempo es la tríada, como dice cualquier análisis de un coral. Por
+    pesar el tiempo fuerte más que el contratiempo, la cuarta ganaba y el
+    coral salía lleno de "Re sus4" donde Bach escribió Re mayor con un
+    retardo. La que dura el tiempo entero y resuelve en el siguiente sí sigue
+    siendo suspendida ---ésa se nombra y se dice que resuelve---: lo que
+    decide es si la resolución llega **antes de que termine el tiempo**.
+
+    Marca las verticales donde suena la nota suspendida (`resolving`) y
+    devuelve si marcó alguna. Sólo si algo ataca en el tiempo: una
+    suspensión es una nota que se queda mientras las otras cambian, y si la
+    vertical viene entera del tiempo anterior no hay nada contra qué
+    suspender ---y marcarla descontaría también el tiempo de antes, que la
+    comparte---.
+    """
+    spec = _SUSPENDED_TONE.get(reading.quality)
+    if (spec is None or not indices
+            or sonorities[indices[0]].onset < start - EPSILON):
+        return False
+    step, targets = spec
+    suspended = (reading.root_pc + step) % 12
+    thirds = {(reading.root_pc + target) % 12 for target in targets}
+    first = sonorities[indices[0]]
+    marked = False
+    for voice, pitch in enumerate(first.pitches):
+        if pitch is None or pitch % 12 != suspended:
+            continue
+        held: List[int] = []
+        for position in indices:
+            sonority = sonorities[position]
+            now = (sonority.pitches[voice]
+                   if voice < len(sonority.pitches) else None)
+            if now == pitch:
+                held.append(position)
+                continue
+            if (now is not None and held and 1 <= abs(now - pitch) <= 2
+                    and now % 12 in thirds
+                    and sonority.onset < end - EPSILON):
+                for spot in held:
+                    if voice not in sonorities[spot].resolving:
+                        sonorities[spot].resolving = tuple(
+                            sorted(set(sonorities[spot].resolving) | {voice}))
+                        marked = True
+            break
+    return marked
+
+
+def _changes_harmony(before: Sonority, after: Sonority) -> bool:
+    """
+    ¿El paso de una vertical a la otra cambia de acorde o resuelve un adorno?
+
+    Una sola voz que se mueve por grado conjunto mientras las demás se
+    quedan es una resolución: la cuarta suspendida que baja a la tercera, la
+    apoyatura que sube a la nota real. La mitad del tiempo donde está la
+    disonancia lee una tríada que nadie escribió ---si sobre re-fa sostenido
+    queda el si de antes, "Si menor"--- y partir ahí convierte un retardo en
+    un acorde. Cambiar de acorde es otra cosa: se mueven dos voces o más, o
+    alguna llega por salto.
+    """
+    moved = [(was, now) for was, now in zip(before.pitches, after.pitches)
+             if was is not None and now is not None and was != now]
+    return len(moved) >= 2 or any(abs(now - was) > 2 for was, now in moved)
 
 
 def harmonic_segments(score: Score,
@@ -862,7 +1085,7 @@ def harmonic_segments(score: Score,
     if sum(1 for part in score.parts if part.voiced()) < MIN_VOICES_FOR_CHORD:
         return []
 
-    raw: List[Segment] = []
+    raw: List[Tuple[Segment, bool]] = []
     for start, end in zip(grid, grid[1:]):
         indices = _window_indices(sonorities, start, end)
         if not indices:
@@ -871,7 +1094,17 @@ def harmonic_segments(score: Score,
         weights = _weights_over(score, sonorities, indices)
         bass_pc = _bass_of(sonorities, indices)
         whole = read_chord(weights, bass_pc, prefer_flats, signature)
-        if whole and whole[0].score < SPLIT_THRESHOLD and end - start > beat / 2:
+        # Dos vueltas: una doble suspensión ---la cuarta y la novena sobre
+        # el mismo bajo--- se lee primero sus4 y, descontada la cuarta, sus2.
+        for _turn in range(2):
+            if not (whole and _suspension_inside(sonorities, indices,
+                                                 whole[0], start, end)):
+                break
+            whole = read_chord(_weights_over(score, sonorities, indices),
+                               bass_pc, prefer_flats, signature)
+        if (whole and end - start > beat / 2
+                and (whole[0].score < SPLIT_THRESHOLD
+                     or len(whole[0].pitch_classes) >= 4)):
             middle = (start + end) / 2.0
             left = _window_indices(sonorities, start, middle)
             right = _window_indices(sonorities, middle, end)
@@ -881,33 +1114,140 @@ def harmonic_segments(score: Score,
                     reading = read_chord(_weights_over(score, sonorities, part),
                                          _bass_of(sonorities, part),
                                          prefer_flats, signature)
-                    halves.append((a, b, part, reading[0].score if reading else 0.0))
-                if min(h[3] for h in halves) >= whole[0].score + SPLIT_GAIN:
-                    pieces = [(a, b, part) for a, b, part, _s in halves]
+                    halves.append((a, b, part, reading[0] if reading else None))
+                worst = min(h[3].score if h[3] is not None else 0.0
+                            for h in halves)
+                if ((whole[0].score < SPLIT_THRESHOLD
+                     and worst >= whole[0].score + SPLIT_GAIN)
+                        or (_two_triads(whole[0], [h[3] for h in halves])
+                            and _changes_harmony(sonorities[left[-1]],
+                                                 sonorities[right[0]]))):
+                    pieces = [(a, b, part) for a, b, part, _r in halves]
 
         for a, b, part in pieces:
             bar_index, offset = bar_and_offset(score, a)
-            raw.append(Segment(start=a, end=b, bar_index=bar_index,
-                               offset=offset, sonorities=list(part)))
+            raw.append((Segment(start=a, end=b, bar_index=bar_index,
+                                offset=offset, sonorities=list(part)),
+                        _too_thin(sonorities, part)))
 
     # Unir los tramos seguidos que lean lo mismo, y recién ahí quedarse con
     # la lectura definitiva: leer sobre el segmento ya unido usa toda su
     # duración, que es más evidencia que la de un tiempo suelto.
+    #
+    # Un tramo flaco (`_too_thin`) no abre un acorde. Se suma al de antes si
+    # cabe entero en él --- el bajo que repite la fundamental después del
+    # acorde ---, o al que viene si cabe en ése --- las voces que entran de
+    # a una sobre un bajo que ya venía sonando: esa nota tenida es parte del
+    # acorde que las otras completan, y dejándola afuera el acorde empezaba
+    # recién cuando entraba la última voz. Si no cabe en ninguno, la racha
+    # de tramos flacos seguidos se lee entera (`_thin_run`): dos voces en
+    # blancas que dibujan fa-la y después fa-do son un Fa aunque ningún
+    # tiempo suelto llegue a tres notas.
     merged: List[Segment] = []
-    for segment in raw:
-        weights = _weights_over(score, sonorities, segment.sonorities)
-        readings = read_chord(weights,
-                              _bass_of(sonorities, segment.sonorities),
-                              prefer_flats, signature)
-        best, _alt, _doubtful = best_and_alternative(readings)
+    waiting: List[Segment] = []
+
+    def read(segment: Segment) -> Optional[ChordReading]:
+        readings = read_chord(
+            _weights_over(score, sonorities, segment.sonorities),
+            _bass_of(sonorities, segment.sonorities), prefer_flats, signature)
+        return best_and_alternative(readings)[0]
+
+    def place(segment: Segment, best: Optional[ChordReading]) -> None:
         if (merged and best is not None and merged[-1].reading is not None
                 and _same_harmony(merged[-1].reading, best)
                 and abs(merged[-1].end - segment.start) <= EPSILON):
             merged[-1].end = segment.end
             merged[-1].sonorities.extend(segment.sonorities)
-            continue
+            return
         segment.reading = best
         merged.append(segment)
+
+    def joined(run: List[Segment], last: Optional[Segment] = None) -> Segment:
+        pieces = run + ([last] if last is not None else [])
+        return Segment(start=pieces[0].start, end=pieces[-1].end,
+                       bar_index=pieces[0].bar_index, offset=pieces[0].offset,
+                       sonorities=[position for piece in pieces
+                                   for position in piece.sonorities])
+
+    def boundary(piece: Segment) -> int:
+        """Qué tan fuerte es la barra donde empieza un tramo: 2 el compás,
+        1 la mitad del compás, 0 un tiempo cualquiera."""
+        per_bar = score.metrics_at(piece.bar_index)[0]
+        if abs(piece.offset) <= EPSILON:
+            return 2
+        return 1 if abs(piece.offset - per_bar / 2.0) <= EPSILON else 0
+
+    def settle_run(run: List[Segment]) -> None:
+        """
+        Leer una racha de tramos flacos, entera o por partes.
+
+        Entera si cabe en un acorde. Si no, se parte por donde la música se
+        parte ---primero en las barras de compás, después en la mitad del
+        compás--- y se prueba cada pedazo. Es lo que pasa con un bajo de
+        Alberti debajo de una melodía en blancas: cada tiempo tiene dos
+        notas, ningún tiempo suelto llega a un acorde, y la racha entera
+        junta el Do de un compás con el Fa del siguiente y no cabía en
+        ninguno, así que compases enteros quedaban sin nombre.
+        """
+        if not run:
+            return
+        whole = joined(run)
+        best = _thin_run(sonorities, whole.sonorities, read(whole))
+        if best is not None:
+            place(whole, best)
+            return
+        strengths = [boundary(piece) for piece in run[1:]]
+        strongest = max(strengths, default=0)
+        if strongest == 0:
+            return
+        start = 0
+        for index, strength in enumerate(strengths, start=1):
+            if strength == strongest:
+                settle_run(run[start:index])
+                start = index
+        settle_run(run[start:])
+
+    def settle() -> None:
+        if not waiting:
+            return
+        run = list(waiting)
+        waiting.clear()
+        settle_run(run)
+
+    for segment, thin in raw:
+        heard = _heard(sonorities, segment.sonorities, real=True)
+        if thin:
+            if waiting and abs(waiting[-1].end - segment.start) > EPSILON:
+                settle()
+            if (not waiting and merged and merged[-1].reading is not None
+                    and abs(merged[-1].end - segment.start) <= EPSILON
+                    and heard <= set(merged[-1].reading.pitch_classes)):
+                merged[-1].end = segment.end
+                merged[-1].sonorities.extend(segment.sonorities)
+            else:
+                waiting.append(segment)
+            continue
+        best = read(segment)
+        if waiting:
+            # Lo que de la racha cabe en este acorde se le suma: no sólo la
+            # racha entera, también su cola. El tiempo flaco que está justo
+            # antes es casi siempre el principio de este acorde ---el bajo
+            # que lo empieza solo--- aunque lo que vino más atrás sea otro.
+            cut = len(waiting)
+            if (best is not None
+                    and abs(waiting[-1].end - segment.start) <= EPSILON):
+                allowed = set(best.pitch_classes)
+                while cut > 0 and _heard(
+                        sonorities, joined(waiting[cut - 1:]).sonorities,
+                        real=True) <= allowed:
+                    cut -= 1
+            tail = waiting[cut:]
+            del waiting[cut:]
+            settle()
+            if tail:
+                segment = joined(tail, segment)
+        place(segment, best)
+    settle()
 
     for segment in merged:
         weights = _weights_over(score, sonorities, segment.sonorities)
@@ -918,6 +1258,8 @@ def harmonic_segments(score: Score,
         segment.reading = best
         segment.alternative = alternative
         segment.doubtful = doubtful
+        twin = _seventh_twin(best, readings)
+        segment.added_sixth = (best, twin) if twin is not None else None
         vertical = _representative(score, sonorities, segment)
         segment.pitches = list(vertical.pitches) if vertical is not None else []
         entering = (sonorities[segment.sonorities[0]]
@@ -1006,6 +1348,97 @@ def _same_harmony(before: ChordReading, after: ChordReading) -> bool:
         return True
     first, second = set(before.pitch_classes), set(after.pitch_classes)
     return first <= second or second <= first
+
+
+#: La séptima que tiene las mismas notas que cada acorde con sexta agregada,
+#: y a qué distancia está su fundamental: Do6 es Lam7 (la, una sexta mayor
+#: arriba de do) y Dom6 es Lað7.
+_SIXTH_TWINS = {"6": "m7", "m6": "m7b5"}
+
+
+def _seventh_twin(best: Optional[ChordReading],
+                  readings: Sequence[ChordReading]) -> Optional[ChordReading]:
+    """La lectura como séptima de un acorde leído con sexta agregada."""
+    if best is None or best.quality not in _SIXTH_TWINS:
+        return None
+    root = (best.root_pc + 9) % 12
+    wanted = _SIXTH_TWINS[best.quality]
+    return next((r for r in readings
+                 if r.root_pc == root and r.quality == wanted
+                 and set(r.pitch_classes) == set(best.pitch_classes)), None)
+
+
+def _read_added_sixth(segment: Segment, key: KeyReading) -> None:
+    """
+    Nombrar como séptima el acorde con sexta agregada que no es la tónica.
+
+    Do-mi-sol-la con el do en el bajo es un Do6 y un Lam7 en primera
+    inversión, y las notas no deciden: la fundamental en el bajo desempata
+    a favor del Do6 por un pelo. Pero el análisis tonal dice otra cosa según
+    dónde esté el acorde. Sobre el cuarto grado es el ii6/5 ---el
+    predominante más común de la música tonal, la "sexta agregada" de
+    Rameau--- y leyéndolo Do6 los corales de Bach salían llenos de IV y de
+    iv donde cualquier análisis escribe ii6/5 y iiø6/5. Sobre la tónica, en
+    cambio, es el acorde de tónica con sexta del jazz, y ahí se queda. Y
+    sobre la dominante tampoco se toca: Sol-si-re-mi es una dominante con
+    la sexta de adorno, no un iii6/5.
+
+    Se decide desde el par guardado y no desde la lectura del momento, así
+    que se puede volver a pedir con otra tonalidad ---la escuelita relee con
+    la de la consigna--- y contesta lo mismo que si hubiera sido la primera.
+    La lectura que pierde queda como alternativa: las dos son ciertas.
+    """
+    if segment.added_sixth is None:
+        return
+    sixth, seventh = segment.added_sixth
+    on_tonic_or_dominant = ((sixth.root_pc - key.tonic_pc) % 12
+                            in (0, PERFECT_FIFTH))
+    chosen, other = (sixth, seventh) if on_tonic_or_dominant else (seventh, sixth)
+    chosen.prefer_flats = other.prefer_flats = (
+        segment.reading.prefer_flats if segment.reading is not None
+        else sixth.prefer_flats)
+    segment.reading, segment.alternative = chosen, other
+    segment.doubtful = True
+
+
+def _root_diminished_sevenths(segments: Sequence[Segment]) -> None:
+    """
+    Darle a cada séptima disminuida la fundamental que dice su resolución.
+
+    La séptima disminuida es simétrica: sus cuatro notas están a tres
+    semitonos una de otra y cualquiera de ellas puede ser la fundamental. Las
+    notas no deciden y el bajo desempataba, así que en un coral en si menor
+    el vii°6 ---la#-do#-mi con el do# en el bajo, y el sol de paso--- salía
+    "Do#dim7" y se nombraba sensible del sexto grado. Lo que decide es
+    adónde va: la fundamental es la sensible del acorde que sigue, un
+    semitono debajo de él. Si el que sigue no está a un semitono de ninguna
+    de las cuatro, se queda como estaba.
+    """
+    for index, segment in enumerate(segments[:-1]):
+        reading = segment.reading
+        following = segments[index + 1].reading
+        if reading is None or following is None or reading.quality != "dim7":
+            continue
+        root = (following.root_pc - 1) % 12
+        if root == reading.root_pc or root not in reading.pitch_classes:
+            continue
+        segment.reading = _rerooted(reading, root)
+
+
+def _rerooted(reading: ChordReading, root: int) -> ChordReading:
+    """La misma lectura simétrica, contada desde otra de sus notas."""
+    entry = next(c for c in _CANDIDATES
+                 if c[0] == reading.quality and c[1] == root)
+    _quality, _root, pcs, stack, tones, _preference = entry
+    absent = {pc for pc, role, _size in reading.tones if role in reading.missing}
+    return ChordReading(
+        root_pc=root, quality=reading.quality, pitch_classes=pcs,
+        bass_pc=reading.bass_pc,
+        inversion=(stack.index(reading.bass_pc)
+                   if reading.bass_pc in stack else -1),
+        score=reading.score,
+        missing=tuple(role for pc, role, _size in tones if pc in absent),
+        extra=reading.extra, prefer_flats=reading.prefer_flats, tones=tones)
 
 
 def _bass_of(sonorities: Sequence[Sonority],
@@ -1135,6 +1568,76 @@ def implied_fifths(sonorities: Sequence[Sonority], given: int = 0) -> int:
     return best
 
 
+#: Lo que vale, junto, la evidencia del principio y del final de una pieza
+#: en `detect_key`: el bajo final (2,6), el bajo inicial (0,9), el primer
+#: acorde (1,4), empezar y terminar igual (0,8) y el acorde de reposo (1,8).
+#: Una pieza que abre y cierra sobre la dominante se la acredita a su tónica
+#: (`_framed_by_dominant`).
+FRAME_EVIDENCE = 7.5
+
+#: Cuánto mejor tiene que caer el material en la tonalidad menor que en la
+#: del acorde que enmarca la pieza, como fracción de lo que suena.
+FRAME_MARGIN = 0.08
+
+#: Cuántas veces, por lo menos, tiene que resolver la dominante en la tónica
+#: menor dentro de la pieza.
+FRAME_ARRIVALS = 2
+
+
+def _framed_by_dominant(segments: Sequence[Segment], weights: Dict[int, float],
+                        total: float) -> Optional[int]:
+    """
+    La tónica menor de una pieza que abre y cierra sobre su dominante.
+
+    Es el final frigio de los corales: la melodía está en un modo que
+    termina sobre mi, Bach la armoniza en la menor y la pieza ---que además
+    suele arrancar con la anacrusa sobre ese mismo acorde--- empieza y
+    termina en Mi mayor. Todo lo que `detect_key` le cree al principio y al
+    final se iba para Mi, y el coral entero se leía en Mi mixolidio con la
+    mitad de los acordes cambiados de función.
+
+    Se pide todo a la vez para no inventarlo en una pieza que de verdad está
+    en Mi: que el primer y el último acorde sean el mismo acorde mayor, que
+    el material caiga claramente mejor en la menor de una quinta abajo que
+    en cualquier modo sobre el propio acorde, y que por dentro la dominante
+    resuelva en esa tónica menor más de una vez.
+    """
+    if len(segments) < 3:
+        return None
+    first, last = segments[0].reading, segments[-1].reading
+    if (first is None or last is None or first.root_pc != last.root_pc
+            or first.quality not in ("", "7") or last.quality != ""):
+        return None
+    tonic = (last.root_pc + 5) % 12
+
+    def fit(root: int, modes: Sequence[str]) -> float:
+        return max(sum(w for pc, w in weights.items()
+                       if pc in harmony.MODES[mode].pitch_classes(root))
+                   for mode in modes) / total
+
+    # Contra los modos en que ese acorde mayor puede ser la tónica sin
+    # licencia. Los menores sobre el mismo acorde comparten las notas con la
+    # menor de una quinta abajo ---mi frigio y la menor son la misma escala---
+    # y no se pueden separar por el material: eso es justamente lo que
+    # decide la cadencia de adentro.
+    own = fit(last.root_pc, ("major", "mixolydian", "lydian"))
+    if fit(tonic, ("minor", "harmonic")) < own + FRAME_MARGIN:
+        return None
+    arrivals = 0
+    for before, after in zip(segments[1:-2], segments[2:-1]):
+        chord, goal = before.reading, after.reading
+        if chord is None or goal is None:
+            continue
+        if goal.root_pc != tonic or goal.quality not in ("m", "m7"):
+            continue
+        if ((chord.quality in ("", "7")
+             and (chord.root_pc - tonic) % 12 == PERFECT_FIFTH)
+                or (chord.quality in ("dim", "dim7")
+                    and (tonic - chord.root_pc) % 12 == 1)):
+            arrivals += 1
+    return tonic if arrivals >= FRAME_ARRIVALS else None
+
+
 def detect_key(score: Score,
                sonorities: Sequence[Sonority],
                segments: Sequence[Segment]) -> KeyReading:
@@ -1176,6 +1679,7 @@ def detect_key(score: Score,
     last = segments[-1].reading if segments and segments[-1].reading else None
     penultimate = (segments[-2].reading
                    if len(segments) >= 2 and segments[-2].reading else None)
+    framed = _framed_by_dominant(segments, weights, total)
 
     scored: List[KeyReading] = []
     for tonic_pc in range(12):
@@ -1239,7 +1743,24 @@ def detect_key(score: Score,
                 elif not major_tonic and mode_key in ("major", "lydian",
                                                       "mixolydian"):
                     value -= 1.2
-                if not set(last.pitch_classes) <= set(scale):
+                foreign = set(last.pitch_classes) - set(scale)
+                if (mode_key in ("minor", "harmonic") and major_tonic
+                        and tonic_pc in (first_root,
+                                         None if first_bass is None
+                                         else first_bass % 12)
+                        and framed != (tonic_pc + 5) % 12):
+                    # La tercera de Picardía ya pagó lo suyo arriba y no
+                    # vuelve a cobrarse acá: es ajena a la escala menor por
+                    # definición. Sin esta salvedad un coral en fa menor que
+                    # cierra en Fa mayor pagaba dos veces su final y se leía
+                    # entero en fa mixolidio. Vale sólo si la pieza arrancó
+                    # en esa tónica: es la tónica que se ilumina al final de
+                    # una pieza que ya la había instalado, no un acorde
+                    # mayor cualquiera donde la música se detiene. Y no si
+                    # ese acorde enmarca la pieza como dominante de otra
+                    # tónica (`_framed_by_dominant`): ahí no es Picardía.
+                    foreign.discard((tonic_pc + 4) % 12)
+                if foreign:
                     # El acorde de reposo tiene una nota que no es de la
                     # escala. Como la tónica de una tonalidad es diatónica
                     # por definición, lo más probable es que la pieza no
@@ -1267,6 +1788,13 @@ def detect_key(score: Score,
                     and (penultimate.root_pc - tonic_pc) % 12 == PERFECT_FIFTH):
                 value += 1.6
                 reasons.append("cierra con una cadencia sobre la dominante")
+
+            if framed == tonic_pc and mode_key in ("minor", "harmonic"):
+                # Todo lo que el principio y el final le daban al acorde que
+                # enmarca la pieza es, en realidad, de esta tónica.
+                value += FRAME_EVIDENCE
+                reasons.append("abre y cierra sobre su dominante y cadencia "
+                               "en ella por dentro")
 
             leading = (tonic_pc + 11) % 12
             leading_weight = weights.get(leading, 0.0) / total
@@ -1348,6 +1876,12 @@ def _degree_numeral(root_pc: int, key: KeyReading) -> str:
     grado más cercano y se escribe la diferencia.
     """
     scale = key.scale
+    if (key.mode_key in ("minor", "harmonic")
+            and root_pc == (key.tonic_pc + 11) % 12):
+        # La sensible de una pieza en menor es su séptimo grado, subido, y
+        # se escribe vii°. Buscándola como "un semitono debajo de un grado"
+        # aparecía primero la tónica, y el vii° de La menor salía "bI°".
+        return "VII"
     for offset, sign in ((0, ""), (-1, "b"), (1, "#")):
         for index, pc in enumerate(scale):
             if (pc + offset) % 12 == root_pc:
@@ -1413,6 +1947,7 @@ def label_segment(segment: Segment, key: KeyReading,
     ---diatónico, dominante aplicada, intercambio modal, cromático--- y una
     explicación en castellano de por qué.
     """
+    _read_added_sixth(segment, key)
     reading = segment.reading
     if reading is None:
         segment.roman, segment.function, segment.category = "?", "", "desconocido"
@@ -1454,12 +1989,33 @@ def label_segment(segment: Segment, key: KeyReading,
         return
 
     # -- diatónico ----------------------------------------------------------
-    if reading.root_pc in scale and pcs <= set(tolerant):
-        degree = scale.index(reading.root_pc) + 1
+    # La fundamental se busca en la escala tolerante y no en la natural: en
+    # menor, el vii° y el vii°7 se arman sobre la sensible, que es tan del
+    # modo como el V que la lleva. Con la escala natural salían como
+    # "sensible aplicada de i", que es nombrar dos veces lo mismo.
+    if reading.root_pc in tolerant and pcs <= set(tolerant):
+        degree = (scale.index(reading.root_pc) + 1
+                  if reading.root_pc in scale else 7)
         segment.category = "diatónico"
         segment.function = harmony.DEGREE_FUNCTION.get(degree, harmony.SUBDOMINANT)
         segment.detail = trf("{degree}º grado de {label}",
                              degree=degree, label=key.label)
+        return
+
+    # -- tercera de Picardía ------------------------------------------------
+    # El acorde final de una pieza en menor, con la tercera mayor. Es la
+    # tónica, no la dominante del cuarto grado: sin esta pregunta caía en la
+    # puerta de abajo y el último acorde de un coral en menor ---que es como
+    # Bach termina casi todos--- salía cifrado "V/iv" en el lugar donde la
+    # pieza reposa. Sólo el último: en el medio de la pieza, la tónica mayor
+    # sí suele ir hacia el cuarto grado.
+    if (following is None and key.mode_key in ("minor", "harmonic")
+            and reading.root_pc == key.tonic_pc and reading.quality == ""):
+        segment.category = "intercambio modal"
+        segment.source_mode = "mayor (jónico)"
+        segment.function = harmony.TONIC
+        segment.detail = ("tercera de Picardía: la pieza en menor termina en "
+                          "la tónica mayor")
         return
 
     # -- dominante aplicada (interdominante) --------------------------------
@@ -1477,6 +2033,7 @@ def label_segment(segment: Segment, key: KeyReading,
             arrives = (following is not None and following.reading is not None
                        and following.reading.root_pc == target_pc)
             segment.category = "dominante aplicada"
+            _spell_towards(segment, target_pc, key, 4)
             # "V4/2 de V" es como se lee: la cifra va con el numeral y el
             # destino después. Separarla con un espacio dejaba "V7/V 4/2",
             # que se lee como si el 4/2 fuera del acorde de destino.
@@ -1505,6 +2062,7 @@ def label_segment(segment: Segment, key: KeyReading,
                        and following.reading.root_pc == target_pc)
             if target_pc != key.tonic_pc or reading.root_pc not in scale:
                 segment.category = "sensible aplicada"
+                _spell_towards(segment, target_pc, key, -1)
                 segment.roman = ("vii°7/" if reading.quality == "dim7"
                                  else "viiø7/" if reading.quality == "m7b5"
                                  else "vii°/") + numeral
@@ -1555,6 +2113,30 @@ def label_segment(segment: Segment, key: KeyReading,
     segment.function = harmony.SUBDOMINANT
     segment.detail = ("no pertenece a la escala ni se explica como "
                       "dominante aplicada o préstamo: es un acorde cromático")
+
+
+def _spell_towards(segment: Segment, target_pc: int, key: KeyReading,
+                   letters: int) -> None:
+    """
+    Escribir un acorde aplicado desde la letra de la nota a la que apunta.
+
+    La sensible aplicada está una letra debajo de su destino y la dominante
+    aplicada cuatro arriba. Con la preferencia de la pieza sola, una
+    armonización en Do con un la bemol se leía con bemoles de punta a punta
+    y el vii°/V salía Solb disminuido con Rebb en el bajo: el mismo sonido
+    que Fa sostenido disminuido, escrito como otro acorde.
+    """
+    order = "CDEFGAB"
+    target = harmony.root_name(target_pc, harmony.key_fifths(
+        key.tonic_pc, harmony.MODES[key.mode_key]))
+    wanted = order[(order.index(target[0]) + letters) % 7]
+    for reading in (segment.reading, segment.alternative):
+        if reading is None:
+            continue
+        if SHARP_NAMES[reading.root_pc][0] == wanted:
+            reading.prefer_flats = False
+        elif FLAT_NAMES[reading.root_pc][0] == wanted:
+            reading.prefer_flats = True
 
 
 def _spell_like_its_degree(segment: Segment) -> None:
@@ -1713,11 +2295,18 @@ def relate(segments: Sequence[Segment], key: KeyReading) -> List[Cadence]:
                 and index + 2 < len(segments)):
             # La frase no se detuvo: la dominante sigue de largo hasta la
             # tónica, y lo que hay ahí es la preparación de una cadencia
-            # auténtica, no una cadencia propia.
+            # auténtica, no una cadencia propia. Siempre que esa tónica
+            # también se detenga, que es lo que hace de ella la cadencia:
+            # si la tónica pasa de largo, es la frase siguiente que arranca,
+            # y el reposo estaba en la dominante. Sin esta salvedad no había
+            # semicadencias en un coral, donde casi toda frase que termina
+            # en la dominante empieza la siguiente desde la tónica.
             after = segments[index + 2]
             if (after.reading is not None
                     and after.reading.root_pc == key.tonic_pc
-                    and after.function == harmony.TONIC):
+                    and after.function == harmony.TONIC
+                    and (after.duration >= median * 1.5
+                         or index + 3 >= len(segments))):
                 cadence = None
         if cadence and resting:
             cadences.append(Cadence(kind=cadence[0], index=index + 1,
@@ -1742,7 +2331,8 @@ def relate(segments: Sequence[Segment], key: KeyReading) -> List[Cadence]:
 
 #: Cuántos semitonos tiene la tercera de cada calidad, como las nombra
 #: `harmony.SetPiece`.
-_SET_PIECE_THIRDS = {"major": 4, "minor": 3}
+_SET_PIECE_THIRDS = {"major": 4, "minor": 3, "dim": 3, "halfdim": 3,
+                     "dominant": 4}
 
 
 def _third_of(reading: ChordReading) -> Optional[int]:
@@ -1860,6 +2450,23 @@ def _cadence_kind(before: Segment, after: Segment,
                     "el bajo baja un semitono desde el cuarto grado hasta la "
                     "dominante")
         return ("semicadencia", "la frase se detiene sobre la dominante")
+    # -- cadencia en otra tonalidad -----------------------------------------
+    # Una dominante que resuelve en un acorde que no es la tónica ni la
+    # dominante de la pieza: la frase cierra en otra tonalidad. Es lo que
+    # hacen casi todas las frases del medio de un coral ---la relativa, la
+    # subdominante, el tercer grado---, y mirando sólo la tónica de la pieza
+    # la mitad de las fermatas de un coral quedaban sin cadencia.
+    target = after.reading
+    if (target.root_pc != tonic and target.quality in ("", "m")
+            and before.reading.quality in ("", "7")
+            and (before.reading.root_pc - target.root_pc) % 12 == PERFECT_FIFTH):
+        perfect = before.reading.inversion == 0 and target.inversion == 0
+        name = (f"{spanish_note(target.root_pc, key.prefer_flats)} "
+                f"{tr(MODE_NAMES['major' if target.quality == '' else 'minor'])}")
+        return (("cadencia auténtica perfecta" if perfect
+                 else "cadencia auténtica imperfecta"),
+                trf("la dominante de {name} resuelve en él: la frase cierra "
+                    "en {name}, fuera de la tonalidad de la pieza", name=name))
     return None
 
 
@@ -2169,10 +2776,18 @@ def _previous_notes(
     return result
 
 
+def _beat_of(score: Score, moment: float) -> Tuple[int, int]:
+    """En qué compás y en qué tiempo de ese compás cae un instante."""
+    bar, offset = bar_and_offset(score, moment)
+    beat = score.metrics_at(max(1, bar))[1] or 1.0
+    return bar, int(offset // beat + EPSILON)
+
+
 def counterpoint(score: Score,
                  sonorities: Sequence[Sonority],
-                 segments: Sequence[Segment] = ()) -> Tuple[List[Finding],
-                                                            List[MotionReport]]:
+                 segments: Sequence[Segment] = (),
+                 genre: Optional[str] = None) -> Tuple[List[Finding],
+                                                       List[MotionReport]]:
     """
     Medir el contrapunto entre verticales consecutivas.
 
@@ -2192,6 +2807,12 @@ def counterpoint(score: Score,
     names = [part.name for part in score.parts]
     findings: List[Finding] = []
     reports: List[MotionReport] = []
+    # El estilo decide si unas paralelas son una falta. Sin estilo se juzga
+    # como el barroco, que es como se enseña la escritura a cuatro voces;
+    # el jazz y el gregoriano las usan a propósito, y marcarlas en rojo era
+    # corregirle a la música algo que hace bien.
+    profile = GENRE_PROFILES.get(genre or "classical",
+                                 GENRE_PROFILES["classical"])
 
     def chord_tone(sonority: Sonority, voice: int) -> bool:
         pitch = sonority.pitches[voice] if voice < len(sonority.pitches) else None
@@ -2344,6 +2965,21 @@ def counterpoint(score: Score,
                         was_b = now_b
                     if was_a != now_a and was_b != now_b:
                         continue
+                # Dos voces que se mueven en tiempos distintos no se mueven
+                # juntas: la que se movió antes ya está quieta cuando se
+                # mueve la otra, y cada paso es un movimiento oblicuo. Mi-si,
+                # mi-la, re-la no son quintas paralelas: en el medio suena una
+                # cuarta. Dentro de un mismo tiempo sí cuentan juntas, que es
+                # como se escribe un arpegio: el bajo y el alto del preludio de
+                # Bach se mueven con una semicorchea de diferencia y lo que se
+                # oye es el acorde entero cambiando.
+                if (was_a != now_a and was_b != now_b
+                        and since_a != since_b
+                        and _beat_of(score, since_a) != _beat_of(score, since_b)):
+                    if since_a < since_b:
+                        was_a = now_a
+                    else:
+                        was_b = now_b
                 step = (was_a, now_a, was_b, now_b)
                 if registered.get((a, b)) == step:
                     continue
@@ -2364,18 +3000,27 @@ def counterpoint(score: Score,
                         and in_chord(was_b, from_b)
                         and in_chord(now_a, following.onset)
                         and in_chord(now_b, following.onset))
+                allowed = not (profile.forbid_parallel_fifths if fifth
+                               else profile.forbid_parallel_octaves)
+                # Cada pedazo se traduce solo y recién después se pegan: la
+                # frase armada no está en ningún catálogo.
+                detail = (trf("{voice_name} y {voice_name2} se mueven en "
+                              "la misma dirección conservando ",
+                              voice_name=_voice_name(names, a),
+                              voice_name2=_voice_name(names, b))
+                          + tr("la quinta justa" if fifth else "la octava"))
+                if not real:
+                    detail += tr(", pero entre notas de adorno y no entre "
+                                 "acordes")
+                elif allowed:
+                    detail += tr(", algo que este estilo permite")
                 findings.append(Finding(
                     kind="quintas_paralelas" if fifth else "octavas_paralelas",
                     label=("Quintas paralelas" if fifth
                            else "Octavas paralelas"),
-                    detail=(trf("{voice_name} y {voice_name2} se mueven en "
-                                "la misma dirección conservando ",
-                                voice_name=_voice_name(names, a),
-                                voice_name2=_voice_name(names, b))
-                            + ("la quinta justa" if fifth else "la octava")
-                            + ("" if real else ", pero entre notas de "
-                               "adorno y no entre acordes")),
-                    severity="grave" if real else "nota", index=index + 1,
+                    detail=detail,
+                    severity="grave" if real and not allowed else "nota",
+                    index=index + 1,
                     bar_index=following.bar_index, offset=following.offset,
                     voices=(a, b)))
         reports.append(report)
@@ -3032,9 +3677,12 @@ class Analysis:
         return events
 
 
-def analyse(score: Score) -> Analysis:
+def analyse(score: Score, genre: Optional[str] = None) -> Analysis:
     """
     Analizar una partitura de punta a punta.
+
+    `genre` es el estilo contra el que se juzga el contrapunto (una clave de
+    `GENRE_PROFILES`). Sin él, el barroco.
 
     El orden importa y no es negociable: primero las verticales, después los
     acordes ---que no necesitan la tonalidad para leerse---, después la
@@ -3051,6 +3699,7 @@ def analyse(score: Score) -> Analysis:
 
     segments = harmonic_segments(ordered, sonorities)
     key = detect_key(ordered, sonorities, segments)
+    _root_diminished_sevenths(segments)
 
     for index, segment in enumerate(segments):
         following = segments[index + 1] if index + 1 < len(segments) else None
@@ -3061,7 +3710,7 @@ def analyse(score: Score) -> Analysis:
 
     cadences = relate(segments, key)
     groups = foreign_groups(segments, key)
-    findings, motions = counterpoint(ordered, sonorities, segments)
+    findings, motions = counterpoint(ordered, sonorities, segments, genre)
     decorations = ornaments(ordered, segments)
 
     if key.confidence < 0.35:

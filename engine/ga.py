@@ -44,7 +44,8 @@ from .fitness import (
     evaluate,
     parallel_interval_violation,
 )
-from .harmony import HarmonyWeights, is_applied_dominant, progression_cost
+from .harmony import (HarmonyWeights, ModulationSettings, is_applied_dominant,
+                      progression_cost)
 from .passing import (HARD_MAX_PASSING, MAX_LEAPS, STEP, PassingRules,
                       figure, figure_candidates, passing_candidates,
                       pick_figure, score_passing)

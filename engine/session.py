@@ -355,6 +355,28 @@ def voiced_slots(spec, solution) -> List[List[int]]:
     return out
 
 
+def solution_slots(outcome: "JobOutcome", position: int) -> List[ChordSlot]:
+    """
+    Los slots con los que se escribió la solución número ``position``.
+
+    No siempre son los de ``outcome.spec``. En el Armonizador cada opción
+    sale de su propia progresión (``alternate_slots``, indexado como
+    ``result.solutions``) y ``spec.slots`` es la del primer intento, que
+    después de ordenar por costo puede ser cualquiera de las tres; en el
+    Generador, la cita va con los suyos (``set_piece.slots``). Leer los
+    acordes de otra opción para exportar o para buscar marcas deletrea y
+    rotula una solución contra acordes que no son los que suenan.
+    """
+    own = (getattr(outcome, "alternate_slots", None) or {}).get(position)
+    if own:
+        return own
+    quotation = getattr(outcome, "set_piece", None)
+    if (quotation is not None and getattr(quotation, "slots", None)
+            and position == getattr(quotation, "solution_index", 0)):
+        return quotation.slots
+    return outcome.spec.slots
+
+
 def ornaments_of(spec, solution) -> List[Tuple[int, int, int, float]]:
     """
     Las notas de adorno de una solución, ubicadas en la partitura.
@@ -486,17 +508,17 @@ def export_outcome(
     os.makedirs(target, exist_ok=True)
 
     written: List[str] = []
-    quotation = getattr(outcome, "set_piece", None)
-    quoted_slots = getattr(quotation, "slots", None) if quotation else None
     for index, solution in enumerate(outcome.result.solutions, start=1):
         stem = history.unique_basename(target, f"{request.title} - option {index}")
-        spec = outcome.spec
-        if index == 1 and quoted_slots:
-            # The quotation is written from its own chords, so the score
-            # shows the inversions -- six bars of plain "Am" would lose the
-            # bass line the cadence is about. The other options keep the
-            # generated chords.
-            spec = replace(outcome.spec, slots=quoted_slots)
+        # Cada opción con sus propios acordes (`solution_slots`). La cita,
+        # para que la partitura muestre las inversiones --- seis compases de
+        # «Am» a secas perderían el bajo del que se trata la cadencia ---. Y
+        # en el Armonizador cada opción tiene su progresión: escrita con la
+        # del primer intento, las notas ajenas a ese acorde se deletreaban
+        # contra acordes ajenos y el archivo no coincidía con la grilla.
+        own = solution_slots(outcome, index - 1)
+        spec = (outcome.spec if own is outcome.spec.slots
+                else replace(outcome.spec, slots=own))
         written.extend(export.write_solution(spec, solution, stem, formats))
 
     if record_history:
@@ -512,8 +534,13 @@ def export_outcome(
             symbols = [entry.symbol for entry in entries]
             durations = [entry.duration_quarters for entry in entries]
         else:
-            symbols = [slot.symbol for slot in outcome.spec.slots]
-            durations = [slot.duration_quarters for slot in outcome.spec.slots]
+            # Los de la opción ganadora: en el Armonizador cada opción tiene
+            # su progresión, y `spec.slots` es la del primer intento, que
+            # no siempre queda primera al ordenar por costo.
+            shown = (solution_slots(outcome, 0) if outcome.result.solutions
+                     else outcome.spec.slots)
+            symbols = [slot.symbol for slot in shown]
+            durations = [slot.duration_quarters for slot in shown]
         record = history.ProductionRecord.create(
             title=request.title,
             genre=request.genre_key,
@@ -672,6 +699,8 @@ def _set_piece_slots(piece, tonic_pc, request, settings, durations, bars):
         )
         if piece.bass_line:
             requirement.required_pitch_classes = [option.chord.root_pc]
+        if piece.roots_in_bass:
+            requirement.bass_pitch_class = option.chord.root_pc
         out.append(ChordSlot(
             requirement=requirement,
             duration_quarters=durations[index] if index < len(durations) else 2.0,
@@ -709,6 +738,8 @@ def _voice_set_piece(piece, tonic_pc, request, settings, durations, bars, mode):
         # is fixed rather than left for the search to rediscover.
         if option.chord.bass_pc is not None:
             requirement.bass_pitch_class = option.chord.bass_pc
+        elif piece.roots_in_bass:
+            requirement.bass_pitch_class = option.chord.root_pc
         slots.append(ChordSlot(
             requirement=requirement,
             duration_quarters=durations[index] if index < len(durations) else 2.0,
@@ -953,6 +984,7 @@ def generate_random(
         slots=slots, voices=settings.voices,
         time_signature=request.time_signature,
         title=request.title, tempo_bpm=request.tempo_bpm,
+        key_hint=harmony.key_fifths(tonic_pc, mode),
     )
     outcome = JobOutcome(result=result, spec=spec, set_piece=set_piece_info)
     if not result.solutions:
@@ -976,50 +1008,84 @@ def apply_flourishes(
     """
     if not outcome.succeeded or outcome.spec is None:
         return
+    # Una sola vez por resultado. El Armonizador la corre al terminar la
+    # búsqueda ---con la tónica de la melodía, que sólo él conoce--- y la
+    # pantalla de resultados la volvía a correr encima. La sexta reescribe
+    # notas de la solución, así que la segunda pasada podía escribir otra
+    # sexta sobre la primera, y como su resultado reemplazaba al anterior,
+    # la primera quedaba escrita en la partitura sin ninguna marca.
+    if getattr(outcome, "flourishes", None) is not None:
+        return
 
-    slots = outcome.spec.slots
     voice_count = len(outcome.spec.voices)
-    locked = list(locked or [slot.is_locked for slot in slots])
+    # La sexta reescribe `best.slots`, que es de la búsqueda: los silencios
+    # no entran y **no está alineado con `spec.slots`**. Así que los
+    # candados y las voces fijas se cuentan sobre los lugares que suenan, y
+    # lo que vuelve se traduce a columnas de la partitura. Contados sobre
+    # `spec.slots`, un silencio corría todos los candados un lugar y la
+    # sexta reescribía un acorde con candado ---y lo rotulaba con el nombre
+    # del vecino---. Las voces fijas son la melodía del armonizador: la
+    # sexta la cambiaba en la solución y la pantalla mostraba otra nota que
+    # la que el usuario escribió y que se exportaba.
+    own = solution_slots(outcome, 0)
+    sounding = [index for index, slot in enumerate(own) if not slot.is_rest]
+    locked = list(locked or [own[index].is_locked for index in sounding])
+    frozen = [set(getattr(own[index], "pinned_voices", None) or ())
+              for index in sounding]
     result = flourish.FlourishResult()
 
-    def options_of(solution):
-        out = []
-        for index, slot in enumerate(slots):
-            choice = solution.choices[index] if index < len(solution.choices) else 0
-            if slot.options:
-                out.append(slot.options[min(choice, len(slot.options) - 1)].harmony)
-            else:
-                out.append(None)
-        return out
+    def harmony_of(solution, slots):
+        """
+        Lo que eligió una solución en cada lugar que suena, en el orden de
+        la búsqueda: las columnas de la partitura que suenan, la opción
+        armónica de cada una ---que trae la cifra romana--- y el acorde en
+        clases de altura.
 
-    def contexts_of(solution):
-        """Los acordes en clases de altura, elija lo que elija la solución.
+        Alineado con ``solution.slots``, que saltea los silencios: armado
+        sobre todos los slots de la partitura, un silencio corría cada
+        acorde un lugar y el 6/4 se comparaba con el acorde de al lado. Y
+        con los slots **de esa solución**: en el Armonizador cada opción
+        tiene su progresión, y las otras dos se rotulaban con la del primer
+        intento.
 
-        El Organizador no tiene opciones armónicas ---el usuario escribió los
-        cifrados--- así que ahí `options_of` devuelve una lista de None y todo
-        lo que se reconoce por grado queda afuera. Esto, en cambio, existe
+        El Organizador no tiene opciones armónicas ---el usuario escribió
+        los cifrados--- así que ahí la opción es None y todo lo que se
+        reconoce por grado queda afuera. El contexto, en cambio, existe
         siempre, y es lo que le alcanza al 6/4 para reconocerse en los tres
         modos.
         """
-        out = []
-        for index, slot in enumerate(slots):
-            choice = solution.choices[index] if index < len(solution.choices) else 0
-            requirement = (slot.options[min(choice, len(slot.options) - 1)].requirement
-                           if slot.options else slot.requirement)
-            out.append(ChordContext.from_chord(requirement.chord))
-        return out
+        columns = [index for index, slot in enumerate(slots)
+                   if not slot.is_rest]
+        options, contexts = [], []
+        for position, index in enumerate(columns):
+            slot = slots[index]
+            choice = (solution.choices[position]
+                      if position < len(solution.choices) else 0)
+            if slot.options:
+                picked = slot.options[min(choice, len(slot.options) - 1)]
+                options.append(picked.harmony)
+                requirement = picked.requirement
+            else:
+                options.append(None)
+                requirement = slot.requirement
+            contexts.append(ChordContext.from_chord(requirement.chord))
+        return columns, options, contexts
 
     best = outcome.result.solutions[0]
-    options = options_of(best)
 
     # The sixth: common practice only, and only when the dice say so.
     rng = random.Random()
     if genre_key in ("classical", "chorale") and rng.random() < flourish.SIXTH_CHANCE:
-        applied = flourish.apply_sixth(best.slots, locked, voice_count, rng)
+        applied = flourish.apply_sixth(best.slots, locked, voice_count, rng,
+                                       frozen=frozen)
         if applied is not None:
-            result.sixth_slot, result.forced_slot, _voice = applied
+            sixth, forced, _voice = applied
+            # En columnas de la partitura, que es como las cuenta la grilla.
+            result.sixth_slot = sounding[sixth] if sixth < len(sounding) else sixth
+            result.forced_slot = (sounding[forced] if forced < len(sounding)
+                                  else forced)
             # The chord is not the triad it was, so its label has to change.
-            slot = slots[result.sixth_slot]
+            slot = own[result.sixth_slot]
             result.sixth_symbol = flourish.sixth_symbol(
                 slot.requirement.chord.symbol)
             result.marks.append(flourish.Mark(
@@ -1034,10 +1100,19 @@ def apply_flourishes(
     # real answers the user may pick, and leaving them unmarked made the
     # highlighting look arbitrary.
     for position, solution in enumerate(outcome.result.solutions):
+        columns, options, contexts = harmony_of(
+            solution, solution_slots(outcome, position))
         found = flourish.find_marks(
-            options_of(solution), solution.slots, genre_key, tonic_pc,
-            contexts_of(solution),
+            options, solution.slots, genre_key, tonic_pc, contexts,
         )
+        # Las marcas salen en la numeración de la búsqueda y la grilla las
+        # busca por columna de la partitura, igual que la sexta de arriba:
+        # con un silencio adelante, el 6/4 se pintaba sobre el acorde de al
+        # lado.
+        found = [replace(mark, slots=tuple(
+                     columns[index] if index < len(columns) else index
+                     for index in mark.slots))
+                 for mark in found]
         if position == 0:
             # The sixth was applied to this solution, so its mark belongs
             # here too -- it was going into `marks` alone, which the display
@@ -1211,6 +1286,8 @@ def harmonise_melody(
         if spot.note is not None:
             slot.pinned_voices = {request.melody_voice: spot.note.pitch}
             _make_room_for_melody(requirement, spot.note.pitch, voice_count)
+        if index == len(chosen) - 1:
+            _close_on_the_root(requirement, slot.pinned_voices, voice_count)
         slots.append(slot)
 
     bar = melody.bar(0)
@@ -1242,6 +1319,9 @@ def harmonise_melody(
                 slot.pinned_voices = {request.melody_voice: spot.note.pitch}
                 _make_room_for_melody(requirement, spot.note.pitch,
                                       voice_count)
+            if position == len(progression) - 1:
+                _close_on_the_root(requirement, slot.pinned_voices,
+                                   voice_count)
             built.append(slot)
         # The alternatives ask for a single arrangement each, and the chords
         # are already decided, so they need a fraction of the effort the main
@@ -1294,6 +1374,12 @@ def harmonise_melody(
         slots=slots, voices=settings.voices,
         time_signature=export.TimeSignature(bar.beats, bar.beat_type),
         title=request.title, tempo_bpm=request.tempo_bpm,
+        key_hint=harmony.key_fifths(bar.tonic, bar.mode),
+        # Cada compás con su tónica: la melodía la lleva en cada `MelodyBar`,
+        # y con la del primero para toda la pieza las notas ajenas al acorde
+        # de un tramo en otra tonalidad salían con la armadura de casa.
+        bar_key_hints={index: harmony.key_fifths(each.tonic, each.mode)
+                       for index, each in enumerate(melody.bars)},
         # The score shows the line as written, not as sampled. Only this mode
         # sets it, so the other two export exactly as they always have.
         melody=export.MelodyLine(
@@ -1314,6 +1400,47 @@ def harmonise_melody(
     else:
         apply_flourishes(outcome, request.genre_key, bar.tonic)
     return outcome
+
+
+def _close_on_the_root(requirement, pinned: Dict[int, int],
+                       voice_count: int) -> None:
+    """
+    El último acorde, con la fundamental en el bajo.
+
+    Con tres voces y la melodía terminando en la tónica, las otras dos tenían
+    que poner la tercera y la quinta, así que el bajo nunca podía ser la
+    fundamental: casi toda armonización terminaba en primera o en segunda
+    inversión. A tres voces la cadencia de manual es otra: fundamental en el
+    bajo, la tercera en el medio y la quinta afuera. Eso es lo que se pide
+    acá, y la quinta se suelta sólo cuando no queda voz para ella.
+
+    No toca un acorde con séptima ---ahí la regla de posición fundamental del
+    evaluador ya decide, y a tres voces una séptima no entra completa---, ni
+    uno con el bajo ya fijado, ni el caso en que la melodía es el bajo.
+    """
+    from .theory import ROLE_FIFTH, ROLE_SEVENTH
+    chord = requirement.chord
+    if 0 in pinned or chord.bass_pc is not None:
+        return
+    if requirement.bass_pitch_class is not None:
+        return
+    if any(tone.role == ROLE_SEVENTH for tone in chord.tones):
+        return
+    root = chord.root_pc
+    if root not in requirement.allowed_pitch_classes:
+        return
+    requirement.bass_pitch_class = root
+    covered = {root} | {pitch % 12 for pitch in pinned.values()}
+    free = voice_count - 1 - len(pinned)
+    missing = [pc for pc in requirement.required_pitch_classes
+               if pc not in covered]
+    if len(missing) <= free:
+        return
+    fifths = {(root + tone.semitones) % 12 for tone in chord.tones
+              if tone.role == ROLE_FIFTH}
+    requirement.required_pitch_classes = [
+        pc for pc in requirement.required_pitch_classes
+        if pc not in fifths or pc in covered]
 
 
 def _make_room_for_melody(requirement, pitch: int, voice_count: int) -> None:
@@ -1441,8 +1568,13 @@ def _written_bar(part, start: float, end: float):
     Los huecos salen como silencios y una nota que cruza la barra se corta
     en la barra: un compás de MusicXML tiene que sumar lo que dura el
     compás, y una nota que se pasa lo desborda.
+
+    El pedazo que sigue en el compás siguiente lleva un tercer elemento,
+    ``True``: el exportador lo liga con lo que viene. Cortada sin marca, una
+    síncopa volvía reatacada en la barra ---dos notas donde había una---,
+    en el MusicXML y en el MIDI.
     """
-    events: List[Tuple[Optional[int], float]] = []
+    events: List[Tuple] = []
     cursor = start
     for note in part.notes:
         if note.pitch is None or note.end <= start + 1e-6:
@@ -1454,7 +1586,10 @@ def _written_bar(part, start: float, end: float):
         if onset > cursor + 1e-6:
             events.append((None, onset - cursor))
         if finish - onset > 1e-6:
-            events.append((note.pitch, finish - onset))
+            if note.end > end + 1e-6:
+                events.append((note.pitch, finish - onset, True))
+            else:
+                events.append((note.pitch, finish - onset))
         cursor = max(cursor, finish)
     if end - cursor > 1e-6:
         events.append((None, end - cursor))

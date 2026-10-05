@@ -138,11 +138,10 @@ def spell_in_key(midi: int, fifths: int) -> Tuple[str, int, int]:
             return spell_pitch(midi, "C", pc, None)
         _cost, step_letter, alteration = best
 
-    octave = octave_of(midi)
-    if step_letter == "B" and alteration > 0 and pc == 0:
-        octave -= 1
-    elif step_letter == "C" and alteration < 0 and pc == 11:
-        octave += 1
+    # La octava sigue a la letra, para cualquier alteración (ver
+    # `spell_pitch`): un si doble sostenido suena como do sostenido y se
+    # escribe en la octava del si.
+    octave = (midi - LETTER_SEMITONES[step_letter] - alteration) // 12 - 1
     return step_letter, alteration, octave
 
 
@@ -179,12 +178,11 @@ def spell_pitch(
     alteration = (midi % 12 - natural_pc + 6) % 12 - 6
 
     # The octave must follow the *letter*, not the sounding pitch: B#3 sounds
-    # like C4 but is written in octave 3.
-    octave = octave_of(midi)
-    if step_letter == "B" and alteration > 0 and midi % 12 == 0:
-        octave -= 1
-    elif step_letter == "C" and alteration < 0 and midi % 12 == 11:
-        octave += 1
+    # like C4 but is written in octave 3. Se calcula desde la letra sin
+    # alterar y no corrigiendo casos: la corrección sólo conocía B# y Cb, y
+    # un Cbb ---la séptima de Dbdim7--- o un B## salían escritos una octava
+    # corridos aunque el MIDI sonara bien.
+    octave = (midi - LETTER_SEMITONES[step_letter] - alteration) // 12 - 1
     return step_letter, alteration, octave
 
 
@@ -236,12 +234,17 @@ class VoiceType:
 
 #: The catalog the user picks voices from. Order matters: it is the order the
 #: parts are stacked from lowest to highest when a set is built.
+#:
+#: Los nombres van en castellano porque son la clave de la traducción, como
+#: todo texto del programa: la interfaz los muestra con `tr()` y los lee de
+#: vuelta con `untr()`. Escritos en inglés, la interfaz en castellano decía
+#: «Bass, Tenor, Soprano».
 VOICE_CATALOG: Dict[str, VoiceType] = {
-    "B": VoiceType("B", "Bass", parse_note_name("E2"), parse_note_name("C4")),
-    "Bar": VoiceType("Bar", "Baritone", parse_note_name("A2"), parse_note_name("F4")),
+    "B": VoiceType("B", "Bajo", parse_note_name("E2"), parse_note_name("C4")),
+    "Bar": VoiceType("Bar", "Barítono", parse_note_name("A2"), parse_note_name("F4")),
     "T": VoiceType("T", "Tenor", parse_note_name("C3"), parse_note_name("A4")),
     "A": VoiceType("A", "Alto", parse_note_name("F3"), parse_note_name("D5")),
-    "MS": VoiceType("MS", "Mezzo-soprano", parse_note_name("A3"), parse_note_name("F5")),
+    "MS": VoiceType("MS", "Mezzosoprano", parse_note_name("A3"), parse_note_name("F5")),
     "S": VoiceType("S", "Soprano", parse_note_name("C4"), parse_note_name("A5")),
 }
 
@@ -445,7 +448,6 @@ QUALITY_TEMPLATES: Dict[str, List[ChordTone]] = {
     "7alt": [_ROOT, _MAJ3, _MIN7, _FLAT9, _SHARP9, _AUG5],
     "7b9b5": [_ROOT, _MAJ3, _DIM5, _MIN7, _FLAT9],
     "7#9#5": [_ROOT, _MAJ3, _AUG5, _MIN7, _SHARP9],
-    "m6/9": [_ROOT, _MIN3, _P5, _MAJ6, _NINTH],
 }
 
 #: Aliases the user may type; mapped onto the canonical quality keys above.

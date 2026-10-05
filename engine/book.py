@@ -252,6 +252,37 @@ _HARMONY = Chapter(
              "sostenido; sólo cambian las letras. En la pantalla de "
              "resultados vas a ver el número romano debajo de cada acorde: "
              "eso te dice qué papel cumple, no sólo cómo se llama.")),
+        # La escuelita la necesitaba: uno de sus ejercicios pide un acorde
+        # en una inversión dada, y la teoría de la escuelita sale de este
+        # libro. Lo que dice es lo que el analizador ya escribía debajo del
+        # pentagrama ---nada, 6 y 6/4---, sin una página que lo explicara.
+        Entry(
+            "inversiones", "Qué nota va en el bajo",
+            ("Un acorde no cambia de nombre por cómo se reparten sus notas: "
+             "do-mi-sol es do mayor esté donde esté cada una. Lo que sí "
+             "cambia, y mucho, es cuál de las tres queda abajo de todo, en "
+             "el bajo.",
+             "Con la fundamental en el bajo, el acorde está en estado "
+             "fundamental: es la forma más firme, la de los finales. Con la "
+             "tercera en el bajo está en primera inversión, y suena más "
+             "liviano, de paso. Con la quinta en el bajo está en segunda "
+             "inversión, y es tan inestable que casi siempre aparece de una "
+             "sola manera: el cadencial 6/4.",
+             "El bajo cifrado del barroco las anota con números que dicen qué "
+             "intervalos van encima del bajo: nada para el estado "
+             "fundamental, un 6 para la primera inversión y 6/4 para la "
+             "segunda. Son los números que el analizador escribe debajo del "
+             "pentagrama. En cifrado americano la inversión va con una "
+             "barra: G/B es sol mayor con si en el bajo."),
+            figures=(
+                Figure(
+                    caption="Do mayor tres veces: con do, con mi y con sol "
+                            "abajo de todo. Las tres notas son las mismas; "
+                            "lo que cambia es cuál sostiene a las otras dos.",
+                    voices=((-2, 0, 2), (0, 2, 5), (2, 5, 7)),
+                    marks=("C", "C/E · 6", "C/G · 6/4"),
+                ),
+            )),
         Entry(
             "funciones", "Las tres funciones",
             ("De los siete grados, tres papeles alcanzan para entender casi "
@@ -835,10 +866,10 @@ _CADENCES = Chapter(
             hint="Se escribe sola cuando la descubras."),
         Entry(
             "vivaldi", "Ciclo de Vivaldi",
-            ("Una cadena de quintas descendentes con todos los acordes "
-             "mayorizados: cada uno se vuelve la dominante del siguiente y "
-             "resuelve en él, ocho acordes seguidos hasta volver a casa. En "
-             "la menor: Am - D - G - C - F - B - E - Am.",
+            ("Una cadena de quintas descendentes dentro de la tonalidad. "
+             "Cada acorde cae una quinta sobre el siguiente, ocho acordes "
+             "seguidos hasta volver a casa. En la menor, Am - Dm - G - C - F "
+             "- Bdim - E - Am.",
              "Es el motor de medio barroco italiano y de una cantidad "
              "absurda de música posterior. La sensación es de caída "
              "continua, como una escalera que no termina.",
@@ -1103,6 +1134,33 @@ _HARMONISING = Chapter(
              "Lo mismo con los préstamos —el cuarto grado menor, el séptimo "
              "bemol— y con las citas famosas: se ofrecen, pero pierden "
              "contra la nota que hay que sostener."),
+            locked_by="harmoniser_first",
+            hint="Se escribe la primera vez que uses el Armonizador."),
+        Entry(
+            "armonizar_cromatica", "Las notas fuera de la escala",
+            ("Una nota que no está en la escala —un sol sostenido en do "
+             "mayor— casi siempre está diciendo adónde va. Si sube un "
+             "semitono a la siguiente, es la **sensible de esa nota**, y el "
+             "programa le pone debajo la dominante de la nota a la que "
+             "llega: el sol sostenido que sube a la lleva mi mayor, que es el "
+             "quinto grado de la.",
+             "Esa nota se marca sola, en naranja y con el halo de las que "
+             "llevan acorde, aunque no caiga en tiempo fuerte. Y la nota de "
+             "llegada también recibe el suyo, con preferencia por el que la "
+             "tiene de fundamental: una dominante que suena y no resuelve es "
+             "una promesa que el oído escucha y que después no pasa.",
+             "En barroco y en jazz a veces —menos que la dominante— sale en "
+             "cambio el séptimo grado de la nota de llegada: un sol sostenido "
+             "disminuido, que es el mismo trítono sin la fundamental. Y en "
+             "jazz también cuenta la nota que **baja** un semitono: lleva el "
+             "sustituto tritonal, la dominante que está un semitono arriba "
+             "de la nota a la que cae.",
+             "La nota fuera de la escala que no va por semitono se armoniza "
+             "como cualquier otra: lleva acorde si cae en tiempo fuerte o si "
+             "la marcás, y entonces el programa prefiere un acorde de afuera "
+             "que la contenga —un préstamo del modo menor, una dominante "
+             "aplicada— antes que meterla a la fuerza en uno de la "
+             "tonalidad."),
             locked_by="harmoniser_first",
             hint="Se escribe la primera vez que uses el Armonizador."),
     ),
@@ -2279,6 +2337,21 @@ def is_secret(entry: Entry) -> bool:
 def is_special(chapter: Chapter) -> bool:
     """¿El capítulo se escribe con oro? El que tiene algo que no se estudia."""
     return any(is_secret(entry) for entry in chapter.entries)
+
+
+def find(key: str):
+    """
+    Dónde está un apartado, por su clave: ``(capítulo, apartado)`` o None.
+
+    Es lo que usa quien quiere abrir el libro en una página dada ---la
+    escuelita cita una entrada por lección---. La posición del capítulo es
+    la de ``CHAPTERS``, que es lo que el índice de la interfaz tiene a mano.
+    """
+    for index, chapter in enumerate(CHAPTERS):
+        for entry in chapter.entries:
+            if entry.key == key:
+                return index, entry
+    return None
 
 
 def entry_for_lock(key: str):

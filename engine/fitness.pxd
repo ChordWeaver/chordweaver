@@ -29,7 +29,9 @@
 #    `any(...)` de una línea. Igual se compilan, sólo que sin tipos.
 #    Reescribirlas como bucles explícitos las haría declarables, pero eso es
 #    tocar el `.py` para complacer al compilador, que es justamente lo que
-#    este archivo existe para no hacer.
+#    este archivo existe para no hacer. Y `_crossing_count` no puede pasar
+#    a `cdef` aunque algún día se pueda: `engine/school.py` la importa para
+#    encontrar los cruces con la misma regla que la búsqueda.
 #
 # Sobre los tipos elegidos: los enteros van en `long` sólo donde el valor sale
 # de una altura MIDI o de contar cosas --- ahí no hay forma de que aparezca
