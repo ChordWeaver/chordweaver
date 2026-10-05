@@ -1652,6 +1652,9 @@ STAFF_GAP = 4 * GRAND_LINE_GAP
 #: no en la pantalla.
 BAR_NUMBER_Y = 10
 SYMBOL_Y = 26
+#: Cuánto más abajo va el segundo renglón de cifrados, para el que no entra
+#: al lado del anterior. Queda entre el primero y el pentagrama.
+SYMBOL_STEP = 17
 GRAND_TOP_MARGIN = 84
 #: Dónde empiezan las notas como mínimo; como en el pentagrama de una línea,
 #: lo que ocupen la clave, la armadura y el compás se mide en cada dibujo.
@@ -2950,21 +2953,31 @@ class GrandStaff(ctk.CTkFrame):
         # es la de la pieza, porque entonces casi cada vertical es un acorde
         # distinto. El que no entra no se dibuja: la lista de acordes de al
         # lado los tiene todos y con ancho para leerlos.
-        symbol_edge = -1e9
+        #
+        # El ancho de cada cifrado se mide en el lienzo, no se estima: con
+        # ocho píxeles por letra un «D6omit5» se metía encima del acorde de
+        # al lado. Y el que no entra en su renglón prueba uno más abajo antes
+        # de quedarse sin dibujar: en el resultado no hay otra lista que los
+        # muestre, y un acorde sin nombre era un hueco en la partitura.
+        symbol_edges = [-1e9, -1e9]
         figure_edge = -1e9
         for onset, symbol, figure in self.annotations:
             head = self._onset_x(onset)
             x = self._x_for(onset) + 6 if head is None else head
             if symbol:
                 left = x - 7
-                if left >= symbol_edge:
-                    canvas.create_text(left, SYMBOL_Y, text=symbol,
-                                       fill=self.symbol_colours.get(onset, ink),
-                                       anchor="w",
-                                       font=("Segoe UI Semibold", 13),
-                                       tags=(OVERLAY_TAG,
-                                             OVERLAY_TAG + "-labels"))
-                    symbol_edge = left + 8 * len(symbol) + 6
+                for row, y in enumerate((SYMBOL_Y, SYMBOL_Y + SYMBOL_STEP)):
+                    if left < symbol_edges[row]:
+                        continue
+                    item = canvas.create_text(
+                        left, y, text=symbol,
+                        fill=self.symbol_colours.get(onset, ink), anchor="w",
+                        font=("Segoe UI Semibold", 13),
+                        tags=(OVERLAY_TAG, OVERLAY_TAG + "-labels"))
+                    box = canvas.bbox(item)
+                    symbol_edges[row] = (box[2] if box
+                                         else left + 9 * len(symbol)) + 6
+                    break
             rows = [text for text in figure[:FIGURE_ROWS] if text]
             if not rows:
                 continue

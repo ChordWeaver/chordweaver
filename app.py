@@ -471,9 +471,9 @@ GENRE_THEMES = {
 #: tarjetas para ver la diferencia. El icono ya no va en la tarjeta; lo usa
 #: el historial.
 MODE_CARDS = [
-    ("manual", "Organizador", "Vos ponés los acordes", "#5B8FD6", "◧"),
-    ("random", "Generador", "El programa pone los acordes", "#B07FD6", "✧"),
-    ("harmonise", "Armonizador", "Vos ponés la melodía", "#4FAE96", "♪"),
+    ("manual", N("Organizador"), N("Vos ponés los acordes"), "#5B8FD6", "◧"),
+    ("random", N("Generador"), N("El programa pone los acordes"), "#B07FD6", "✧"),
+    ("harmonise", N("Armonizador"), N("Vos ponés la melodía"), "#4FAE96", "♪"),
 ]
 
 #: Lo que todavía se está terminando ---modos y herramientas---. El aviso va
@@ -490,20 +490,22 @@ MODE_FLAGS = {"analysis": "BETA"}
 #: Colores propios, distintos de los tres modos: no son una cuarta y una
 #: quinta manera de trabajar, y el riel de progreso no se tiñe con ellos.
 TOOL_CARDS = [
-    ("lab", "Experimentador", "De qué está hecha una nota",
-     "Encendé, apagá y mové los armónicos de una nota y escuchá cómo cambia.",
+    ("lab", N("Experimentador"), N("De qué está hecha una nota"),
+     N("Encendé, apagá y mové los armónicos de una nota y escuchá cómo "
+       "cambia."),
      "#C9954F", "≈"),
-    ("analysis", "Analizador", "Vos traés la partitura",
-     "Traés una partitura y te dice qué acorde es cada uno, qué función "
-     "cumple y qué hacen las voces.",
+    ("analysis", N("Analizador"), N("Vos traés la partitura"),
+     N("Traés una partitura y te dice qué acorde es cada uno, qué función "
+       "cumple y qué hacen las voces."),
      "#B5705F", "𝄞"),
     # La escuelita es la tercera: no compone nada y usa al analizador de
     # base ---el alumno escribe, el analizador corrige---, así que es una
     # herramienta y no un modo. Rosa de tiza: ninguno de los otros cinco
     # colores, y lejos del rojo con el que la corrección marca lo que está
     # mal.
-    ("school", "Escuelita", "Aprender escribiendo",
-     "Cinco unidades con ejercicios de escritura que corrige el analizador.",
+    ("school", N("Escuelita"), N("Aprender escribiendo"),
+     N("Cinco unidades con ejercicios de escritura que corrige el "
+       "analizador."),
      "#D3809F", "✎"),
 ]
 
@@ -2412,7 +2414,10 @@ class ChordWeaverApp(ctk.CTk):
         # justas, y las del modo historia --- el cartel del sendero, el botón
         # dorado --- necesitan aire; en una ventana chica lo último que se
         # agregó quedaba abajo del pliegue y no se podía ni tocar.
-        self.geometry("1440x1010")
+        # Con `CHORDWEAVER_TEST_ORIGIN` (las pruebas) nace en ese lugar,
+        # que suele ser otra pantalla. Ver `uitest._placed`.
+        self.geometry("1440x1010" + os.environ.get("CHORDWEAVER_TEST_ORIGIN",
+                                                   ""))
         self.minsize(1180, 880)
         self.configure(fg_color=SURFACE)
         # El inicio se arma la primera vez antes de que la ventana tenga su

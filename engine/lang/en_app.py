@@ -10,6 +10,7 @@ No se editan a mano: las saca `python -m engine.lang.audit --missing`.
 CATALOG = {
     # -- la pantalla inicial: herramientas y dibujos (homeart) ---------------
     'Herramientas': 'Tools',
+    'Aprender escribiendo': 'Learning by writing',
     'Encendé, apagá y mové los armónicos de una nota y escuchá cómo cambia.':
         'Switch the harmonics of a note on and off, move them and hear what '
         'changes.',

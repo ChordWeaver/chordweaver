@@ -30,6 +30,7 @@ no puede impedir que el programa arranque: cualquier problema termina en un
 
 from __future__ import annotations
 
+import os
 import webbrowser
 from typing import Callable, Dict, Optional
 
@@ -98,6 +99,12 @@ def _hand_back_the_scaling_loop() -> None:
 
 def _centre(window, width: int, height: int) -> None:
     """Al medio de la pantalla, que es donde se mira cuando no hay nada más."""
+    # El enganche de las pruebas: con la variable puesta, el cartel nace en
+    # ese lugar ---otra pantalla--- y no encima de quien está trabajando.
+    origin = os.environ.get("CHORDWEAVER_TEST_ORIGIN", "")
+    if origin:
+        window.geometry("%dx%d%s" % (width, height, origin))
+        return
     x = max(0, (window.winfo_screenwidth() - width) // 2)
     y = max(0, (window.winfo_screenheight() - height) // 3)
     window.geometry("%dx%d+%d+%d" % (width, height, x, y))
