@@ -17,9 +17,11 @@ No importa `app`: recibe la paleta por parámetro, igual que `staff`.
 
 from __future__ import annotations
 
+import base64
+import io
 import math
 import tkinter as tk
-from typing import Callable, Dict, Sequence, Tuple
+from typing import Callable, Dict, Optional, Sequence, Tuple
 
 from engine.i18n import tr
 from staff import Engraver
@@ -233,79 +235,147 @@ def _analysis(canvas: tk.Canvas, accent: str, colours: Dict[str, str],
                            font=colours["font_roman"])
 
 
-def _check(canvas: tk.Canvas, x: float, y: float, radius: float,
-           colour: str) -> None:
-    """Una tilde dibujada, centrada en (x, y) dentro de un círculo."""
-    canvas.create_line(x - 0.45 * radius, y + 0.02 * radius,
-                       x - 0.12 * radius, y + 0.36 * radius,
-                       x + 0.48 * radius, y - 0.34 * radius,
-                       fill=colour, width=max(2.0, radius * 0.24),
-                       capstyle="round", joinstyle="round")
+#: Dónde está uno en la escuelita: cuánto de cada unidad está aprobado (de 0
+#: a 1), cuál es la que sigue (None si ya no queda ninguna), su nombre corto
+#: y si ya se graduó. Sin dato se dibuja el ejemplo de siempre.
+SchoolState = Tuple[Tuple[float, ...], Optional[int], str, bool]
+
+SCHOOL_EXAMPLE: SchoolState = ((1.0, 1.0) + (0.0,) * 6, 2, "Oído", False)
+
+#: Cuántas veces más grande se dibuja el recorrido antes de achicarlo. Los
+#: óvalos de un lienzo de Tk no tienen suavizado y en la tarjeta se veían
+#: pixelados; dibujado al cuádruple y reducido, el borde queda suave.
+_SUPERSAMPLE = 4
 
 
-def _star(canvas: tk.Canvas, x: float, y: float, radius: float,
-          colour: str) -> None:
+def _rgb(colour: str) -> Tuple[int, int, int]:
+    return tuple(int(colour[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def school_image(width: int, height: int, k: float, accent: str,
+                 colours: Dict[str, str], state: SchoolState):
+    """El recorrido de las ocho unidades, como imagen con transparencia.
+
+    Va aparte del lienzo para poder probarlo sin abrir una ventana. Lo de
+    adentro de los círculos es transparente: se ve el fondo de la tarjeta,
+    también cuando cambia de color con el mouse encima.
     """
-    Una estrella de cinco puntas centrada de verdad en (x, y).
+    from PIL import Image, ImageDraw
 
-    Dibujada y no escrita: el carácter de estrella de una fuente no cae en
-    el centro de su renglón, y al lado de la línea del recorrido se veía
-    corrido para abajo. Una estrella tiene la punta de arriba más lejos del
-    centro que las de abajo, así que se la baja lo justo para que lo
-    centrado sea su contorno.
-    """
+    share, current, _label, graduated = state
+    done = [part >= 1.0 for part in share]
+    stations = len(share)
+    n = _SUPERSAMPLE
+    image = Image.new("RGBA", (width * n, height * n), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    lit, faint = _rgb(accent) + (255,), _rgb(colours["faint"]) + (255,)
+    gold, surface = _rgb(colours["gold"]) + (255,), _rgb(colours["surface"]) + (255,)
+    y = ((TOOL_HEIGHT * k) / 2 - 4 * k) * n
+    x0, x1 = 36 * n, (width - 68) * n
+    gap = (x1 - x0) / (stations - 1)
+    radii = [(10 if i == current else 8 if done[i] else 6) * k * n
+             for i in range(stations)]
+    for station in range(stations - 1):
+        reached = done[station] and (done[station + 1] or station + 1 == current)
+        draw.line((x0 + station * gap + radii[station], y,
+                   x0 + (station + 1) * gap - radii[station + 1], y),
+                  fill=lit if reached else faint, width=int((3 if reached else 2) * n))
+    for station in range(stations):
+        x, r = x0 + station * gap, radii[station]
+        box = (x - r, y - r, x + r, y + r)
+        if done[station]:
+            draw.ellipse(box, fill=lit)
+            draw.line(((x - 0.45 * r, y + 0.02 * r), (x - 0.12 * r, y + 0.36 * r),
+                       (x + 0.48 * r, y - 0.34 * r)),
+                      fill=surface, width=int(max(2.0 * n, r * 0.24)),
+                      joint="curve")
+        else:
+            # Lo aprobado a medias es un arco del color de la escuelita sobre
+            # el aro apagado, desde arriba y en el sentido del reloj. La que
+            # sigue va más grande; si todavía no tiene nada, el aro entero
+            # encendido, como siempre.
+            thick = int((3 if station == current else 2) * n)
+            if station == current and share[station] <= 0:
+                draw.ellipse(box, outline=lit, width=thick)
+            else:
+                draw.ellipse(box, outline=faint, width=thick)
+            if share[station] > 0:
+                draw.arc(box, -90, -90 + 360 * share[station], fill=lit,
+                         width=int(3 * n))
+    # La línea de puntos hasta la estrella, y la estrella: dorada siempre,
+    # más grande y con el tramo encendido cuando ya no queda unidad.
+    star_x = (width - 24) * n
+    finished = current is None
+    start = x1 + radii[-1]
+    end = star_x - 12 * k * n
+    dash = 3 * n
+    position = start
+    while position < end:
+        draw.line((position, y, min(end, position + dash), y),
+                  fill=lit if finished else faint, width=int(2 * n))
+        position += 2 * dash
+    radius = (10 if finished else 8) * k * n
     inner = radius * 0.45
+    # La punta de arriba está más lejos del centro que las de abajo: se la
+    # baja lo justo para que lo centrado en la línea sea el contorno.
     shift = radius * (1 - math.cos(math.radians(36))) / 2
     points = []
     for corner in range(10):
         angle = math.radians(-90 + corner * 36)
         reach = radius if corner % 2 == 0 else inner
-        points += [x + reach * math.cos(angle),
-                   y + shift + reach * math.sin(angle)]
-    canvas.create_polygon(points, fill=colour, outline="")
+        points.append((star_x + reach * math.cos(angle),
+                       y + shift + reach * math.sin(angle)))
+    draw.polygon(points, fill=gold)
+    if graduated:
+        ring = radius * 1.55
+        draw.ellipse((star_x - ring, y - ring, star_x + ring, y + ring),
+                     outline=gold, width=int(2 * n))
+    return image.resize((width, height), Image.LANCZOS)
 
 
 def _school(canvas: tk.Canvas, accent: str, colours: Dict[str, str],
-            width: int) -> None:
-    """El recorrido de las ocho unidades: dos aprobadas y la tercera en curso."""
+            width: int, state: Optional[SchoolState] = None) -> None:
+    """El recorrido de las ocho unidades, con la que toca ahora marcada."""
+    state = state or SCHOOL_EXAMPLE
     k = _scale(canvas, TOOL_HEIGHT)
-    y = (TOOL_HEIGHT * k) / 2 - 4 * k
-    stations = 8
+    height = int(round(TOOL_HEIGHT * k))
+    try:
+        picture = school_image(width, height, k, accent, colours, state)
+    except Exception:                                       # noqa: BLE001
+        return
+    buffer = io.BytesIO()
+    picture.save(buffer, "PNG")
+    # `tk.PhotoImage` y no el de PIL: el de tkinter tiene apagado su
+    # finalizador (ver `app._keep_tk_off_the_worker_thread`) y el de PIL
+    # borraría la imagen desde el hilo que pase a recolectar. Por lo mismo
+    # la anterior se borra a mano, acá, en el hilo de la ventana.
+    old = getattr(canvas, "_school_photo", None)
+    photo = tk.PhotoImage(master=canvas,
+                          data=base64.b64encode(buffer.getvalue()))
+    canvas.create_image(0, 0, anchor="nw", image=photo)
+    canvas._school_photo = photo
+    if old is not None:
+        try:
+            canvas.tk.call("image", "delete", old.name)
+        except tk.TclError:
+            pass
+    share, current, label, graduated = state
+    stations = len(share)
     x0, x1 = 36, width - 68
     gap = (x1 - x0) / (stations - 1)
-    radii = [8 * k, 8 * k, 10 * k] + [6 * k] * 5
-    # Los tramos van de borde a borde y los círculos quedan huecos: así lo
-    # que se ve adentro es el fondo de la tarjeta también cuando la tarjeta
-    # cambia de color con el mouse encima.
-    for station in range(stations - 1):
-        done = station < 2
-        canvas.create_line(x0 + station * gap + radii[station], y,
-                           x0 + (station + 1) * gap - radii[station + 1], y,
-                           fill=accent if done else colours["faint"],
-                           width=3 if done else 2)
-    for station in range(stations):
-        x = x0 + station * gap
-        radius = radii[station]
-        box = (x - radius, y - radius, x + radius, y + radius)
-        if station < 2:
-            canvas.create_oval(*box, fill=accent, outline="")
-            _check(canvas, x, y, radius, colours["surface"])
-        elif station == 2:
-            canvas.create_oval(*box, outline=accent, width=3)
-        else:
-            canvas.create_oval(*box, outline=colours["faint"], width=2)
-    star = width - 24
-    canvas.create_line(x1 + radii[-1], y, star - 12 * k, y,
-                       fill=colours["faint"], width=2, dash=(3, 3))
-    _star(canvas, star, y, 8 * k, colours["gold"])
-    canvas.create_text(x0 + 2 * gap, y + radii[2] + 12 * k,
-                       text=tr("Oído"), fill=accent,
-                       font=colours["font_caption"])
+    y = (TOOL_HEIGHT * k) / 2 - 4 * k
+    if current is None:
+        x, text = width - 24, ("Graduación" if not graduated else "")
+        below = 10 * k
+    else:
+        x, text, below = x0 + current * gap, label, 10 * k
+    if text:
+        canvas.create_text(x, y + below + 12 * k, text=tr(text), fill=accent,
+                           font=colours["font_caption"])
 
 
 #: Qué dibujo lleva cada herramienta, por su clave.
-TOOL_PICTURES: Dict[str, Callable[[tk.Canvas, str, Dict[str, str], int],
-                                  None]] = {
+TOOL_PICTURES: Dict[str, Callable[..., None]] = {
     "lab": _harmonics,
     "analysis": _analysis,
     "school": _school,
@@ -313,8 +383,16 @@ TOOL_PICTURES: Dict[str, Callable[[tk.Canvas, str, Dict[str, str], int],
 
 
 def draw_tool(canvas: tk.Canvas, key: str, accent: str,
-              colours: Dict[str, str], width: int) -> None:
-    """El dibujo de una herramienta; nada si la clave no tiene uno."""
+              colours: Dict[str, str], width: int, state=None) -> None:
+    """El dibujo de una herramienta; nada si la clave no tiene uno.
+
+    `state` es lo que el dibujo necesita saber del usuario: por ahora sólo
+    la escuelita, que dibuja dónde anda (`SchoolState`).
+    """
     picture = TOOL_PICTURES.get(key)
-    if picture is not None:
+    if picture is None:
+        return
+    if state is not None:
+        picture(canvas, accent, colours, width, state)
+    else:
         picture(canvas, accent, colours, width)

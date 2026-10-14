@@ -1176,6 +1176,7 @@ class Card(ctk.CTkFrame, Hoverable):
                                bd=0, bg=SURFACE_LIGHT)
             drawn = [wraplength + 20]
             picture(canvas, drawn[0])
+            self._picture, self._drawn = picture, drawn
 
             def redraw(event, canvas=canvas, drawn=drawn) -> None:
                 if abs(event.width - drawn[0]) < 2:
@@ -1234,6 +1235,17 @@ class Card(ctk.CTkFrame, Hoverable):
             pass
 
     # -- estados ------------------------------------------------------------
+
+    def redraw_picture(self) -> None:
+        """Volver a dibujar el dibujo, para cuando cambió lo que muestra."""
+        canvas = self.picture_canvas
+        if canvas is None:
+            return
+        try:
+            canvas.delete("all")
+            self._picture(canvas, self._drawn[0])
+        except tk.TclError:
+            pass
 
     def _targets(self) -> Tuple[str, str, str, str]:
         """Borde, fondo, fondo del icono y tinta del icono, en este orden."""
@@ -2827,7 +2839,9 @@ class ChordWeaverApp(ctk.CTk):
                         flag=MODE_FLAGS.get(key, ""), wraplength=wrap,
                         badge=False, serif=True,
                         picture=lambda canvas, width, k=key, a=accent:
-                        homeart.draw_tool(canvas, k, a, art, width),
+                        homeart.draw_tool(
+                            canvas, k, a, art, width,
+                            self._school_state() if k == "school" else None),
                         picture_height=int(homeart.TOOL_HEIGHT * grow))
             # El mismo margen que los modos, así cada herramienta queda
             # exactamente debajo de un modo y la pantalla se lee en columnas.
@@ -2840,6 +2854,24 @@ class ChordWeaverApp(ctk.CTk):
         self._cascade(self.tool_cards.values(), step=40)
         self._home_body = self.body
         self._home_key = self._home_signature()
+
+    def _school_state(self) -> "homeart.SchoolState":
+        """Dónde anda el usuario en la escuelita, para el dibujo del inicio."""
+        units = curriculum.UNITS
+        share = []
+        for unit in units:
+            items = [entry for lesson in unit.lessons
+                     for entry in lesson.exercises]
+            passed = sum(1 for entry in items if self.school.has(entry.key))
+            share.append(passed / len(items) if items else 0.0)
+        done = tuple(share)
+        current = None
+        label = ""
+        if not all(part >= 1.0 for part in done):
+            unit = curriculum.unit_of(self.school.current().key)
+            if unit is not None and unit in units:
+                current, label = units.index(unit), unit.short
+        return done, current, label, bool(self.school.graduated)
 
     def _home_signature(self) -> Tuple:
         """Lo que, si cambia, obliga a rearmar la pantalla inicial entera."""
@@ -2992,6 +3024,11 @@ class ChordWeaverApp(ctk.CTk):
                 card._paint(animated=False)
             except tk.TclError:
                 pass
+        # La escuelita dibuja dónde anda el usuario, y eso cambia afuera
+        # del inicio: al volver de un ejercicio aprobado tiene que moverse.
+        school_card = self.tool_cards.get("school")
+        if school_card is not None:
+            school_card.redraw_picture()
 
     def _build_home_lower(self, grid) -> List[tk.Misc]:
         """Los logros, el libro y el sendero: la parte del inicio que cambia."""
@@ -3276,7 +3313,7 @@ class ChordWeaverApp(ctk.CTk):
     #: Lo que dice, y siempre lo mismo aunque haya varias anotaciones nuevas:
     #: es una nota al margen, no un contador. La pluma no va acá --- la pone
     #: `handwritten_line`.
-    NOTE_FLAG_TEXT = "Has descubierto algo nuevo"
+    NOTE_FLAG_TEXT = N("Has descubierto algo nuevo")
 
     #: Cuánto se queda, y es el mismo número que el aviso de un logro a
     #: propósito: el logro suele ser lo que abre el apartado, así que los dos
@@ -6234,11 +6271,11 @@ class ChordWeaverApp(ctk.CTk):
     # -- screen: melody (harmonise mode) ------------------------------------
 
     KEY_SIGNATURES = [
-        ("Do mayor / La menor", 0), ("Sol mayor / Mi menor", 1),
-        ("Re mayor / Si menor", 2), ("La mayor / Fa# menor", 3),
-        ("Mi mayor / Do# menor", 4), ("Fa mayor / Re menor", -1),
-        ("Sib mayor / Sol menor", -2), ("Mib mayor / Do menor", -3),
-        ("Lab mayor / Fa menor", -4),
+        (N("Do mayor / La menor"), 0), (N("Sol mayor / Mi menor"), 1),
+        (N("Re mayor / Si menor"), 2), (N("La mayor / Fa# menor"), 3),
+        (N("Mi mayor / Do# menor"), 4), (N("Fa mayor / Re menor"), -1),
+        (N("Sib mayor / Sol menor"), -2), (N("Mib mayor / Do menor"), -3),
+        (N("Lab mayor / Fa menor"), -4),
     ]
 
     #: The texture each style harmonises in. Bass, tenor and soprano for
@@ -7784,8 +7821,11 @@ class ChordWeaverApp(ctk.CTk):
         parts = [str(a) if a == b else f"{a}-{b}" for a, b in runs]
         plural = len(numbers) > 1
         if len(parts) == 1:
-            return f"{'acordes' if plural else 'acorde'} {parts[0]}"
-        return "acordes " + ", ".join(parts[:-1]) + f" y {parts[-1]}"
+            if plural:
+                return trf("acordes {numbers}", numbers=parts[0])
+            return trf("acorde {number}", number=parts[0])
+        return trf("acordes {value} y {numbers}",
+                   value=", ".join(parts[:-1]), numbers=parts[-1])
 
     @staticmethod
     def _emphases_from(position: float) -> Tuple[float, float]:

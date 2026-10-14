@@ -46,7 +46,7 @@ from .fitness import (GENRE_PROFILES, direct_perfect_violation,
                       parallel_interval_violation)
 from .theory import (FLAT_NAMES, LETTER_SEMITONES, LETTER_STEPS,
                      SHARP_NAMES)
-from engine.i18n import tr, trf, trs
+from engine.i18n import N, tr, trf, trs
 from engine import i18n
 
 OCTAVE = 12
@@ -655,7 +655,46 @@ for _quality, _template in TEMPLATES:
         ))
 
 
+#: Las lecturas ya hechas, por pedido. Seis de cada diez llamadas repiten
+#: las mismas notas con el mismo peso ---un mismo tiempo se lee entero, por
+#: mitades y junto al de al lado, y al editar una nota se reanaliza todo lo
+#: demás tal cual estaba---, y esta función es el 90 % del análisis.
+_READINGS: Dict[tuple, List[ChordReading]] = {}
+READINGS_KEPT = 4096
+
+
 def read_chord(
+    weights: Dict[int, float],
+    bass_pc: Optional[int] = None,
+    prefer_flats: bool = False,
+    diatonic: Sequence[int] = (),
+) -> List[ChordReading]:
+    """Las lecturas de `_read_chord`, recordadas.
+
+    Cada llamada se lleva **copias**: quien llama les cambia `prefer_flats`
+    a las que elige, y sobre las guardadas eso cambiaría la escritura de
+    cualquier otro tiempo con las mismas notas.
+    """
+    key = (tuple(sorted(weights.items())), bass_pc, prefer_flats,
+           tuple(sorted(set(diatonic))))
+    known = _READINGS.get(key)
+    if known is None:
+        known = _read_chord(weights, bass_pc, prefer_flats, diatonic)
+        if len(_READINGS) >= READINGS_KEPT:
+            _READINGS.clear()
+        _READINGS[key] = known
+    return [_clone(reading) for reading in known]
+
+
+def _clone(reading: ChordReading) -> ChordReading:
+    """Una copia de una lectura. `copy.copy` tardaba cinco veces más, y con
+    ciento noventa lecturas por llamada se comía lo que ahorra la memoria."""
+    twin = object.__new__(ChordReading)
+    twin.__dict__ = reading.__dict__.copy()
+    return twin
+
+
+def _read_chord(
     weights: Dict[int, float],
     bass_pc: Optional[int] = None,
     prefer_flats: bool = False,
@@ -1467,9 +1506,9 @@ def _bass_of(sonorities: Sequence[Sonority],
 
 #: Cómo se nombra cada modo en el rótulo de la tonalidad.
 MODE_NAMES = {
-    "major": "mayor", "minor": "menor", "harmonic": "menor armónica",
-    "dorian": "dórico", "phrygian": "frigio", "lydian": "lidio",
-    "mixolydian": "mixolidio", "locrian": "locrio",
+    "major": N("mayor"), "minor": N("menor"), "harmonic": N("menor armónica"),
+    "dorian": N("dórico"), "phrygian": N("frigio"), "lydian": N("lidio"),
+    "mixolydian": N("mixolidio"), "locrian": N("locrio"),
 }
 
 #: Qué modos se prueban al buscar la tonalidad, y cuánto se prefiere cada
@@ -2100,12 +2139,12 @@ def label_segment(segment: Segment, key: KeyReading,
         segment.function = _borrowed_function(segment.roman, key, reading)
         segment.detail = (trf("préstamo del {mode_label} de "
                               "{spanish_note}: ahí es el {degree}º grado",
-                              mode_label=mode_label,
+                              mode_label=tr(mode_label),
                               spanish_note=spanish_note(key.tonic_pc, key.prefer_flats),
                               degree=degree))
         spec = harmony.BORROWED_CHORDS.get(_borrow_key(segment.roman))
         if spec is not None:
-            segment.detail += ". " + spec.description
+            segment.detail += ". " + tr(spec.description)
         return
 
     # -- cromatismo suelto --------------------------------------------------
@@ -2273,16 +2312,18 @@ def relate(segments: Sequence[Segment], key: KeyReading) -> List[Cadence]:
         if segment.reading is None:
             continue
         if following is None or following.reading is None:
-            segment.relation = "final de la pieza"
+            segment.relation = tr("final de la pieza")
             continue
         motion = (following.reading.root_pc - segment.reading.root_pc) % 12
         name = ROOT_MOTION_NAMES.get(motion, "movimiento cromático")
         area_from = FUNCTION_LABELS.get(segment.function, segment.function)
         area_to = FUNCTION_LABELS.get(following.function, following.function)
+        # Se traduce cada pedazo y se pegan después: el renglón armado no
+        # existe como clave del catálogo.
         if area_from and area_to:
-            segment.relation = f"{name} · {area_from} → {area_to}"
+            segment.relation = f"{tr(name)} · {tr(area_from)} → {tr(area_to)}"
         else:
-            segment.relation = name
+            segment.relation = tr(name)
 
         # Una cadencia necesita las dos cosas: el giro y el reposo. El
         # reposo se reconoce porque el acorde de llegada dura más que la
@@ -2410,7 +2451,7 @@ def quoted_cadences(segments: Sequence[Segment],
                 continue
             taken.update(range(start, start + length))
             home = anchor == key.tonic_pc
-            detail = piece.description
+            detail = tr(piece.description)
             if not home:
                 detail += (trf(" Acá aparece sobre {spanish_note}, que no "
                                "es la tónica de la pieza.",
@@ -3368,14 +3409,19 @@ ORNAMENT_DEFINITIONS = {
                 "una frase.",
 }
 
+#: Las cadencias de cita se nombran con el rótulo del generador en
+#: minúscula (`Cadence.kind`), y así llegan al catálogo.
+SET_PIECE_KINDS = (N("cadencia frigia"), N("ciclo de vivaldi"),
+                   N("bajo cromático descendente"))
+
 ORNAMENT_LABELS = {
-    "paso": "Nota de paso", "paso_acentuado": "Nota de paso acentuada",
-    "bordadura": "Bordadura", "doble_bordadura": "Doble bordadura",
-    "apoyatura": "Apoyatura", "escapada": "Escapada",
-    "retardo": "Retardo (suspensión)", "retardo_ascendente": "Retardo ascendente",
-    "anticipacion": "Anticipación", "cambiata": "Nota cambiata",
-    "grupeto": "Grupeto", "mordente": "Mordente", "pedal": "Nota pedal",
-    "anacrusa": "Anacrusa",
+    "paso": N("Nota de paso"), "paso_acentuado": N("Nota de paso acentuada"),
+    "bordadura": N("Bordadura"), "doble_bordadura": N("Doble bordadura"),
+    "apoyatura": N("Apoyatura"), "escapada": N("Escapada"),
+    "retardo": N("Retardo (suspensión)"), "retardo_ascendente": N("Retardo ascendente"),
+    "anticipacion": N("Anticipación"), "cambiata": N("Nota cambiata"),
+    "grupeto": N("Grupeto"), "mordente": N("Mordente"), "pedal": N("Nota pedal"),
+    "anacrusa": N("Anacrusa"),
 }
 
 #: Cuánto tiene que durar una nota, en negras, para que su vecina de vuelta

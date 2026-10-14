@@ -28,6 +28,7 @@ import wave
 from array import array
 from typing import Callable, Optional, Sequence
 
+from . import ambience
 from . import timbre as timbres
 from .timbre import SAMPLE_RATE
 
@@ -210,13 +211,19 @@ def play_chords(
     def work() -> None:
         path = ""
         try:
-            frames = render_chords(chords, durations, melody=melody,
-                                   quarter_seconds=quarter_seconds,
-                                   voices=voices, timbre=timbre)
-            handle = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-            path = handle.name
-            handle.close()
-            write_wav(path, frames)
+            # Sintetizar es un bucle cerrado de Python que se queda con el
+            # GIL en tandas largas: sin esto la ventana se arrastra mientras
+            # se arma el sonido (3.000 llamadas a Tk pasaban de 13 ms a más
+            # de dos segundos). Tocar el archivo no lo necesita.
+            with ambience.fine_switching():
+                frames = render_chords(chords, durations, melody=melody,
+                                       quarter_seconds=quarter_seconds,
+                                       voices=voices, timbre=timbre)
+                handle = tempfile.NamedTemporaryFile(suffix=".wav",
+                                                     delete=False)
+                path = handle.name
+                handle.close()
+                write_wav(path, frames)
             _play_file(path)
         except Exception:                                   # noqa: BLE001
             pass

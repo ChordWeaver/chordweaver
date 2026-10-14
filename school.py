@@ -160,7 +160,7 @@ class School(ctk.CTkFrame):
 
     def _starting_lesson(self) -> lessons_engine.Lesson:
         remembered = lessons_engine.lesson(self.memory.get("lesson", ""))
-        if remembered is not None and self.progress.lesson_open(remembered):
+        if remembered is not None:
             return remembered
         return self.progress.current()
 
@@ -284,11 +284,7 @@ class School(ctk.CTkFrame):
                                    fill=colours["surface"], outline=faint,
                                    width=1)
             if index == self._hover_station:
-                # Lo cerrado dice por qué, ahí mismo: un click que no hace
-                # nada y no dice nada se lee como que el programa se colgó.
-                label = (tr(item.title) if opened else
-                         trf("{title} · se abre al aprobar las anteriores",
-                             title=tr(item.title)))
+                label = tr(item.title)
                 canvas.create_text(x, line_y + 18, text=label,
                                    fill=colours["text"] if opened else faint,
                                    font=self.font(("Segoe UI", 10)))
@@ -338,10 +334,10 @@ class School(ctk.CTkFrame):
         index = self._station_at(event.x, event.y)
         if index < 0:
             return
-        item = self._stations()[index][1]
-        if not self.progress.lesson_open(item):
-            return
-        self.open_lesson(item)
+        # Cualquier lección, aunque las anteriores no estén aprobadas: el
+        # orden es el recomendado, no una cerradura. Las que vienen más
+        # adelante se dibujan apagadas, pero se abren igual.
+        self.open_lesson(self._stations()[index][1])
 
     # -- la lección ---------------------------------------------------------
 
@@ -1391,8 +1387,7 @@ class School(ctk.CTkFrame):
         if index + 1 >= len(items):
             return None
         following = items[index + 1]
-        holder = lessons_engine.lesson_of(following.key)
-        if holder is None or not self.progress.lesson_open(holder):
+        if lessons_engine.lesson_of(following.key) is None:
             return None
         return following
 

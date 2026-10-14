@@ -27,7 +27,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from .theory import Chord, ChordTone, ROLE_FIFTH, ROLE_ROOT, ROLE_SEVENTH, ROLE_THIRD
 from .theory import (FLAT_NAMES, SHARP_NAMES, ChordParseError, parse_chord,
                      spell_in_key)
-from engine.i18n import tr, trf, trs
+from engine.i18n import N, tr, trf, trs
 
 # ---------------------------------------------------------------------------
 # Modes
@@ -275,54 +275,54 @@ class BorrowedChord:
 
 BORROWED_CHORDS: Dict[str, BorrowedChord] = {
     "iv": BorrowedChord(
-        "iv", "4to menor (iv)", "iv", 5, "minor",
-        "La subdominante menor prestada del modo menor. El préstamo más "
+        "iv", N("4to menor (iv)"), "iv", 5, "minor",
+        N("La subdominante menor prestada del modo menor. El préstamo más "
         "común de todos: suaviza la cadencia y es el sonido del 'plagal "
-        "triste'.",
+        "triste'."),
     ),
     "v": BorrowedChord(
-        "v", "5to menor (v)", "v", 7, "minor",
-        "Dominante menor. Al no tener sensible pierde la tensión de resolver, "
-        "lo que le da un color modal en vez de funcional.",
+        "v", N("5to menor (v)"), "v", 7, "minor",
+        N("Dominante menor. Al no tener sensible pierde la tensión de resolver, "
+        "lo que le da un color modal en vez de funcional."),
     ),
     "bII": BorrowedChord(
-        "bII", "2do bemol mayor (bII, napolitana)", "bII", 1, "major",
-        "Napolitana en estado fundamental: un acorde mayor construido sobre "
-        "el segundo grado rebajado.",
+        "bII", N("2do bemol mayor (bII, napolitana)"), "bII", 1, "major",
+        N("Napolitana en estado fundamental: un acorde mayor construido sobre "
+        "el segundo grado rebajado."),
     ),
     "N6": BorrowedChord(
-        "N6", "6ta napolitana (bII6)", "N6", 1, "major",
-        "La napolitana con su tercera en el bajo, que es como se escribe "
+        "N6", N("6ta napolitana (bII6)"), "N6", 1, "major",
+        N("La napolitana con su tercera en el bajo, que es como se escribe "
         "casi siempre. De ahí el nombre 'de sexta': el bajo queda a una "
-        "sexta de la fundamental.",
+        "sexta de la fundamental."),
         forced_first_inversion=True,
     ),
     "bVII": BorrowedChord(
-        "bVII", "7mo bemol mayor (bVII, eólico)", "bVII", 10, "major",
-        "Subtónica mayor. Reemplaza a la dominante sin sensible, y es la "
-        "marca del rock y del modo mixolidio.",
+        "bVII", N("7mo bemol mayor (bVII, eólico)"), "bVII", 10, "major",
+        N("Subtónica mayor. Reemplaza a la dominante sin sensible, y es la "
+        "marca del rock y del modo mixolidio."),
     ),
     "bVI": BorrowedChord(
-        "bVI", "6to bemol mayor (bVI)", "bVI", 8, "major",
-        "Submediante mayor prestada. Suele encadenarse con el bVII para "
-        "volver a la tónica.",
+        "bVI", N("6to bemol mayor (bVI)"), "bVI", 8, "major",
+        N("Submediante mayor prestada. Suele encadenarse con el bVII para "
+        "volver a la tónica."),
     ),
     "bIII": BorrowedChord(
-        "bIII", "3ro bemol mayor (bIII)", "bIII", 3, "major",
-        "Mediante mayor prestada. Da un giro brillante e inesperado hacia "
-        "el modo menor.",
+        "bIII", N("3ro bemol mayor (bIII)"), "bIII", 3, "major",
+        N("Mediante mayor prestada. Da un giro brillante e inesperado hacia "
+        "el modo menor."),
     ),
     "subV": BorrowedChord(
-        "subV", "Sustituto tritonal (bII7)", "subV", 1, "dominant",
-        "El dominante que reemplaza al V, construido un semitono por encima "
+        "subV", N("Sustituto tritonal (bII7)"), "subV", 1, "dominant",
+        N("El dominante que reemplaza al V, construido un semitono por encima "
         "de la tónica. Comparte con el V su tercera y su séptima -- las dos "
         "notas que definen la tensión -- y por eso puede ocupar su lugar y "
-        "resolver bajando un semitono.",
+        "resolver bajando un semitono."),
     ),
     "iiø": BorrowedChord(
-        "iiø", "2do semidisminuido (iiø)", "iiø", 2, "halfdim",
-        "El ii del modo menor. Va de la mano del iv prestado y prepara la "
-        "dominante con un color más oscuro.",
+        "iiø", N("2do semidisminuido (iiø)"), "iiø", 2, "halfdim",
+        N("El ii del modo menor. Va de la mano del iv prestado y prepara la "
+        "dominante con un color más oscuro."),
     ),
 }
 

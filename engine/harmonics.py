@@ -34,6 +34,7 @@ import threading
 from dataclasses import dataclass, field, replace
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
+from . import ambience
 from .audio import SAMPLE_RATE, _play_file, midi_to_frequency, write_wav
 from engine.i18n import tr, trf, trs
 
@@ -406,11 +407,15 @@ def play(spectrum: Spectrum, seconds: float = SECONDS,
     def work() -> None:
         path = ""
         try:
-            frames = render(frozen, seconds)
-            handle = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-            path = handle.name
-            handle.close()
-            write_wav(path, frames)
+            # Como en `audio.play_chords`: que la síntesis no le saque el
+            # intérprete a la ventana mientras dura.
+            with ambience.fine_switching():
+                frames = render(frozen, seconds)
+                handle = tempfile.NamedTemporaryFile(suffix=".wav",
+                                                     delete=False)
+                path = handle.name
+                handle.close()
+                write_wav(path, frames)
             _play_file(path)
         except Exception:                                   # noqa: BLE001
             pass

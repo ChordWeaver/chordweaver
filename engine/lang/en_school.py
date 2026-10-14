@@ -22,8 +22,6 @@ CATALOG = {
         'Click writes a whole note in the chosen voice, right-click erases '
         'and Tab switches voice.',
     'Graduación': 'Graduation',
-    '{title} · se abre al aprobar las anteriores':
-        '{title} · opens once you pass the ones before it',
     '✓  Aprobado': '✓  Passed',
     'c. {bar}→{until}': 'm. {bar}→{until}',
     'UNIDAD {numeral} · {title}': 'UNIT {numeral} · {title}',

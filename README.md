@@ -620,7 +620,7 @@ Before touching any musical logic, read [`MUSIC_LOGIC.md`](MUSIC_LOGIC.md).
 
 ## Status
 
-* Version 1.3. 677 tests over the engine, the Analyzer, the Schoolhouse
+* Version 1.3.1. 681 tests over the engine, the Analyzer, the Schoolhouse
   and export, plus `verify_ui.py` over the interface.
 
 ## License

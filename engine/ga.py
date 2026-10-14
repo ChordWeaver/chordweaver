@@ -568,7 +568,7 @@ def _chord_list(indices: Sequence[int]) -> str:
     """"acorde 3", "acordes 1 y 16", "acordes 1, 4 y 9"."""
     numbers = [str(i + 1) for i in indices]
     if len(numbers) == 1:
-        return f"acorde {numbers[0]}"
+        return trf("acorde {number}", number=numbers[0])
     if len(numbers) == 2:
         return trf("acordes {numbers} y {numbers2}",
                    numbers=numbers[0], numbers2=numbers[1])

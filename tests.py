@@ -7485,6 +7485,11 @@ class TestAnalysisCadences(unittest.TestCase):
         source = inspect.getsource(analysis.quoted_cadences)
         self.assertIn("harmony.SET_PIECES", source)
 
+    def test_every_quotation_has_its_name_in_the_catalogue(self):
+        """El rótulo de una cita va en minúscula y así se traduce."""
+        lowered = {piece.label.lower() for piece in harmony.SET_PIECES.values()}
+        self.assertEqual(lowered, set(analysis.SET_PIECE_KINDS))
+
 
 class TestAnalysisCounterpoint(unittest.TestCase):
     def test_parallel_fifths_and_octaves_are_found(self):
@@ -9481,6 +9486,49 @@ class TestAnalysisChordCoverage(unittest.TestCase):
             [[(chord[voice], 2.0) for chord in chords] for voice in range(4)]))
         self.assertEqual([segment.figure for segment in result.segments],
                          ["", "6", "6/4", "7", "6/5", "4/2", ""])
+
+
+class TestSchoolCard(unittest.TestCase):
+    """El dibujo de la escuelita en el inicio muestra dónde anda el usuario."""
+
+    def state_after(self, units):
+        import types
+        import app
+        from engine import school as curriculum
+        passed = {entry.key: "2026-10-14"
+                  for unit in curriculum.UNITS[:units]
+                  for lesson in unit.lessons for entry in lesson.exercises}
+        progress = curriculum.Progress(passed=passed)
+        return app.ChordWeaverApp._school_state(
+            types.SimpleNamespace(school=progress)), curriculum.UNITS
+
+    def test_the_next_unit_is_the_one_marked(self):
+        (done, current, label, graduated), units = self.state_after(2)
+        self.assertEqual(done, (1.0, 1.0) + (0.0,) * (len(units) - 2))
+        self.assertEqual(current, 2)
+        self.assertEqual(label, units[2].short)
+        self.assertFalse(graduated)
+
+    def test_with_everything_passed_only_the_star_is_left(self):
+        from engine import school as curriculum
+        (done, current, _label, _graduated), _units = self.state_after(
+            len(curriculum.UNITS))
+        self.assertTrue(all(part == 1.0 for part in done))
+        self.assertIsNone(current)
+
+    def test_the_picture_draws_every_state_without_a_window(self):
+        import homeart
+        colours = {"faint": "#5c616b", "gold": "#c9b37a",
+                   "surface": "#1e2026"}
+        for state in (homeart.SCHOOL_EXAMPLE,
+                      ((0.0,) * 8, 0, "Lectura", False),
+                      ((0.0, 0.25, 0.75, 0.43) + (0.0,) * 4, 3, "Movimientos",
+                       False),
+                      ((1.0,) * 8, None, "", True)):
+            image = homeart.school_image(420, 84, 1.0, "#d07fa0", colours,
+                                         state)
+            self.assertEqual(image.size, (420, 84))
+            self.assertEqual(image.mode, "RGBA")
 
 
 class TestSchool(unittest.TestCase):

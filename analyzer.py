@@ -156,6 +156,8 @@ class Analyzer(ctk.CTkFrame):
         self._playing = None
         self._pickup = 0.0
         self._rows: List[Tuple[ctk.CTkFrame, object]] = []
+        #: El renglón de cómo sigue, que lleva sólo el acorde elegido.
+        self._relations: Dict[int, object] = {}
         self._selected = -1
         #: Los cambios de compás de la pieza: compás -> (tiempos, figura).
         self._metres: Dict[int, Tuple[int, int]] = {1: (4, 4)}
@@ -450,7 +452,8 @@ class Analyzer(ctk.CTkFrame):
         chips = ctk.CTkFrame(row, fg_color="transparent")
         chips.pack(side="left", padx=(20, 0))
         for cadence in self.result.cadences:
-            self._chip(chips, f"c. {cadence.bar_index}  ·  {cadence.kind}",
+            self._chip(chips, trf("c. {bar}  ·  {kind}",
+                                  bar=cadence.bar_index, kind=tr(cadence.kind)),
                        self.colours["gold"], cadence.detail,
                        command=lambda c=cadence: self._show_span(c.start,
                                                                  c.index))
@@ -841,6 +844,7 @@ class Analyzer(ctk.CTkFrame):
         panel = self.harmony_panel
         self._wipe(panel)
         self._rows = []
+        self._relations = {}
         self._note(panel, "Tocá uno para ver dónde cae en la partitura.",
                    self.colours["faint"], 10, (2, 6))
         for index, segment in enumerate(self.result.segments):
@@ -902,32 +906,52 @@ class Analyzer(ctk.CTkFrame):
         # Es un renglón por acorde y con veinte acordes la lista pasaba a
         # medir el doble, que es justo lo que hay que poder recorrer de un
         # vistazo.
-        if segment.relation and index == self._selected:
-            ctk.CTkLabel(row, text=tr("↓  " + segment.relation),
-                         font=self.font(("Segoe UI", 10)),
-                         text_color=self.colours["faint"], anchor="w"
-                         ).pack(fill="x", padx=(46, 6), pady=(0, 4))
-
         for widget in [row] + _descendants(row):
             widget.bind("<Button-1>", lambda _e, i=index: self._select(i))
+        if index == self._selected:
+            self._show_relation(row, index, segment)
         return row
+
+    def _show_relation(self, row, index: int, segment) -> None:
+        """El renglón de cómo sigue, al pie del acorde elegido."""
+        if not segment.relation:
+            return
+        label = ctk.CTkLabel(row, text="↓  " + tr(segment.relation),
+                             font=self.font(("Segoe UI", 10)),
+                             text_color=self.colours["faint"], anchor="w")
+        label.pack(fill="x", padx=(46, 6), pady=(0, 4))
+        for widget in [label] + _descendants(label):
+            widget.bind("<Button-1>", lambda _e, i=index: self._select(i))
+        self._relations[index] = label
 
     def _select(self, index: int) -> None:
         """Resaltar en el sistema el acorde que se tocó en la lista."""
         if self.result is None or not 0 <= index < len(self.result.segments):
             return
-        self._selected = index
+        previous, self._selected = self._selected, index
         segment = self.result.segments[index]
         self.staff.highlight = (segment.start, segment.end)
         self.staff.redraw()
-        # La lista se rearma porque el acorde elegido muestra un renglón más
-        # que los otros. Cuesta lo que cuesta armar unas decenas de etiquetas
-        # y evita tener que mantener dos caminos de pintado.
-        self._render_harmony()
-        for position, (row, _segment) in enumerate(self._rows):
+        # Sólo cambian dos renglones: el que deja de estar elegido pierde el
+        # de cómo sigue y el nuevo lo gana. Rearmando la lista entera, cada
+        # click destruía y volvía a crear cientos de ventanas.
+        touched = {previous, index}
+        if len(self._rows) != len(self.result.segments):
+            self._render_harmony()
+            touched = range(len(self._rows))
+        else:
+            old = self._relations.pop(previous, None)
+            if old is not None:
+                old.destroy()
+            if index not in self._relations:
+                self._show_relation(self._rows[index][0], index, segment)
+        for position in touched:
+            if not 0 <= position < len(self._rows):
+                continue
             try:
-                row.configure(fg_color=self.colours["surface"]
-                              if position == index else "transparent")
+                self._rows[position][0].configure(
+                    fg_color=self.colours["surface"]
+                    if position == index else "transparent")
             except tk.TclError:
                 pass
 
@@ -1116,13 +1140,13 @@ class Analyzer(ctk.CTkFrame):
                      ).pack(side="right", padx=(0, 4))
         voice = (result.score.parts[ornament.voice].name
                  if ornament.voice < len(result.score.parts) else "")
-        ctk.CTkLabel(row, text=f"{voice} · {ornament.detail}",
+        ctk.CTkLabel(row, text=f"{i18n.tr_name(voice)} · {tr(ornament.detail)}",
                      font=self.font(("Segoe UI", 11)),
                      text_color=self.colours["muted"], wraplength=210,
                      justify="left", anchor="w").pack(fill="x", padx=(10, 4))
         definition = analysis.ORNAMENT_DEFINITIONS.get(ornament.kind, "")
         for widget in [row] + _descendants(row):
-            self._hover(widget, f"{ornament.label}: {definition}")
+            self._hover(widget, f"{tr(ornament.label)}: {tr(definition)}")
             widget.bind("<Button-1>",
                         lambda _e, o=ornament: self._show_ornament(o))
 
@@ -1298,7 +1322,7 @@ class Analyzer(ctk.CTkFrame):
         label = next((name for name, f in self.key_signatures
                       if f == score.fifths), None)
         if label:
-            self.key_menu.set(label)
+            self.key_menu.set(tr(label))
         self._pickup = score.pickup_quarters
         self.staff.set_key(score.fifths, score.beats, score.beat_type)
         self.staff.pickup = score.pickup_quarters

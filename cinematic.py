@@ -1337,15 +1337,19 @@ class Cutscene(SoundCues):
         # renglón: una escena puede querer que el mismo que siempre habla
         # normal se tome su tiempo.
         pace = style["speed"] / max(0.25, getattr(line, "drag", 1.0) or 1.0)
-        self.revealed = min(len(line.text), self.revealed + pace)
+        # Se escribe la línea ya traducida, letra por letra: traduciendo el
+        # pedazo escrito no se encuentra nunca en el catálogo, y la línea
+        # salía en castellano hasta la última letra.
+        text = tr(line.text)
+        self.revealed = min(len(text), self.revealed + pace)
         shown = int(self.revealed)
-        self.canvas.itemconfigure(self.body_text, text=tr(line.text[:shown]))
-        if shown >= len(line.text):
+        self.canvas.itemconfigure(self.body_text, text=text[:shown])
+        if shown >= len(text):
             self._finish_line()
             return
         # Un respiro en la puntuación: es lo que convierte una tira de letras
         # en alguien hablando.
-        last = line.text[shown - 1: shown]
+        last = text[shown - 1: shown]
         drag = max(0.25, getattr(line, "drag", 1.0) or 1.0)
         if last in ".…!?":
             self._pause = int(14 * drag)
@@ -1408,9 +1412,9 @@ class Cutscene(SoundCues):
 
     def _blink_prompt(self) -> None:
         last = self.index >= len(self.lines) - 1
-        text = "Terminar  ▸" if last else "Siguiente  ▸"
+        text = tr("Terminar  ▸") if last else tr("Siguiente  ▸")
         visible = (self.tick // 16) % 2 == 0
-        self.canvas.itemconfigure(self.prompt, text=tr(text if visible else ""),
+        self.canvas.itemconfigure(self.prompt, text=text if visible else "",
                                   fill=GOLD if visible else MUTED)
 
     def _poke_key(self, _event=None) -> None:
@@ -1422,8 +1426,9 @@ class Cutscene(SoundCues):
             return
         if self.typing:
             line = self.lines[self.index]
-            self.revealed = len(line.text)
-            self.canvas.itemconfigure(self.body_text, text=tr(line.text))
+            text = tr(line.text)
+            self.revealed = len(text)
+            self.canvas.itemconfigure(self.body_text, text=text)
             self._finish_line()
             return
         if self.index >= len(self.lines) - 1:

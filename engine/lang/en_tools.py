@@ -80,6 +80,7 @@ CATALOG = {
     'blanca con puntillo': 'dotted half note',
     'c. {bar}': 'm. {bar}',
     'c.{bar}': 'm.{bar}',
+    'c. {bar}  ·  {kind}': 'm. {bar}  ·  {kind}',
     'c.{bar} · t.{beat:g}': 'm.{bar} · b.{beat:g}',
     'corchea con puntillo': 'dotted eighth note',
     'desde el c.': 'from m.',
@@ -107,7 +108,6 @@ CATALOG = {
     '{ornaments} adorno(s) melódico(s)': '{ornaments} melodic ornament(s)',
     '{written} de {MIN_VOICES} voces escritas':
         '{written} of {MIN_VOICES} voices written',
-    '↓  ': '↓  ',
     '↶  Deshacer': '↶  Undo',
 
     # -- el experimentador de armónicos --------------------------------------
@@ -212,6 +212,8 @@ CATALOG = {
 
     # -- las cinemáticas -----------------------------------------------------
     'Has recibido': 'You have received',
+    'Siguiente  ▸': 'Next  ▸',
+    'Terminar  ▸': 'Finish  ▸',
     '—  algo interrumpe el trabajo  —': '—  something interrupts the work  —',
 
     # -- el cartel de versión nueva ------------------------------------------

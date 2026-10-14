@@ -12,7 +12,18 @@ CATALOG = {
     'dórico': 'dorian',
     'Bajo cromático descendente': 'Descending chromatic bass',
     'Ciclo de Vivaldi': 'Vivaldi cycle',
+    'cadencia frigia': 'Phrygian cadence',
+    'ciclo de vivaldi': 'Vivaldi cycle',
+    'bajo cromático descendente': 'descending chromatic bass',
     '7mo bemol mayor (bVII, eólico)': 'Flat seventh major (bVII, aeolian)',
+    '4to menor (iv)': 'Minor subdominant (iv)',
+    '5to menor (v)': 'Minor dominant (v)',
+    '2do bemol mayor (bII, napolitana)': 'Flat second major (bII, Neapolitan)',
+    '6ta napolitana (bII6)': 'Neapolitan sixth (bII6)',
+    '6to bemol mayor (bVI)': 'Flat sixth major (bVI)',
+    '3ro bemol mayor (bIII)': 'Flat third major (bIII)',
+    'Sustituto tritonal (bII7)': 'Tritone substitution (bII7)',
+    '2do semidisminuido (iiø)': 'Half-diminished second (iiø)',
     'Baja una quinta. Suena más relajada que ir al dominante, y es el camino habitual cuando la pieza quiere ensancharse en vez de tensar.':
         'Down a fifth. It sounds more relaxed than going to the dominant, and '
         'it is the usual road when the piece wants to widen out rather than '
@@ -145,6 +156,8 @@ CATALOG = {
     'Con las reglas prendidas no hay ninguna forma de escribir esta progresión. Probá aflojando alguna regla o ampliando el registro de las voces.':
         'With the rules switched on there is no way at all to write this '
         'progression. Try loosening a rule or widening the voices’ ranges.',
+    'acorde {number}': 'chord {number}',
+    'acordes {numbers}': 'chords {numbers}',
     'acordes {numbers} y {numbers2}': 'chords {numbers} and {numbers2}',
     'acordes {value} y {numbers}': 'chords {value} and {numbers}',
     'el acorde fijado {symbol}': 'the pinned chord {symbol}',
@@ -247,6 +260,22 @@ CATALOG = {
         'It leaps to a non-chord tone on a strong beat and resolves by step in '
         'the opposite direction.',
     'Nota de paso': 'Passing note',
+    'Anacrusa': 'Pickup',
+    'Apoyatura': 'Appoggiatura',
+    'Bordadura': 'Neighbor note',
+    'Doble bordadura': 'Double neighbor',
+    'Escapada': 'Escape tone',
+    'Grupeto': 'Turn',
+    'Mordente': 'Mordent',
+    'Nota cambiata': 'Cambiata',
+    'Nota pedal': 'Pedal point',
+    'Retardo ascendente': 'Upward suspension',
+    'mayor': 'major',
+    'menor': 'minor',
+    'frigio': 'phrygian',
+    'lidio': 'lydian',
+    'mixolidio': 'mixolydian',
+    'locrio': 'locrian',
     'Nota de paso acentuada': 'Accented passing note',
     'Retardo (suspensión)': 'Suspension',
     'Rodea la nota del acorde por arriba y por abajo antes de volver a ella.':
