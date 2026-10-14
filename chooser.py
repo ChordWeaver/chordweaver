@@ -33,7 +33,7 @@ from engine import i18n
 # La misma copia que usa el cartel de versión nueva, y a propósito una sola:
 # son dos arreglos para particularidades de Tk y de customtkinter ---ver
 # allá--- y dos copias se desincronizan el día que eso cambie de lugar.
-from updater import _centre, _hand_back_the_scaling_loop
+from updater import _centre, _hand_back_the_scaling_loop, dismiss
 
 WIDTH = 520
 MIN_HEIGHT = 300
@@ -102,21 +102,7 @@ def ask(colours: Optional[Dict[str, str]] = None,
                                                   pady=(0, 16))
 
     def close() -> None:
-        # `quit()` antes de `destroy()`, y las dos entre `try`: igual que en
-        # `updater.notice`, y por lo mismo.
-        try:
-            for pending in window.tk.call("after", "info"):
-                try:
-                    window.after_cancel(pending)
-                except Exception:                           # noqa: BLE001
-                    continue
-        except Exception:                                   # noqa: BLE001
-            pass
-        try:
-            window.quit()
-            window.destroy()
-        except Exception:                                   # noqa: BLE001
-            pass
+        dismiss(window)
 
     def choose(code: str) -> None:
         picked["code"] = code
@@ -158,8 +144,18 @@ def ask(colours: Optional[Dict[str, str]] = None,
     window.focus_force()
     if on_ready is not None:
         window.after(READY_DELAY_MS, lambda: on_ready(window))
-    window.mainloop()
-    _hand_back_the_scaling_loop()
+    try:
+        window.mainloop()
+    finally:
+        # Salga como salga el bucle, el cartel no se queda: un cartel vivo al
+        # lado del programa comparte con él el `quit()` del proceso, y
+        # cerrarlo cierra el programa.
+        try:
+            if window.winfo_exists():
+                window.destroy()
+        except Exception:                                   # noqa: BLE001
+            pass
+        _hand_back_the_scaling_loop()
     return picked["code"]
 
 

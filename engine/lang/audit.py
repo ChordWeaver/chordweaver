@@ -80,6 +80,13 @@ IGNORED = {
 }
 
 
+#: Los títulos de las tablas, por posición del argumento. Un título de una
+#: palabra sin acento ---«Nota», «Acorde»--- no parece prosa y la cosecha no
+#: lo veía, pero se dibuja con `tr()` como cualquier otro: en inglés el libro
+#: decía «Nota» arriba de un párrafo en inglés.
+TITLES = {"Entry": (1,), "Chapter": (1,), "Lesson": (1,), "Unit": (2, 3)}
+
+
 def _ignored(text: str) -> bool:
     """Si esta cadena está en la lista de las que no se traducen."""
     if text in IGNORED:
@@ -198,6 +205,14 @@ def keys_in_source() -> Dict[str, Set[str]]:
                     found.setdefault(item, set()).add(short)
             for sub in ast.walk(node.args[0]):
                 marked.add(id(sub))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            for position in TITLES.get(_called_name(node), ()):
+                if position < len(node.args):
+                    for item in _strings_in(node.args[position]):
+                        if item:
+                            found.setdefault(item, set()).add(short)
         # Y la prosa suelta: la que vive en una tabla y se traduce lejos.
         for node in ast.walk(tree):
             if (isinstance(node, ast.Constant)

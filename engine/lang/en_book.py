@@ -1948,4 +1948,28 @@ CATALOG = {
         'This is the central decision, and the program makes it with a very short '
         'order of preference. What matters is **what place the melody note '
         'occupies inside the chord**.',
+
+    'Las voces graves se escriben en otra clave, la de fa. Sus dos puntos rodean la cuarta línea desde abajo, y esa línea es el fa de abajo del do central. Contando desde ahí, las líneas son sol, si, re, fa y la, y los espacios la, do, mi y sol. El do central cae una línea adicional por encima, y es la misma tecla que el de abajo de la clave de sol.':
+        'Low voices are written in another clef, the bass clef. Its two dots '
+        'surround the fourth line from the bottom, and that line is the F '
+        'below middle C. Counting from there, the lines are G, B, D, F and A, '
+        'and the spaces A, C, E and G. Middle C sits one ledger line above, '
+        'and it is the same key as the one below the treble clef.',
+    'La clave de fa y las notas de las cinco líneas y los cuatro espacios. La última, con su línea adicional, es otra vez el do central.':
+        'The bass clef and the notes of its five lines and four spaces. The '
+        'last one, with its ledger line, is middle C again.',
+    # Títulos de una palabra, que la cosecha veía recién desde `TITLES`.
+    'Nota': 'Note',
+    'Intervalo': 'Interval',
+    'Acorde': 'Chord',
+    'Cadencial 6/4': 'Cadential 6/4',
+    'Sustituto tritonal': 'Tritone substitution',
+    'Cadencia frigia': 'Phrygian cadence',
+    'Dominantes encadenados': 'Chained dominants',
+    'Amazing Grace': 'Amazing Grace',
+    # -- alteraciones y figuras, para la escuelita
+    'Un sostenido delante de una nota la sube un semitono y un bemol la baja. El becuadro le saca la alteración. Un signo así vale para ese lugar del pentagrama hasta la barra de compás, y en el compás siguiente vuelve a mandar la armadura.':
+        'A sharp before a note raises it a semitone and a flat lowers it. The natural sign takes the alteration away. Such a sign holds for that place on the staff until the bar line, and in the next bar the key signature is in charge again.',
+    'Una nota también dura, y lo que dice cuánto es su figura. La redonda dura cuatro negras, la blanca dos, la negra una y la corchea media, así que cada una vale el doble que la siguiente. Se reconocen por la forma: la redonda es una cabeza hueca sola, la blanca le agrega una plica, la negra pinta la cabeza y la corchea le suma un gancho.':
+        'A note also lasts, and its note value says how long. The whole note lasts four quarter notes, the half note two, the quarter note one and the eighth note half of one, so each is worth twice the next. You can tell them by their shape: the whole note is a hollow head alone, the half note adds a stem, the quarter note fills the head and the eighth note adds a flag.',
 }

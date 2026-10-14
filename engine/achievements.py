@@ -211,7 +211,7 @@ CATALOG: Tuple[Achievement, ...] = (
     # que se premia es haber llegado al final, y el final es la ceremonia.
     # La descripción no dice quién viene, por lo mismo que las otras.
     Achievement("legend_born", "Nace una leyenda",
-                "Aprobá las cinco unidades de la **escuelita**.", 3),
+                "Aprobá las ocho unidades de la **escuelita**.", 3),
 
     # -- legendarios --------------------------------------------------------
     # Las descripciones no dicen cómo se consiguen: se muestran en itálica y

@@ -504,7 +504,7 @@ TOOL_CARDS = [
     # colores, y lejos del rojo con el que la corrección marca lo que está
     # mal.
     ("school", N("Escuelita"), N("Aprender escribiendo"),
-     N("Cinco unidades con ejercicios de escritura que corrige el "
+     N("Ocho unidades con ejercicios de escritura que corrige el "
        "analizador."),
      "#D3809F", "✎"),
 ]
@@ -983,6 +983,24 @@ def bind_deeply(widgets, sequence: str, callback) -> None:
         if type(widget).bind is not tk.Misc.bind:
             continue
         widget.bind(sequence, callback, add="+")
+
+
+def unless_professional(method):
+    """
+    Saltear un enganche de las visitas o del sendero en el modo profesional.
+
+    Va en los métodos que **abren** algo ---una escena, un cartel del
+    relato, el botón dorado---, no en los que anotan: lo que el usuario
+    hace se sigue contando igual, y al apagar el modo profesional lo que le
+    tocaba lo está esperando.
+    """
+    def wrapper(self, *args, **kwargs):
+        if self.settings.get("professional"):
+            return None
+        return method(self, *args, **kwargs)
+    wrapper.__name__ = method.__name__
+    wrapper.__doc__ = method.__doc__
+    return wrapper
 
 
 def unbind_one(widget, sequence: str, funcid: Optional[str]) -> None:
@@ -2826,7 +2844,8 @@ class ChordWeaverApp(ctk.CTk):
     def _home_signature(self) -> Tuple:
         """Lo que, si cambia, obliga a rearmar la pantalla inicial entera."""
         return (i18n.language(), FONT_SCALE, len(MODE_CARDS), len(TOOL_CARDS),
-                self._card_wrap(), self._home_grow())
+                self._card_wrap(), self._home_grow(),
+                bool(self.settings.get("professional")))
 
     def _card_wrap(self) -> int:
         """
@@ -2997,8 +3016,9 @@ class ChordWeaverApp(ctk.CTk):
         built: List[tk.Misc] = [shelf]
         # El recordatorio del sendero, cuando hay uno. Va debajo de todo:
         # es una capa encima del programa, no una cuarta forma de trabajar.
-        if self.story.path is not None or getattr(self, "_story_knocking",
-                                                  False):
+        if not self.settings.get("professional") and (
+                self.story.path is not None
+                or getattr(self, "_story_knocking", False)):
             holder = ctk.CTkFrame(grid, fg_color="transparent")
             holder.grid(row=HOME_SHELF_ROW + 1, column=0, columnspan=3,
                         sticky="new")
@@ -3971,6 +3991,30 @@ class ChordWeaverApp(ctk.CTk):
                      font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=440,
                      justify="left").pack(anchor="w", padx=22, pady=(2, 0))
 
+        # -- el modo profesional --------------------------------------------
+        #
+        # Se aplica al tocarlo, como el idioma: es una decisión sobre qué
+        # programa se quiere tener abierto, no un número que se ajusta y se
+        # confirma con «Aceptar».
+        ctk.CTkLabel(window, text=tr("Uso profesional"),
+                     font=scaled(("Segoe UI Semibold", 14))
+                     ).pack(anchor="w", padx=22, pady=(16, 4))
+        self.professional_var = tk.BooleanVar(
+            value=bool(self.settings.get("professional")))
+        ctk.CTkSwitch(window, text=tr("Modo profesional"),
+                      variable=self.professional_var, font=FONT_SMALL,
+                      progress_color=ACCENT,
+                      command=lambda: self._set_professional(
+                          self.professional_var.get())
+                      ).pack(anchor="w", padx=22, pady=(0, 2))
+        ctk.CTkLabel(window,
+                     text=tr("Sin visitas, sin apariciones y sin modo "
+                             "historia: queda el programa de trabajo. La "
+                             "escuelita se gradúa sin ceremonia. No se borra "
+                             "nada, y al apagarlo todo vuelve donde estaba."),
+                     font=FONT_SMALL, text_color=TEXT_MUTED, wraplength=440,
+                     justify="left").pack(anchor="w", padx=22, pady=(0, 6))
+
         # -- Volver a ver una aparición -------------------------------------
         #
         # Cada botón aparece **recién cuando esa escena ya ocurrió sola**. Una
@@ -3996,7 +4040,7 @@ class ChordWeaverApp(ctk.CTk):
              ("Gregorio · el organum", visitors.GREGORY_CHANT))
             if self.visits.knows(visitors.book_key(key))
         ]
-        if seen_scenes:
+        if seen_scenes and not self.settings.get("professional"):
             ctk.CTkLabel(window, text=tr("Volver a ver"),
                          font=scaled(("Segoe UI Semibold", 14))
                          ).pack(anchor="w", padx=22, pady=(16, 2))
@@ -4072,6 +4116,29 @@ class ChordWeaverApp(ctk.CTk):
                       border_color=BORDER_SOFT, text_color=TEXT_NORMAL,
                       hover_color=SURFACE, command=self._close_config
                       ).pack(side="right", padx=6)
+
+    def _set_professional(self, on: bool) -> None:
+        """
+        Prender o apagar el modo profesional, al instante.
+
+        Prendido, se va lo que estuviera esperando a la vista ---el llamado
+        a la puerta del inicio---. Apagado, el vigía de la figura vuelve a
+        mirar: se había quedado quieto, y sin re-armarlo el sendero no
+        volvía hasta reabrir el programa.
+        """
+        on = bool(on)
+        if on == bool(self.settings.get("professional")):
+            return
+        self.settings["professional"] = on
+        history.save_settings(self.settings, self.settings_path)
+        if on:
+            self._story_knocking = False
+        else:
+            self._story_watching = False
+            self._rearm_story_watch()
+        self._close_config()
+        self._render()
+        self._open_config()
 
     def _switch_language(self, code: str) -> None:
         """
@@ -6376,7 +6443,7 @@ class ChordWeaverApp(ctk.CTk):
         # con una tecla: el piano se enciende en dorado y lo único que hay
         # que hacer es tocarla. Mientras esté encendido, el pentagrama no se
         # edita --- lo que va a escribirse ya está decidido.
-        story_step = self.story.awaiting("harmonise")
+        story_step = self._story_awaiting("harmonise")
         highlight = None
         if story_step is not None and self.story.gate_open(story_step.gate):
             highlight = self._story_piano_highlight(story_step)
@@ -9535,8 +9602,14 @@ class ChordWeaverApp(ctk.CTk):
         for line in range(5):
             y = y_of(line * 2)
             canvas.create_line(10, y, width - 10, y, fill=RULE)
-        canvas.create_text(30, y_of(4), text="𝄞", fill=INK_MUTED,
-                           font=scaled(("Segoe UI Symbol", 30)))
+        # La de fa se centra entre la cuarta línea y la quinta, que es donde
+        # queda su cuerpo; sus dos puntos rodean la cuarta.
+        if figure.clef == "fa":
+            canvas.create_text(30, y_of(6.6), text="𝄢", fill=INK_MUTED,
+                               font=scaled(("Segoe UI Symbol", 30)))
+        else:
+            canvas.create_text(30, y_of(4), text="𝄞", fill=INK_MUTED,
+                               font=scaled(("Segoe UI Symbol", 30)))
 
         radius_x, radius_y = 6, 4.5
         for voice in figure.voices:
@@ -9569,7 +9642,7 @@ class ChordWeaverApp(ctk.CTk):
         for column, mark in enumerate(figure.marks):
             if mark:
                 canvas.create_text(left + column * gap, height - 14,
-                                   text=tr(mark), fill=INK_FAINT,
+                                   text=_figure_mark(mark), fill=INK_FAINT,
                                    font=scaled(("Georgia", 9)))
         if figure.caption:
             tk.Label(host, text=tr(figure.caption),
@@ -9878,9 +9951,13 @@ class ChordWeaverApp(ctk.CTk):
         # inutilizable. Un clic en cualquier parte, o Escape, lo levantan.
         # `bind_all` no se puede usar: customtkinter lo prohíbe en sus
         # widgets. El atajo va en la ventana, que es donde llega la tecla
-        # mientras el velo tiene el frente.
+        # mientras el velo tiene el frente. Sumado y no reemplazando, y al
+        # cerrar se desata sólo el suyo: con `unbind("<Escape>")` el velo se
+        # llevaba también el Escape del recorrido de bienvenida.
         overlay.bind("<Button-1>", lambda _event: self._close_overlay())
-        self.bind("<Escape>", self._escape_overlay)
+        unbind_one(self, "<Escape>", getattr(self, "_overlay_escape", None))
+        self._overlay_escape = self.bind("<Escape>", self._escape_overlay,
+                                         add="+")
         return overlay, content
 
     def _escape_overlay(self, _event=None) -> None:
@@ -9891,7 +9968,9 @@ class ChordWeaverApp(ctk.CTk):
         overlay, self.overlay = self.overlay, None
         if overlay is not None:
             try:
-                self.unbind("<Escape>")
+                unbind_one(self, "<Escape>",
+                           getattr(self, "_overlay_escape", None))
+                self._overlay_escape = None
                 overlay.destroy()
             except tk.TclError:
                 pass
@@ -11110,6 +11189,11 @@ class ChordWeaverApp(ctk.CTk):
         """
         if getattr(self, "_graduation_queued", False):
             return
+        if self.settings.get("professional"):
+            # Sin la ceremonia, pero con lo que deja: la escuelita queda
+            # terminada y el logro es del que hizo los ejercicios.
+            self._graduated()
+            return
         if (self.scene is not None or self.overlay is not None
                 or self.celebrations):
             # Hay otra cosa a pantalla completa ---una escena, la animación
@@ -11182,7 +11266,7 @@ class ChordWeaverApp(ctk.CTk):
         quiere producir.
         """
         self._story_watching = False
-        if not self.story_offers:
+        if not self.story_offers or self.settings.get("professional"):
             return
         try:
             if not self.winfo_exists():
@@ -11233,6 +11317,18 @@ class ChordWeaverApp(ctk.CTk):
         self._story_watching = True
         self.after(self.STORY_POLL_MS if delay is None else delay,
                    self._watch_story)
+
+    def _story_awaiting(self, mode: str):
+        """
+        El tramo del sendero que espera algo en este modo, o None.
+
+        Es la pregunta de todas las pantallas al relato, y en el modo
+        profesional contesta que no hay ninguno: el sendero queda en pausa
+        donde estaba, sin carteles ni teclas doradas.
+        """
+        if self.settings.get("professional"):
+            return None
+        return self.story.awaiting(mode)
 
     def _story_quiet(self) -> bool:
         """¿Está la aplicación en un momento en el que se puede interrumpir?"""
@@ -11578,7 +11674,7 @@ class ChordWeaverApp(ctk.CTk):
         barato: son media docena de cifrados y un patrón de dos o tres
         acordes. Cuesta menos que el ``configure`` que viene después.
         """
-        step = self.story.awaiting("manual")
+        step = self._story_awaiting("manual")
         if step is None:
             return set()
         gate = story.STEP_GATES.get(step.key, "")
@@ -11623,7 +11719,7 @@ class ChordWeaverApp(ctk.CTk):
         una sola palabra, que lo que acaba de escribir es lo que le pidieron
         --- y se apaga solo si lo desarma.
         """
-        if self.story.awaiting("manual") is None:
+        if self._story_awaiting("manual") is None:
             return
         shimmer_while(record["entry"],
                       lambda r=record: id(r) in self._story_lit_chords())
@@ -11672,6 +11768,7 @@ class ChordWeaverApp(ctk.CTk):
                     step.locked_text + ".",
                     heading="El sendero avanza")
 
+    @unless_professional
     def _story_after_run(self, outcome) -> None:
         """
         ¿La corrida que acaba de terminar completa el tramo a mano?
@@ -11679,7 +11776,7 @@ class ChordWeaverApp(ctk.CTk):
         Sólo miran acá los tramos del Organizador: los otros dos los dispara
         el botón dorado, que ya sabe qué tramo está cumpliendo.
         """
-        step = self.story.awaiting("manual")
+        step = self._story_awaiting("manual")
         if step is None or outcome is None or not outcome.succeeded:
             return
         gate = story.STEP_GATES.get(step.key, "")
@@ -11826,6 +11923,7 @@ class ChordWeaverApp(ctk.CTk):
                     Tooltip(goal, tr(step.hint))
         panel.pack(fill="x", padx=8, pady=(0, 6))
 
+    @unless_professional
     def _story_golden_button(self, master):
         """
         El botón dorado del tramo en curso, si el tramo se juega con uno.
@@ -11914,7 +12012,7 @@ class ChordWeaverApp(ctk.CTk):
 
     def _story_manual_notice(self) -> None:
         """La consigna del tramo a mano, arriba de la pantalla de acordes."""
-        step = self.story.awaiting("manual")
+        step = self._story_awaiting("manual")
         if step is None:
             return
         panel = ctk.CTkFrame(self.body, fg_color=SURFACE_LIGHT,
@@ -11971,7 +12069,7 @@ class ChordWeaverApp(ctk.CTk):
         """
         if getattr(self, "_story_melody_playing", False):
             return
-        step = self.story.awaiting("harmonise")
+        step = self._story_awaiting("harmonise")
         if step is None or not self.story.gate_open(step.gate):
             return
         piece = story.piece_for(step.key, self._story_tonic())
@@ -12021,7 +12119,7 @@ class ChordWeaverApp(ctk.CTk):
 
         def follow() -> None:
             self._story_melody_playing = False
-            if self.story.awaiting("harmonise") is None:
+            if self._story_awaiting("harmonise") is None:
                 return          # se cambió de pantalla mientras sonaba
             self._run_story_piece(piece)
 
@@ -12325,6 +12423,7 @@ class ChordWeaverApp(ctk.CTk):
         return (self.achievements.has(key) or self.story.knows(key)
                 or self.visits.knows(key))
 
+    @unless_professional
     def _story_book_read(self, key: str) -> None:
         """Dar por leído un apartado del sendero, y destrabar si toca."""
         if key not in story.BOOK_GATES.values():
@@ -12423,6 +12522,7 @@ class ChordWeaverApp(ctk.CTk):
             return
         self.after(250, lambda: self._when_sounds(names, then, tries + 1))
 
+    @unless_professional
     def _open_visit(self, key: str) -> None:
         """Encolar una visita y abrirla cuando sus ruidos estén listos."""
         visit = visitors.VISITS.get(key)
@@ -12534,6 +12634,7 @@ class ChordWeaverApp(ctk.CTk):
 
     # -- la visión -----------------------------------------------------------
 
+    @unless_professional
     def _warm_vision(self) -> None:
         """
         Empezar a sintetizar los ruidos de la visión, por las dudas.
@@ -12567,6 +12668,7 @@ class ChordWeaverApp(ctk.CTk):
             return
         ambience.summon_all(self.VISION_SOUNDS)
 
+    @unless_professional
     def _maybe_vision(self) -> None:
         """
         El cruce de caminos, si el sorteo lo quiere.
@@ -12884,6 +12986,26 @@ class ChordWeaverApp(ctk.CTk):
                 return          # con un acorde ilegible no hay patrón que ver
         self._award(achievements.inspect_written_chords(
             chords, self.achievements.pending()))
+
+
+#: Las notas en solfeo de los rótulos del libro, por su letra.
+_SOLFEGE_LETTERS = {"do": "C", "re": "D", "mi": "E", "fa": "F", "sol": "G",
+                    "la": "A", "si": "B"}
+
+
+def _figure_mark(mark: str) -> str:
+    """
+    Un rótulo de los pentagramas del libro, en el idioma de la pantalla.
+
+    Los que son una nota ---«sol4»--- no se buscan en el catálogo: en inglés
+    se dicen con su letra, «G4», igual que en el resto del programa.
+    """
+    name = mark.rstrip("0123456789")
+    octave = mark[len(name):]
+    if octave and name in _SOLFEGE_LETTERS:
+        return (mark if i18n.is_default()
+                else _SOLFEGE_LETTERS[name] + octave)
+    return tr(mark)
 
 
 def main() -> None:

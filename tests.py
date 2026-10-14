@@ -1580,6 +1580,15 @@ class TestSettingsPersistence(unittest.TestCase):
             self.assertTrue(values["tutorial_seen"])
             self.assertEqual(values["guides_seen"], ["chords", "melody"])
 
+    def test_the_professional_mode_starts_off_and_is_remembered(self):
+        """El modo profesional viene apagado y, prendido, sigue prendido al
+        reabrir: sin estar en la lista blanca se apagaba solo."""
+        self.assertIs(history.DEFAULT_SETTINGS["professional"], False)
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "settings.json")
+            history.save_settings({"professional": True}, path)
+            self.assertTrue(history.load_settings(path)["professional"])
+
 
 class TestVoicingQuality(unittest.TestCase):
     def test_voices_do_not_land_on_the_same_pitch(self):
@@ -9493,12 +9502,13 @@ class TestSchool(unittest.TestCase):
         for item in school.exercises():
             if item.kind not in school.WRITTEN:
                 continue
-            good = school.grade(item, school.lines_from(item.solution,
-                                                        item.lanes))
+            good = school.grade(item, school.model_lines(item))
             self.assertTrue(good.passed,
                             f"{item.key}: {[r.text for r in good.problems]}")
-            bad = school.grade(item, school.lines_from(item.mistake,
-                                                       item.lanes))
+            # La respuesta buena no toca nada de lo dado.
+            self.assertIsNone(school.tampered(item, school.model_lines(item)),
+                              item.key)
+            bad = school.grade(item, school.model_lines(item, wrong=True))
             self.assertFalse(bad.passed, item.key)
             # Y dice dónde: compás, y voces cuando es una falta entre voces.
             self.assertTrue(any(r.bar for r in bad.problems), item.key)
@@ -9719,13 +9729,166 @@ class TestSchool(unittest.TestCase):
                          tuple(reversed(staff.GRAND_VOICES)))
 
     def test_bach_counts_the_exercises_right(self):
-        """La graduación dice «treinta y tres»: si cambia el número, cambia
-        la línea."""
+        """La graduación dice «cincuenta y tres»: si cambia el número,
+        cambia la línea."""
         school = self._school()
-        self.assertEqual(len(school.exercises()), 33)
+        self.assertEqual(len(school.exercises()), 53)
         bach = next(lines for speaker, lines, _n, _d in school.GRADUATION
                     if speaker == visitors.BACH)
-        self.assertTrue(any("Treinta y tres" in line.text for line in bach))
+        self.assertTrue(any("Cincuenta y tres" in line.text for line in bach))
+
+    def test_the_reading_unit_places_notes_like_the_staff(self):
+        """
+        Lo que la corrección dice de dónde está una nota es lo que dibuja el
+        sistema: la línea de la clave de sol es sol, la cuarta de la de fa es
+        fa, y el do central cae en una línea adicional de cada lado.
+        """
+        import staff                                 # noqa: PLC0415
+        school = self._school()
+        self.assertEqual(school.staff_step(67, True), 2)
+        self.assertEqual(school.staff_step(53, False), 6)
+        self.assertEqual(school.staff_step(60, True), -2)
+        self.assertEqual(school.staff_step(60, False), 10)
+        # Contra el pentagrama de verdad: un grado de diferencia en el
+        # sistema es un lugar de diferencia acá, en las dos claves.
+        for pitch in (43, 48, 53, 57, 60, 64, 67, 72, 77):
+            self.assertEqual(
+                staff.index_for_pitch(pitch, 0) - staff.index_for_pitch(
+                    school.BOTTOM_LINE[pitch >= 60], 0),
+                school.staff_step(pitch, pitch >= 60), pitch)
+        # Y escrita como la escribe el sistema en cualquier armadura: el
+        # lugar (corrido una octava, por cómo cuenta cada uno) y el signo.
+        for fifths in range(-6, 7):
+            for pitch in range(36, 90):
+                place, alteration = school.spelled(pitch, fifths)
+                index = staff.index_for_pitch(pitch, fifths)
+                self.assertEqual(place - 7, index, (pitch, fifths))
+                self.assertEqual(staff.pitch_at(index, fifths, alteration),
+                                 pitch, (pitch, fifths))
+        self.assertEqual(school.staff_place(60, True),
+                         "en la primera línea adicional de abajo")
+        self.assertEqual(school.staff_place(69, True), "en el espacio 2")
+        self.assertEqual(school.correct_choice(school.exercise("lee_sol")),
+                         "0")
+        self.assertEqual(school.correct_choice(school.exercise("misma_nota")),
+                         "3")
+
+    def test_the_signs_are_the_ones_the_staff_draws(self):
+        """
+        Lo que la corrección dice de un signo ---«no lleva signo, pero antes
+        en el mismo compás hay un sostenido»--- tiene que ser lo que el
+        sistema dibuja con la misma regla.
+        """
+        import staff                                 # noqa: PLC0415
+        school = self._school()
+        for key in ("lee_sostenido", "lee_becuadro", "lee_armadura",
+                    "lee_armadura_fa"):
+            item = school.exercise(key)
+            lane = item.param("lane")
+            line = school.given_lines(item)[lane]
+            mine = school.written_signs(line, item.fifths)
+            notes, moment = [], 0.0
+            for order, (pitch, duration) in enumerate(line):
+                if pitch is not None:
+                    bar_start = (moment // school.FIGURE) * school.FIGURE
+                    notes.append((order, bar_start,
+                                  staff.index_for_pitch(pitch, item.fifths),
+                                  pitch, moment))
+                moment += duration
+            drawn = staff.displayed_accidentals(notes, item.fifths)
+            for _o, _b, _i, _p, start in notes:
+                self.assertEqual(mine[start], drawn.get(start), (key, start))
+        result = school.grade(school.exercise("lee_sostenido"), chosen="6")
+        self.assertTrue(any("antes en el mismo compás" in r.text
+                            for r in result.remarks))
+        result = school.grade(school.exercise("lee_becuadro"), chosen="7")
+        self.assertTrue(any("becuadro" in r.text for r in result.remarks))
+
+    def test_a_wrong_name_in_the_right_place_is_told_what_alters_it(self):
+        """Elegir «fa» para un fa sostenido es leer bien el lugar: decirle
+        «fa no está ahí» sería mentirle."""
+        school = self._school()
+        verdict = school.grade(school.exercise("lee_armadura"), chosen="5")
+        self.assertFalse(verdict.passed)
+        self.assertIn("en el lugar de fa", verdict.remarks[0].text)
+
+    def test_the_rhythm_answers_come_from_the_durations(self):
+        school = self._school()
+        self.assertEqual(school.correct_choice(school.exercise("figura_cual")),
+                         "1")
+        self.assertEqual(
+            school.correct_choice(school.exercise("cuantas_corcheas")), "4")
+        self.assertEqual(school.correct_choice(school.exercise("oido_quinta")),
+                         "7")
+        self.assertEqual(
+            school.correct_choice(school.exercise("oido_tercera")), "4")
+
+    def test_what_was_given_cannot_be_split(self):
+        """En un compás a medio llenar, escribir encima de una nota dada la
+        parte: eso es tocar lo dado, aunque la altura no cambie."""
+        school = self._school()
+        item = school.exercise("completar_compases")
+        lines = school.model_lines(item)
+        soprano = list(lines[school.SOPRANO])
+        soprano[0:1] = [(67, 1.0), (67, 1.0)]
+        lines[school.SOPRANO] = soprano
+        self.assertEqual(school.tampered(item, lines), (1, school.SOPRANO))
+        self.assertFalse(school.grade(item, lines).passed)
+
+    def test_the_practice_counts_for_nothing_but_its_streak(self):
+        import random as _random                     # noqa: PLC0415
+        school = self._school()
+        rng = _random.Random(7)
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "school.json")
+            progress = school.Progress.load(path)
+            previous = None
+            for clef in ("sol", "fa", "ambas") * 10:
+                item = school.practice_exercise(clef, rng, previous)
+                lane = item.param("lane")
+                pitch = item.chords[0][lane]
+                self.assertNotEqual(pitch, previous)
+                self.assertIn(pitch % 12, school.NATURAL_SEMITONES)
+                low, high = school.PRACTICE_STEPS
+                self.assertTrue(low <= school.staff_step(
+                    pitch, lane == school.SOPRANO) <= high)
+                answer = school.correct_choice(item)
+                self.assertTrue(school.grade(item, chosen=answer).passed)
+                self.assertFalse(progress.mark_passed(item.key))
+                previous = pitch
+            self.assertEqual(progress.counts()[0], 0)
+            self.assertTrue(progress.record_practice(5))
+            self.assertFalse(progress.record_practice(3))
+            self.assertEqual(school.Progress.load(path).practice_best, 5)
+
+    def test_the_note_answers_speak_the_screen_language(self):
+        school = self._school()
+        option = next(o for o in school.exercise("lee_sol").options
+                      if o.note == 7)
+        try:
+            self.assertEqual(school.option_label(option), "Sol")
+            i18n.set_language("en")
+            self.assertEqual(school.option_label(option), "G")
+        finally:
+            i18n.set_language(i18n.DEFAULT)
+
+    def test_a_unit_added_in_front_does_not_lock_what_was_reached(self):
+        """
+        Quien ya iba por los movimientos cuando apareció la unidad de lectura
+        sigue donde estaba: lo nuevo de adelante no le cierra nada.
+        """
+        school = self._school()
+        with tempfile.TemporaryDirectory() as folder:
+            progress = school.Progress.load(os.path.join(folder, "s.json"))
+            moves = next(u for u in school.UNITS if u.key == "contrapunto")
+            for item in moves.lessons[0].exercises:
+                progress.mark_passed(item.key)
+            self.assertTrue(progress.lesson_open(moves.lessons[0]))
+            self.assertTrue(progress.lesson_open(moves.lessons[1]))
+            self.assertFalse(progress.lesson_open(moves.lessons[2]))
+            self.assertIs(progress.current(), moves.lessons[1])
+            # Y la lectura sigue abierta, para hacerla cuando quiera.
+            self.assertTrue(progress.lesson_open(school.UNITS[0].lessons[2]))
 
     def test_the_award_exists_with_three_stars(self):
         school = self._school()
@@ -9777,6 +9940,7 @@ class TestSchool(unittest.TestCase):
             awarded, queued, waited = [], [], []
             fake = types.SimpleNamespace(
                 school=progress, scene=None, overlay=None, celebrations=[],
+                settings={},
                 VISIT_SOUNDS=app.ChordWeaverApp.VISIT_SOUNDS,
                 GRADUATION_SOUNDS=app.ChordWeaverApp.GRADUATION_SOUNDS,
                 _award=lambda keys: awarded.extend(keys),
@@ -9800,6 +9964,16 @@ class TestSchool(unittest.TestCase):
             afters = [extra.get("after") for _s, extra in queued]
             self.assertEqual(afters[:2], [None, None])
             afters[-1]()
+            self.assertEqual(awarded, [school.AWARD])
+            self.assertTrue(progress.graduated)
+            # En el modo profesional no hay ceremonia, pero sí lo que deja.
+            progress.graduated = ""
+            awarded.clear()
+            queued.clear()
+            fake.settings = {"professional": True}
+            fake._graduation_queued = False
+            app.ChordWeaverApp._open_graduation(fake)
+            self.assertEqual(queued, [])
             self.assertEqual(awarded, [school.AWARD])
             self.assertTrue(progress.graduated)
 
@@ -10197,6 +10371,27 @@ class TestConsoleless(unittest.TestCase):
         self.assertLess(source.index("console.guard_streams()"),
                         source.index("import customtkinter"))
 
+
+
+class TestUpdateHeadline(unittest.TestCase):
+    """El aviso de versión nueva habla el idioma del programa."""
+
+    def test_the_headline_is_chosen_when_shown(self):
+        from engine import updates                   # noqa: PLC0415
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "version.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"version": "99.0",
+                           "page": "https://chordweaver.github.io/",
+                           "headline": {"es": "Trae cosas.",
+                                        "en": "It brings things."}}, handle)
+            url = "file:///" + path.replace(os.sep, "/")
+            release = updates.look("1.0", url)
+        self.assertIsNotNone(release)
+        self.assertEqual(release.headline_in("en"), "It brings things.")
+        self.assertEqual(release.headline_in("es"), "Trae cosas.")
+        # Un idioma que el archivo no trae cae en la línea de siempre.
+        self.assertEqual(release.headline_in("fr"), "Trae cosas.")
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -12,7 +12,7 @@ The usual entry point is :func:`engine.session.generate`.
 
 #: La versión del programa entero, y la única. La interfaz la muestra al pie
 #: de la configuración; cualquier otro lugar que la necesite la lee de acá.
-__version__ = "1.2 ALPHA"
+__version__ = "1.3 ALPHA"
 
 # El motor compilado, desde una ruta corta si la del programa es larga: con
 # el ejecutable unas carpetas adentro, Windows no carga los `.pyd` y el

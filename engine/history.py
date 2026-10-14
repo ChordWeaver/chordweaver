@@ -330,6 +330,11 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     #: El WAV del timbre «muestra cargada». Se guarda aunque se elija otro
     #: timbre después, para que volver a la muestra no pida buscarlo de nuevo.
     "timbre_path": "",
+    #: El modo profesional: sin visitas, sin visiones, sin sendero y sin las
+    #: escenas de la graduación. Queda el programa de trabajo. No borra
+    #: nada: lo que se vio y lo que se ganó sigue ahí, y apagándolo vuelve
+    #: todo donde estaba.
+    "professional": False,
 }
 
 

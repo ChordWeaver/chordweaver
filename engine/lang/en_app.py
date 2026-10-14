@@ -17,8 +17,8 @@ CATALOG = {
     'Traés una partitura y te dice qué acorde es cada uno, qué función cumple y qué hacen las voces.':
         'Bring a score and it tells you each chord, what it does in the key '
         'and what the voices are doing.',
-    'Cinco unidades con ejercicios de escritura que corrige el analizador.':
-        'Five units of writing exercises, marked by the Analyzer.',
+    'Ocho unidades con ejercicios de escritura que corrige el analizador.':
+        'Eight units of writing exercises, marked by the Analyzer.',
     'Tres lugares que no componen nada. El experimentador desarma una nota en sus armónicos, el analizador lee una partitura que traés y la escuelita te enseña con ejercicios que corrige el analizador.':
         'Three places that do not compose anything. The Workbench takes a '
         'note apart into its harmonics, the Analyzer reads a score you bring, '
@@ -118,6 +118,12 @@ CATALOG = {
         'Open the theory book from the home screen and read the chapter “The '
         'music of the oppressed”. Opening it and looking at it is enough.',
     'Accesibilidad': 'Accessibility',
+    'Uso profesional': 'Professional use',
+    'Modo profesional': 'Professional mode',
+    'Sin visitas, sin apariciones y sin modo historia: queda el programa de trabajo. La escuelita se gradúa sin ceremonia. No se borra nada, y al apagarlo todo vuelve donde estaba.':
+        'No visits, no apparitions and no story mode: just the working '
+        'program. The Schoolhouse graduates without a ceremony. Nothing is '
+        'deleted, and turning it off puts everything back where it was.',
     'Aceptar': 'OK',
     'Acorde inicial y final': 'First and last chord',
     'Acordes con color añadido': 'Chords with added color',

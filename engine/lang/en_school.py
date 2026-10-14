@@ -48,8 +48,8 @@ CATALOG = {
 
     # -- el logro ------------------------------------------------------------
     'Nace una leyenda': 'A Legend Is Born',
-    'Aprobá las cinco unidades de la **escuelita**.':
-        'Pass all five units of the **schoolhouse**.',
+    'Aprobá las ocho unidades de la **escuelita**.':
+        'Pass all eight units of the **schoolhouse**.',
 
     # -- la entrada del libro sobre las inversiones --------------------------
     'Qué nota va en el bajo': 'Which note goes in the bass',
@@ -676,7 +676,6 @@ CATALOG = {
     'Un golpe seco sobre la mesa, como quien pide que se presten los cuadernos.':
         'A sharp knock on the table, like someone asking for the exercise '
         'books to be handed in.',
-    'Treinta y tres ejercicios.': 'Thirty-three exercises.',
     'En Leipzig enseñaba en la escuela de Santo Tomás. Los alumnos me traían un bajo y yo les devolvía el cuaderno con los errores señalados en el margen.':
         'In Leipzig I taught at the St. Thomas School. The pupils brought me '
         'a bass line and I handed the book back with the mistakes marked in '
@@ -731,4 +730,304 @@ CATALOG = {
     '{name} trae valores que no son sonido (infinitos o indefinidos). Volvé a exportarlo desde el programa que lo hizo.':
         '{name} contains values that are not sound (infinite or undefined). '
         'Export it again from the program that made it.',
+
+    # -- unidad 1 · leer la partitura ---------------------------------------
+    'Leer la partitura': 'Reading the score',
+    'Lectura': 'Reading',
+    'La clave de sol': 'The treble clef',
+    'La clave de fa': 'The bass clef',
+    'El do central y las líneas adicionales': 'Middle C and ledger lines',
+    'La clave de sol se dibuja enroscada en la segunda línea del pentagrama, contando desde abajo, y esa línea pasa a ser sol. Es el sol que está justo arriba del do central.':
+        'The treble clef curls around the second line of the staff, counting '
+        'from the bottom, and that line becomes G. It is the G just above '
+        'middle C.',
+    'Desde ahí se cuenta para arriba y para abajo, una nota por línea y otra por espacio. Las líneas son mi, sol, si, re y fa, y los espacios fa, la, do y mi. Con encontrar el sol y contar alcanza.':
+        'From there you count up and down, one note per line and one per '
+        'space. The lines are E, G, B, D and F, and the spaces F, A, C and E. '
+        'Finding the G and counting is enough.',
+    'Las voces graves se escriben en la clave de fa. Sus dos puntos van uno arriba y otro abajo de la cuarta línea, y esa línea es fa, el que está debajo del do central.':
+        'Low voices are written in the bass clef. Its two dots sit one above '
+        'and one below the fourth line, and that line is F, the one below '
+        'middle C.',
+    'Se lee igual que la de sol, contando desde la línea de la clave. Las líneas son sol, si, re, fa y la, y los espacios la, do, mi y sol. En el sistema de dos pentagramas el bajo se escribe acá.':
+        "It is read the same way as the treble clef, counting from the "
+        "clef's line. The lines are G, B, D, F and A, and the spaces A, C, E "
+        "and G. In the two-staff system the bass is written here.",
+    'Entre los dos pentagramas cabe una nota más, el do central. Se escribe con una rayita propia, la línea adicional, debajo del pentagrama de sol o encima del de fa, y en los dos lugares es la misma tecla del piano.':
+        'One more note fits between the two staves: middle C. It gets a short '
+        'line of its own, a ledger line, below the treble staff or above the '
+        'bass staff, and in both places it is the same piano key.',
+    'Cualquier nota que se salga del pentagrama lleva una línea adicional por cada línea que le falta, y se sigue contando igual. Subir una octava es subir siete lugares, así que lo que estaba en una línea vuelve a aparecer en un espacio.':
+        'Any note that leaves the staff gets one ledger line for each line it '
+        'is missing, and you keep counting the same way. Going up an octave '
+        'is going up seven places, so what was on a line shows up again in a '
+        'space.',
+    'La soprano canta una nota por compás. ¿Cuál es la del compás 3?':
+        'The soprano sings one note per bar. Which one is in bar 3?',
+    'El bajo canta una nota por compás. ¿Cuál es la del compás 3?':
+        'The bass sings one note per bar. Which one is in bar 3?',
+    'Escribí en la soprano las notas de los cuatro espacios, de abajo para arriba y una por compás: fa, la, do y mi.':
+        'Write the notes of the four spaces in the soprano, bottom to top '
+        'and one per bar: F, A, C and E.',
+    'Escribí en el bajo las notas de las cuatro primeras líneas, de abajo para arriba y una por compás: sol, si, re y fa.':
+        'Write the notes of the first four lines in the bass, bottom to top '
+        'and one per bar: G, B, D and F.',
+    'En los cuatro compases el bajo y la soprano cantan una nota con el mismo nombre. ¿En cuál cantan exactamente la misma nota?':
+        'In all four bars the bass and the soprano sing a note with the same '
+        'name. In which one do they sing exactly the same note?',
+    'Leé el bajo y escribí en la soprano las mismas notas una octava más arriba, compás por compás.':
+        'Read the bass and write the same notes an octave higher in the '
+        'soprano, bar by bar.',
+    'Compás {bar}': 'Bar {bar}',
+    'la clave de sol': 'the treble clef',
+    'la clave de fa': 'the bass clef',
+    'en la línea {n}': 'on line {n}',
+    'en el espacio {n}': 'in space {n}',
+    'justo debajo del pentagrama': 'just below the staff',
+    'justo encima del pentagrama': 'just above the staff',
+    'en la primera línea adicional de abajo': 'on the first ledger line below',
+    'en la línea adicional {n} de abajo': 'on ledger line {n} below',
+    'debajo de la primera línea adicional': 'below the first ledger line',
+    'debajo de la línea adicional {n}': 'below ledger line {n}',
+    'en la primera línea adicional de arriba': 'on the first ledger line above',
+    'en la línea adicional {n} de arriba': 'on ledger line {n} above',
+    'encima de la primera línea adicional': 'above the first ledger line',
+    'encima de la línea adicional {n}': 'above ledger line {n}',
+    'Es {note}, que en {clef} está {place}.':
+        'It is {note}, which in {clef} sits {place}.',
+    'En el compás {bar} escribiste {note}, que en {clef} está {place}.':
+        'In bar {bar} you wrote {note}, which in {clef} sits {place}.',
+    'Es la nota que se pide, pero en otra octava.':
+        'It is the note asked for, but in another octave.',
+    'Cada nota está donde tiene que estar.': 'Every note is where it belongs.',
+    'En {clef}, {note} está {place}, y la nota del compás {bar} no.':
+        'In {clef}, {note} sits {place}, and the note in bar {bar} does not.',
+    'En {clef}, {note} está {place} y {place2}, y la nota del compás {bar} no.':
+        'In {clef}, {note} sits {place} and {place2}, and the note in bar '
+        '{bar} does not.',
+    'En el compás {bar} las dos cantan {note}. El bajo lo escribe en la clave de fa, {low_place}, y la soprano en la de sol, {high_place}.':
+        'In bar {bar} both sing {note}. The bass writes it in the bass clef, '
+        '{low_place}, and the soprano in the treble clef, {high_place}.',
+    'En el compás {bar} las dos cantan {note}, pero la soprano lo canta una octava más arriba.':
+        'In bar {bar} both sing {note}, but the soprano sings it an octave '
+        'higher.',
+    'En el compás {bar} las dos cantan {note}, pero la soprano lo canta {octaves} octavas más arriba.':
+        'In bar {bar} both sing {note}, but the soprano sings it {octaves} '
+        'octaves higher.',
+    'Buscá la línea de la clave, sol en la de sol y fa en la de fa, y contá desde ahí: una nota por línea y otra por espacio.':
+        "Find the clef's line, G in the treble clef and F in the bass clef, "
+        "and count from there: one note per line and one per space.",
+    'El mismo nombre no alcanza. La misma nota es la misma tecla del piano, y entre las dos claves hay una sola que se puede escribir en las dos.':
+        'The same name is not enough. The same note is the same piano key, '
+        'and between the two clefs there is only one that can be written in '
+        'both.',
+    # -- lectura, ritmo, oído y práctica libre
+    'Ahora con saltos. La primera nota, sol4, ya está escrita: escribí las otras tres.':
+        'Now with leaps. The first note, G4, is already written: write the other three.',
+    'Cada compás de 4/4 suma cuatro negras, y a los de la soprano les falta el final. Completalos con las figuras que hagan falta.':
+        "Every 4/4 bar adds up to four quarter notes, and the soprano's bars are missing their ending. Complete them with the note values they need.",
+    'Cada compás suma cuatro negras.':
+        'Every bar adds up to four quarter notes.',
+    'Cada compás tiene las figuras que se piden.':
+        'Every bar has the note values asked for.',
+    'Cantá las dos notas por dentro y contá los nombres que hay entre una y otra, contando las dos.':
+        'Sing both notes in your head and count the note names from one to the other, counting both.',
+    'Cincuenta y tres ejercicios.':
+        'Fifty-three exercises.',
+    'Contá las notas de la soprano que empiezan mientras suena la nota larga del bajo.':
+        "Count the soprano notes that start while the bass's long note is sounding.",
+    'Conviene escucharlo varias veces y escribir de a una nota. Si se mueve por grados, cada nota cae en la línea o el espacio de al lado; si salta, hay que contar los lugares.':
+        'It helps to listen several times and write one note at a time. If it moves by step, each note lands on the next line or space; if it leaps, count the places.',
+    'De {a} a {b} pasan {count} nombres, {names}: es {interval}.':
+        'From {a} to {b} there are {count} note names, {names}: it is {interval}.',
+    'El compás':
+        'The bar',
+    'El dictado':
+        'Dictation',
+    'El signo vale hasta la barra de compás para ese mismo lugar del pentagrama, así que si la nota se repite en el compás sigue alterada aunque no lo lleve. El becuadro anula la alteración y la nota vuelve a ser natural.':
+        'The sign holds until the bar line for that same place on the staff, so if the note comes back in the same bar it is still altered without carrying it. The natural sign cancels the alteration and the note becomes natural again.',
+    'En Fa mayor. ¿Qué nota canta el bajo en el compás 2?':
+        'In F major. Which note does the bass sing in bar 2?',
+    'En Sol mayor. ¿Qué nota canta la soprano en el compás 3?':
+        'In G major. Which note does the soprano sing in bar 3?',
+    'En el compás {bar} hay tantas notas como se piden, pero no de la figura que se pide.':
+        'Bar {bar} has as many notes as asked for, but not the note values asked for.',
+    'En el compás {bar} queda un tiempo sin nota.':
+        'Bar {bar} has one beat without a note.',
+    'En el compás {bar} quedan {beats} tiempos sin nota.':
+        'Bar {bar} has {beats} beats without a note.',
+    'En el compás {bar} quedó un silencio.':
+        'Bar {bar} still has a rest.',
+    'En el compás {bar} se pide una sola nota y hay {count}.':
+        'Bar {bar} asks for a single note and has {count}.',
+    'En el compás {bar} se piden {wanted} notas y hay {count}.':
+        'Bar {bar} asks for {wanted} notes and has {count}.',
+    'En {clef}, {note} está {place} y {place2}, y la nota resaltada no.':
+        'In {clef}, {note} sits {place} and {place2}, and the highlighted note does not.',
+    'En {clef}, {note} está {place}, y la nota resaltada no.':
+        'In {clef}, {note} sits {place}, and the highlighted note does not.',
+    'Es una {figure}, que dura {length}.':
+        'It is a {figure}, which lasts {length}.',
+    'Escribí en la soprano, con la nota que quieras: una redonda en el compás 1, dos blancas en el 2, y en el 3 dos negras y cuatro corcheas.':
+        'Write in the soprano, on any note you like: a whole note in bar 1, two half notes in bar 2, and in bar 3 two quarter notes and four eighth notes.',
+    'Escribí en la soprano, una redonda por compás: fa sostenido, si bemol, do sostenido y mi bemol. Elegí el signo antes de hacer click.':
+        'Write in the soprano, one whole note per bar: F sharp, B flat, C sharp and E flat. Pick the sign before clicking.',
+    'Escuchar y escribir':
+        'Listening and writing',
+    'Escuchá el dictado. La primera nota, do4, ya está escrita: escribí las otras tres en la soprano, una redonda por compás.':
+        'Listen to the dictation. The first note, C4, is already written: write the other three in the soprano, one whole note per bar.',
+    'Está a un semitono de la que se pide: fijate el signo.':
+        'It is a semitone away from the one asked for: check the sign.',
+    'Está escrita en el lugar de {note}, pero algo la altera.':
+        'It is written in the place of {note}, but something alters it.',
+    'Figuras y compás':
+        'Note values and bars',
+    'Fijate si la nota lleva un signo, si antes en el mismo compás hay uno en ese mismo lugar, o si la armadura la altera.':
+        'Check whether the note carries a sign, whether there is one earlier in the same bar on that same place, or whether the key signature alters it.',
+    'La armadura':
+        'The key signature',
+    'La barra de compás corta la música en tramos iguales. El 4/4 del principio dice que en cada compás entran cuatro negras: una redonda, dos blancas, cuatro negras o cualquier mezcla que sume lo mismo.':
+        'The bar line cuts the music into equal stretches. The 4/4 at the start says that each bar holds four quarter notes: a whole note, two half notes, four quarter notes or any mix that adds up the same.',
+    'La blanca es una cabeza hueca con plica.':
+        'The half note is a hollow head with a stem.',
+    'La negra tiene la cabeza llena y plica, sin gancho.':
+        'The quarter note has a filled head and a stem, with no flag.',
+    'La redonda es una cabeza hueca, sin plica.':
+        'The whole note is a hollow head, with no stem.',
+    'La soprano canta negras. ¿Qué nota suena en el tercer tiempo del compás 1, la que está resaltada?':
+        'The soprano sings quarter notes. Which note sounds on the third beat of bar 1, the highlighted one?',
+    'Las figuras':
+        'Note values',
+    'Lleva un becuadro, que le saca la alteración.':
+        'It carries a natural sign, which takes the alteration away.',
+    'Lleva un bemol, que la baja un semitono.':
+        'It carries a flat, which lowers it a semitone.',
+    'Lleva un sostenido, que la sube un semitono.':
+        'It carries a sharp, which raises it a semitone.',
+    'Lo que dice cuánto dura una nota es su figura. La redonda dura cuatro negras, la blanca dos, la negra una y la corchea media: cada figura vale el doble que la siguiente.':
+        'What says how long a note lasts is its note value. The whole note lasts four quarter notes, the half note two, the quarter note one and the eighth note half of one: each value is worth twice the next.',
+    'Los intervalos de oído':
+        'Intervals by ear',
+    'Los sostenidos o bemoles que van al lado de la clave son la armadura. Valen para toda la pieza y en todas las octavas: con un sostenido en la línea del fa, cada fa que aparezca se canta fa sostenido sin que nadie lo vuelva a escribir.':
+        'The sharps or flats next to the clef are the key signature. They hold for the whole piece and in every octave: with a sharp on the F line, every F that shows up is sung F sharp without anyone writing it again.',
+    'Mientras dura la {long} del {voice}, la {other} canta {count}: cada {short} dura {short_length} y la {long} dura {long_length}.':
+        "While the {voice}'s {long} lasts, the {other} sings {count}: each {short} lasts {short_length} and the {long} lasts {long_length}.",
+    'Mientras el bajo sostiene la primera blanca, ¿cuántas corcheas canta la soprano?':
+        'While the bass holds the first half note, how many eighth notes does the soprano sing?',
+    'Mirá la cabeza, hueca o llena, y después si tiene plica y si tiene gancho.':
+        'Look at the head, hollow or filled, and then whether it has a stem and whether it has a flag.',
+    'No lleva signo, pero antes en el mismo compás hay un {sign} en ese lugar, y vale hasta la barra.':
+        'It carries no sign, but earlier in the same bar there is a {sign} on that place, and it holds until the bar line.',
+    'No lleva signo, pero la armadura baja un semitono cada {letter} de la pieza.':
+        'It carries no sign, but the key signature lowers every {letter} in the piece by a semitone.',
+    'No lleva signo, pero la armadura sube un semitono cada {letter} de la pieza.':
+        'It carries no sign, but the key signature raises every {letter} in the piece by a semitone.',
+    'Octava':
+        'Octave',
+    'Otras dos, ahora en el bajo. ¿Qué intervalo es?':
+        'Two more, now in the bass. Which interval is it?',
+    'Oído':
+        'Ear',
+    'Para reconocerlos sirve cantarlos por dentro y contar los nombres que hay entre una nota y otra: de do a mi pasan do, re y mi, así que es una tercera.':
+        'To recognise them it helps to sing them in your head and count the note names from one note to the other: from C to E you pass C, D and E, so it is a third.',
+    'Por eso Sol mayor lleva un sostenido y Fa mayor un bemol: son las notas de su escala que no están en la de Do. Para cantar un fa natural en Sol mayor hace falta un becuadro.':
+        "That is why G major has one sharp and F major one flat: they are the notes of their scale that are not in C's. To sing an F natural in G major you need a natural sign.",
+    'Quinta':
+        'Fifth',
+    'Re mayor lleva dos sostenidos, fa y do. Escribí en la soprano re, mi, fa y sol, de abajo para arriba y una por compás, sin poner ningún signo: de eso se encarga la armadura.':
+        'D major has two sharps, F and C. Write D, E, F and G in the soprano, bottom to top and one per bar, without any sign: the key signature takes care of that.',
+    'Ritmo':
+        'Rhythm',
+    'Segunda':
+        'Second',
+    'Sostenidos, bemoles y becuadros':
+        'Sharps, flats and naturals',
+    'Suenan dos notas, una después de la otra. ¿Qué intervalo hay entre ellas?':
+        'Two notes sound, one after the other. Which interval is between them?',
+    'Tercera':
+        'Third',
+    'Un compás no puede quedar corto ni pasarse. Lo que falta se llena con notas, o con silencios, que son figuras que se callan lo que duran.':
+        'A bar can be neither short nor over. What is missing is filled with notes, or with rests, which are note values that stay silent for as long as they last.',
+    'Un dictado es escuchar una melodía y escribirla. La primera nota viene dada, y para cada una de las siguientes se decide si sube o baja y cuánto.':
+        'A dictation is hearing a melody and writing it down. The first note is given, and for each of the following ones you decide whether it goes up or down and by how much.',
+    'Un intervalo se reconoce de oído antes que de vista. La segunda es el paso de una nota a la de al lado, la tercera suena a acorde, la quinta suena hueca y firme, y la octava es la misma nota más aguda.':
+        'An interval is recognised by ear before it is by sight. The second is the step from one note to the next, the third sounds like a chord, the fifth sounds hollow and firm, and the octave is the same note higher.',
+    'Un sostenido delante de una nota la sube un semitono, a la tecla de al lado, y un bemol la baja un semitono. Fa sostenido es la tecla negra entre fa y sol, y si bemol la que está entre la y si.':
+        'A sharp before a note raises it a semitone, to the next key, and a flat lowers it a semitone. F sharp is the black key between F and G, and B flat the one between A and B.',
+    'becuadro':
+        'natural',
+    'bemol':
+        'flat',
+    'blanca':
+        'half note',
+    'corchea':
+        'eighth note',
+    'cuatro tiempos':
+        'four beats',
+    'dos tiempos':
+        'two beats',
+    'medio tiempo':
+        'half a beat',
+    'negra':
+        'quarter note',
+    'redonda':
+        'whole note',
+    'sostenido':
+        'sharp',
+    'un tiempo':
+        'one beat',
+    'una octava':
+        'an octave',
+    'una quinta':
+        'a fifth',
+    'una segunda':
+        'a second',
+    'una tercera':
+        'a third',
+    '¿Qué figura es la segunda nota del compás 1, la que está resaltada?':
+        'Which note value is the second note of bar 1, the highlighted one?',
+    '¿Qué nota es?':
+        'Which note is it?',
+    '¿Y acá? ¿Qué nota suena en el tercer tiempo del compás 1?':
+        'And here? Which note sounds on the third beat of bar 1?',
+    'Clave de fa':
+        'Bass clef',
+    'Clave de sol':
+        'Treble clef',
+    'Elegí el signo antes de hacer click: vale para esa nota sola. Click derecho borra.':
+        'Pick the sign before clicking: it holds for that note alone. Right-click erases.',
+    'Elegí la figura y hacé click para escribirla. Click derecho borra.':
+        'Pick the note value and click to write it. Right-click erases.',
+    'Escuchá el dictado las veces que haga falta. Click escribe una redonda y click derecho borra.':
+        'Listen to the dictation as many times as you need. Click writes a whole note and right-click erases.',
+    'Figura':
+        'Note value',
+    'Las dos':
+        'Both',
+    'PRÁCTICA LIBRE · NO CUENTA PARA LA GRADUACIÓN':
+        'FREE PRACTICE · DOES NOT COUNT TOWARD GRADUATION',
+    'Práctica libre de lectura  →':
+        'Free reading practice  →',
+    'Racha {streak}  ·  mejor {best}':
+        'Streak {streak}  ·  best {best}',
+    'Racha {streak}  ·  mejor {best}  ·  {seconds} s por nota':
+        'Streak {streak}  ·  best {best}  ·  {seconds} s per note',
+    'Signo':
+        'Sign',
+    '←  Volver a la lección':
+        '←  Back to the lesson',
+    '▶  Dictado':
+        '▶  Dictation',
+    'En {clef}, {note} está {place} y {place2}, y esta nota no.':
+        'In {clef}, {note} sits {place} and {place2}, and this note does not.',
+    'En {clef}, {note} está {place}, y esta nota no.':
+        'In {clef}, {note} sits {place}, and this note does not.',
+    'La corchea tiene la cabeza llena, plica y un gancho, o una barra que la une a las de al lado.':
+        'The eighth note has a filled head, a stem and a flag, or a beam that '
+        'joins it to its neighbours.',
+    'Se distinguen por la forma. La redonda es una cabeza hueca sola, la blanca le agrega la plica, la negra tiene la cabeza llena y la corchea suma un gancho. Varias corcheas seguidas se unen con una barra en vez de llevar cada una el suyo.':
+        'You tell them apart by their shape. The whole note is a hollow head '
+        'alone, the half note adds the stem, the quarter note has a filled '
+        'head and the eighth note adds a flag. Several eighth notes in a row '
+        'are joined by a beam instead of each carrying its own flag.',
 }

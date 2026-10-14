@@ -267,13 +267,13 @@ def _star(canvas: tk.Canvas, x: float, y: float, radius: float,
 
 def _school(canvas: tk.Canvas, accent: str, colours: Dict[str, str],
             width: int) -> None:
-    """El recorrido de las cinco unidades: dos aprobadas y la tercera en curso."""
+    """El recorrido de las ocho unidades: dos aprobadas y la tercera en curso."""
     k = _scale(canvas, TOOL_HEIGHT)
     y = (TOOL_HEIGHT * k) / 2 - 4 * k
-    stations = 5
+    stations = 8
     x0, x1 = 36, width - 68
     gap = (x1 - x0) / (stations - 1)
-    radii = [8 * k, 8 * k, 10 * k, 6 * k, 6 * k]
+    radii = [8 * k, 8 * k, 10 * k] + [6 * k] * 5
     # Los tramos van de borde a borde y los círculos quedan huecos: así lo
     # que se ve adentro es el fondo de la tarjeta también cuando la tarjeta
     # cambia de color con el mouse encima.
@@ -299,7 +299,7 @@ def _school(canvas: tk.Canvas, accent: str, colours: Dict[str, str],
                        fill=colours["faint"], width=2, dash=(3, 3))
     _star(canvas, star, y, 8 * k, colours["gold"])
     canvas.create_text(x0 + 2 * gap, y + radii[2] + 12 * k,
-                       text=tr("Cadencias"), fill=accent,
+                       text=tr("Oído"), fill=accent,
                        font=colours["font_caption"])
 
 

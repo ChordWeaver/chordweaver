@@ -37,7 +37,7 @@ from typing import Callable, Dict, Optional
 import customtkinter as ctk
 
 from engine import __version__ as APP_VERSION
-from engine import updates
+from engine import i18n, updates
 from engine.i18n import tr, trf, trs
 
 #: Cuánto se espera a la consulta antes de abrir la ventana igual. Corre
@@ -97,6 +97,47 @@ def _hand_back_the_scaling_loop() -> None:
         pass
 
 
+def dismiss(window) -> None:
+    """
+    Cerrar una de las ventanas del arranque sin que quede nada en pantalla.
+
+    La usan el cartel de idioma y el de versión nueva, que son raíces de Tk
+    propias y se cierran antes de que exista la del programa.
+    """
+    # Primero se esconde: es lo que el usuario ve, y tiene que pasar aunque
+    # lo que sigue falle.
+    try:
+        window.withdraw()
+    except Exception:                                       # noqa: BLE001
+        pass
+    # Los `after` que quedan puestos ---los de customtkinter, que se
+    # reagendan solos, y la animación del botón que se acaba de apretar--- se
+    # cancelan antes de destruir la ventana, o el que llegue tarde se ejecuta
+    # contra un intérprete que ya no está. Se cancelan con el `after cancel`
+    # de Tcl y **no** con `after_cancel`: ése borra además el comando, y lo
+    # borra desde la ventana aunque lo haya registrado el botón. El botón lo
+    # sigue anotando como suyo, `destroy()` lo quiere borrar otra vez, falla
+    # con «can't delete Tcl command» y deja la ventana viva a mitad de
+    # desarmar. Así quedaba el cartel de idioma en pantalla al lado del
+    # programa, y cerrarlo con la cruz hacía un `quit()`, que en tkinter es
+    # uno solo para todo el proceso, y cerraba el programa.
+    try:
+        for pending in window.tk.splitlist(window.tk.call("after", "info")):
+            try:
+                window.tk.call("after", "cancel", pending)
+            except Exception:                               # noqa: BLE001
+                continue
+    except Exception:                                       # noqa: BLE001
+        pass
+    # `quit()` antes de `destroy()`: el primero termina el bucle y el segundo
+    # desarma la ventana. Cada uno en su `try`, por lo mismo que arriba.
+    for step in (window.quit, window.destroy):
+        try:
+            step()
+        except Exception:                                   # noqa: BLE001
+            continue
+
+
 def _centre(window, width: int, height: int) -> None:
     """Al medio de la pantalla, que es donde se mira cuando no hay nada más."""
     # El enganche de las pruebas: con la variable puesta, el cartel nace en
@@ -147,8 +188,9 @@ def notice(release: updates.Release, colours: Dict[str, str],
                  text_color=colours["gold"]).pack(anchor="w", padx=26,
                                                   pady=(0, 14))
 
-    if release.headline:
-        ctk.CTkLabel(caja, text=release.headline, justify="left", anchor="w",
+    titular = release.headline_in(i18n.language())
+    if titular:
+        ctk.CTkLabel(caja, text=titular, justify="left", anchor="w",
                      wraplength=WIDTH - 90, font=fuente(("Segoe UI", 13)),
                      text_color=colours["text"]).pack(anchor="w", padx=26,
                                                       pady=(0, 10))
@@ -166,35 +208,7 @@ def notice(release: updates.Release, colours: Dict[str, str],
     botones.pack(fill="x", padx=26, pady=(0, 22))
 
     def cerrar() -> None:
-        # Primero se esconde: es lo que el usuario ve, y tiene que pasar
-        # aunque lo que sigue falle. Con todo en un mismo `try`, un error en
-        # `quit()` salteaba el `destroy()` y el cartel quedaba en pantalla al
-        # lado del programa, que se abría igual: dos ventanas.
-        try:
-            cartel.withdraw()
-        except Exception:                                   # noqa: BLE001
-            pass
-        # `quit()` antes de `destroy()`: el primero termina el bucle y el
-        # segundo desarma la ventana. Sólo con `destroy()`, un `after` que
-        # quedara pendiente se ejecutaría sobre widgets que ya no están.
-        # Cada uno en su `try`, por lo mismo.
-        try:
-            # Los `after` que quedan puestos ---los de customtkinter, que se
-            # reagendan solos--- se cancelan antes de destruir la ventana. Si
-            # no, el que llegue tarde se ejecuta contra un interprete que ya
-            # no esta y Tcl escribe el error por la salida de errores.
-            for pendiente in cartel.tk.call("after", "info"):
-                try:
-                    cartel.after_cancel(pendiente)
-                except Exception:                           # noqa: BLE001
-                    continue
-        except Exception:                                   # noqa: BLE001
-            pass
-        for paso in (cartel.quit, cartel.destroy):
-            try:
-                paso()
-            except Exception:                               # noqa: BLE001
-                continue
+        dismiss(cartel)
 
     def quedarse() -> None:
         seguir["valor"] = True

@@ -74,6 +74,18 @@ class Release:
     download: str
     headline: str
     released: str = ""
+    #: La línea en cada idioma que publica el archivo, como pares
+    #: ``(idioma, texto)``. Se elige al mostrarla y no al leerla: la consulta
+    #: arranca antes de que el usuario elija idioma la primera vez, y
+    #: eligiéndola acá un programa en inglés anunciaba en castellano.
+    headlines: Tuple[Tuple[str, str], ...] = ()
+
+    def headline_in(self, language: str) -> str:
+        """La línea en ese idioma, o la de siempre si no la hay."""
+        for code, text in self.headlines:
+            if code == language:
+                return text
+        return self.headline
 
 
 def feed() -> str:
@@ -118,6 +130,14 @@ def newer(candidate: str, current: str) -> bool:
     a += (0,) * (largo - len(a))
     b += (0,) * (largo - len(b))
     return a > b
+
+
+def _headlines(raw) -> Tuple[Tuple[str, str], ...]:
+    """La línea de qué trae, por idioma."""
+    if not isinstance(raw, dict):
+        return ()
+    return tuple((str(code), value.strip()) for code, value in raw.items()
+                 if isinstance(value, str) and value.strip())
 
 
 def _headline(raw) -> str:
@@ -168,6 +188,7 @@ def look(current: str = __version__, url: Optional[str] = None,
                    notes=str(datos.get("notes", "")).strip() or page,
                    download=str(datos.get("download", "")).strip(),
                    headline=_headline(datos.get("headline")),
+                   headlines=_headlines(datos.get("headline")),
                    released=str(datos.get("released", "")).strip())
 
 

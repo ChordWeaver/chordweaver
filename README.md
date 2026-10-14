@@ -239,8 +239,11 @@ the chords right and gets the key of all eleven pieces it was compared with.
 
 ## The Schoolhouse
 
-Five units in order (voice motion, harmonies, cadences, styles and the
-harmonic series) with 33 exercises. Each lesson explains a topic, quotes the
+Eight units in order (reading the treble and bass clefs with accidentals
+and key signatures, note values, ear training and dictation, voice
+motion, harmonies, cadences, styles and the harmonic series) with 53
+exercises, plus an endless note-reading practice that does not count
+toward graduation. Each lesson explains a topic, quotes the
 theory book entry that covers it and asks you to write, choose or listen. What
 you write is marked by the Analyzer: when something is wrong it tells you in
 which bar and which voices, without giving the answer away. A lesson opens once
@@ -351,6 +354,11 @@ chapter that received the new content is highlighted in blue in the index until
 you read it.
 
 ## Story Mode
+
+If you want the program without any of this, turn on **Professional mode** in
+the settings (the gear). It is off by default. It switches off the visits, the
+apparitions and Story Mode, and the Schoolhouse graduates without its ceremony.
+Nothing is deleted: turn it off again and everything is where you left it.
 
 After five minutes of use — and only while the home screen is visible, the
 tutorial is finished, and no search is running — a golden button appears on the
@@ -612,7 +620,7 @@ Before touching any musical logic, read [`MUSIC_LOGIC.md`](MUSIC_LOGIC.md).
 
 ## Status
 
-* Version 1.2 ALPHA. 667 tests over the engine, the Analyzer, the Schoolhouse
+* Version 1.3 ALPHA. 677 tests over the engine, the Analyzer, the Schoolhouse
   and export, plus `verify_ui.py` over the interface.
 
 ## License

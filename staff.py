@@ -1589,6 +1589,12 @@ EPSILON = 1e-6
 #: deja de apretarse y se corre de costado, por el mismo motivo.
 PIXELS_PER_QUARTER = 62.0
 MIN_PIXELS_PER_QUARTER = 40.0
+#: El piso cuando no hay nada más corto que una blanca. La figura más corta
+#: ocupa entonces el doble de lo que ocupa una negra, y a cuarenta los
+#: cuatro compases de redondas de la escuelita no entraban en la ventana más
+#: chica: el sistema se corría de costado y el último compás quedaba sin su
+#: barra final.
+LONG_PIXELS_PER_QUARTER = 30.0
 #: Lo que se deja entre dos cabezas de la figura más corta escrita, medido
 #: en anchos de cabeza. Con las cabezas de la fuente ---que miden lo que
 #: mide una cabeza de verdad, más que los óvalos de antes--- el piso de
@@ -1863,6 +1869,10 @@ class GrandStaff(ctk.CTkFrame):
         #: corridas respecto de lo que el análisis decía de cada compás.
         self.pickup = 0.0
         self.duration = 1.0
+        #: Hasta dónde se aprieta una negra antes de correrse de costado.
+        #: Quien muestra pocos compases en poco lugar puede bajarlo; el piso
+        #: de las figuras cortas (`SHORTEST_ROOM`) sigue mandando igual.
+        self.quarter_floor = MIN_PIXELS_PER_QUARTER
         self.active = 0                     # índice interno: 0 es el bajo
         #: El accidente que va a llevar la próxima nota, o None.
         self.pending: Optional[int] = None
@@ -2053,8 +2063,10 @@ class GrandStaff(ctk.CTkFrame):
             return PIXELS_PER_QUARTER
         usable = max(240, self.canvas.winfo_width() - self.left_margin() - 40)
         head = WIDTHS["noteheadBlack"] * GRAND_LINE_GAP
-        floor = max(MIN_PIXELS_PER_QUARTER,
-                    SHORTEST_ROOM * head / max(0.125, self._shortest()))
+        shortest = self._shortest()
+        base = (LONG_PIXELS_PER_QUARTER if shortest >= 2.0
+                else self.quarter_floor)
+        floor = max(base, SHORTEST_ROOM * head / max(0.125, shortest))
         return max(floor, min(PIXELS_PER_QUARTER, usable / total))
 
     def _layout(self) -> Tuple[float, float]:

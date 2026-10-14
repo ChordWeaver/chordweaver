@@ -2,7 +2,7 @@
 """
 La escuelita: la pantalla.
 
-Arriba, el recorrido entero ---cinco unidades, una estación por lección y
+Arriba, el recorrido entero ---ocho unidades, una estación por lección y
 la graduación al final---, que es lo primero que hay que ver para saber
 dónde está uno. Abajo, a la izquierda, la lección: qué se explica y qué
 dice el libro de eso; a la derecha, el ejercicio.
@@ -26,6 +26,8 @@ sería aprender otro programa.
 
 from __future__ import annotations
 
+import random
+import time
 import tkinter as tk
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -68,6 +70,14 @@ MAX_REMARKS = 5
 
 #: El alto del gráfico de la serie armónica.
 TONE_HEIGHT = 236
+
+#: Cuánto puede apretarse una negra en el pentagrama de la escuelita. Con
+#: el piso de siempre, cuatro compases con corcheas no entraban al lado de
+#: la lección en la ventana más chica y el último quedaba cortado.
+QUARTER_FLOOR = 32.0
+
+#: El ancho de un botón de customtkinter cuando no se le dice ninguno.
+DEFAULT_OPTION_WIDTH = 140
 
 
 def _strip_marks(text: str) -> str:
@@ -113,6 +123,11 @@ class School(ctk.CTkFrame):
         self._checking = None
         self._answered = ""
         self._hover_station = -1
+        #: La práctica libre de lectura, mientras se practica: la clave, la
+        #: racha y los tiempos. ``None`` es «no se está practicando».
+        self._practice: Optional[dict] = None
+        self._practice_return: Optional[lessons_engine.Exercise] = None
+        self._random = random.Random()
 
         self.grid_columnconfigure(0, weight=0, minsize=LESSON_WIDTH)
         self.grid_columnconfigure(1, weight=1)
@@ -204,8 +219,8 @@ class School(ctk.CTkFrame):
         count = sum(len(unit.lessons) for unit in units)
         gaps = len(units) - 1
         # Entre unidades queda el doble de aire que entre lecciones: es lo
-        # que hace que el recorrido se lea como cinco tramos y no como una
-        # fila de diecinueve puntos.
+        # que hace que el recorrido se lea como ocho tramos y no como una
+        # fila de veintiocho puntos.
         step = (right - left) / max(1, (count - 1) + gaps)
         out, x = [], left
         for number, unit in enumerate(units):
@@ -363,6 +378,11 @@ class School(ctk.CTkFrame):
                         colour=colours["text"], wrap=LESSON_WRAP
                         ).pack(anchor="w", pady=(0, 8))
         self._book_card(host, item)
+        if unit.key == "lectura":
+            self._button(host, tr("Práctica libre de lectura  →"),
+                         self.open_practice, colour=colours["accent"],
+                         width=LESSON_WIDTH - 40
+                         ).pack(anchor="w", pady=(10, 0))
         if item.lab and self.on_lab is not None:
             self._button(host, tr("Abrir el experimentador  →"),
                          self.on_lab, colour=colours["gold"],
@@ -445,6 +465,11 @@ class School(ctk.CTkFrame):
         self._render_exercise()
 
     def _render_exercise(self) -> None:
+        if self._practice is not None:
+            self._practice = None
+            if self._practice_return is not None and \
+                    self.exercise.key == lessons_engine.PRACTICE_KEY:
+                self.exercise = self._practice_return
         card = self.card
         self._wipe(card)
         self.staff = None
@@ -454,6 +479,7 @@ class School(ctk.CTkFrame):
         # en un ejercicio de elegir tocaba el menú de voces ya destruido.
         self._lanes_offered = []
         self.voice_menu = None
+        self.dictation_button = None
         self.option_buttons: Dict[str, ctk.CTkButton] = {}
         colours = self.colours
         item = self.exercise
@@ -545,6 +571,7 @@ class School(ctk.CTkFrame):
                      "glow": colours["glow"]},
             on_change=self._staff_changed, on_hover=self._hovered,
             figures=False)
+        staff.quarter_floor = QUARTER_FLOOR
         staff.set_key(item.fifths, 4, 4)
         staff.set_metres([(1, 4, 4)])
         staff.duration = lessons_engine.FIGURE
@@ -592,6 +619,7 @@ class School(ctk.CTkFrame):
         staff = self.staff
         if staff is None:
             return
+        self._refresh_signs()
         item = self.exercise
         touched = lessons_engine.tampered(item, staff.lines())
         if touched is not None:
@@ -648,14 +676,9 @@ class School(ctk.CTkFrame):
         """Señalar en el sistema el compás del que habla la pregunta."""
         if self.staff is None:
             return
-        item = self.exercise
-        figure = lessons_engine.FIGURE
-        bar = item.param("bar")
-        step = item.param("step")
-        if step:
-            self.staff.highlight = ((step - 1) * figure, (step + 1) * figure)
-        elif bar:
-            self.staff.highlight = ((bar - 1) * figure, bar * figure)
+        span = lessons_engine.question_span(self.exercise)
+        if span is not None:
+            self.staff.highlight = span
         self.staff.redraw()
 
     def _voices_menu(self, master) -> None:
@@ -718,6 +741,7 @@ class School(ctk.CTkFrame):
 
     def _build_writing_controls(self) -> None:
         bar = self.controls
+        item = self.exercise
         self._voices_menu(bar)
         self.play_button = self._button(bar, tr("▶  Escuchar"), self._play)
         self.play_button.pack(side="left", padx=(0, 6))
@@ -729,8 +753,109 @@ class School(ctk.CTkFrame):
                                          accent=True, width=128)
         self.check_button.pack(side="right")
         self._next_slot(bar)
-        self._status(tr("Click escribe una redonda en la voz elegida, click "
-                        "derecho borra y Tab cambia de voz."))
+        self._build_tools()
+        self._status(self._writing_hint())
+
+    def _writing_hint(self) -> str:
+        item = self.exercise
+        if item.param("durations"):
+            return tr("Elegí la figura y hacé click para escribirla. Click "
+                      "derecho borra.")
+        if item.param("accidentals"):
+            return tr("Elegí el signo antes de hacer click: vale para esa "
+                      "nota sola. Click derecho borra.")
+        if item.param("dictation"):
+            return tr("Escuchá el dictado las veces que haga falta. Click "
+                      "escribe una redonda y click derecho borra.")
+        return tr("Click escribe una redonda en la voz elegida, click "
+                  "derecho borra y Tab cambia de voz.")
+
+    def _build_tools(self) -> None:
+        """
+        Las figuras y los signos, sólo en los ejercicios que los piden. En
+        los demás todo es una redonda natural, y ofrecer más sería ofrecer
+        maneras de equivocarse que no se están enseñando.
+        """
+        item = self.exercise
+        durations = item.param("durations", ())
+        signs = bool(item.param("accidentals"))
+        dictation = bool(item.param("dictation"))
+        self.sign_buttons: Dict[Optional[int], ctk.CTkButton] = {}
+        self.dictation_button = None
+        if not durations and not signs and not dictation:
+            return
+        colours = self.colours
+        tools = ctk.CTkFrame(self.card, fg_color="transparent")
+        tools.pack(fill="x", padx=20, pady=(4, 0), before=self.controls)
+        if dictation:
+            # Lo que se escucha para escribir. «Escuchar», abajo, toca lo que
+            # uno ya escribió, para compararlo.
+            self.dictation_button = self._button(
+                tools, tr("▶  Dictado"), self._play_dictation, accent=True,
+                width=130)
+            self.dictation_button.pack(side="left")
+        if durations:
+            self._label(tools, tr("Figura"), size=11,
+                        colour=colours["muted"]).pack(side="left", padx=(0, 6))
+            names = {}
+            for value in durations:
+                name = tr(lessons_engine.FIGURE_NAMES[value])
+                names[name[:1].upper() + name[1:]] = value
+            self._figures = names
+            chooser = ctk.CTkSegmentedButton(
+                tools, values=list(names), height=30,
+                font=self.font(("Segoe UI", 12)),
+                fg_color=colours["surface"],
+                selected_color=colours["accent"],
+                selected_hover_color=colours["accent_hover"],
+                unselected_color=colours["surface"],
+                unselected_hover_color=colours["raised"],
+                text_color=colours["text"],
+                command=self._figure_chosen)
+            start = 1.0 if 1.0 in durations else durations[0]
+            chooser.set(next(n for n, v in names.items() if v == start))
+            chooser.pack(side="left", padx=(0, 16))
+            if self.staff is not None:
+                self.staff.duration = start
+        if signs:
+            self._label(tools, tr("Signo"), size=11,
+                        colour=colours["muted"]).pack(side="left", padx=(0, 6))
+            for value, glyph in ((1, "♯"), (-1, "♭"), (0, "♮")):
+                button = ctk.CTkButton(
+                    tools, text=glyph, width=36, height=30,
+                    font=self.font(("Segoe UI Symbol", 15)),
+                    fg_color="transparent", border_width=1,
+                    border_color=colours["muted"],
+                    text_color=colours["text"],
+                    hover_color=colours["raised"],
+                    command=lambda v=value: self._sign_chosen(v))
+                button.pack(side="left", padx=2)
+                self.sign_buttons[value] = button
+
+    def _figure_chosen(self, name: str) -> None:
+        if self.staff is not None:
+            self.staff.duration = self._figures.get(name, lessons_engine.FIGURE)
+
+    def _sign_chosen(self, value: int) -> None:
+        """Un signo para la próxima nota; apretarlo de nuevo lo saca."""
+        if self.staff is None:
+            return
+        self.staff.pending = None if self.staff.pending == value else value
+        self._refresh_signs()
+
+    def _refresh_signs(self) -> None:
+        """Encender el signo elegido. Escrita la nota, el pentagrama lo
+        suelta y acá se apaga."""
+        chosen = self.staff.pending if self.staff is not None else None
+        for value, button in getattr(self, "sign_buttons", {}).items():
+            on = value == chosen
+            try:
+                button.configure(
+                    fg_color=self.colours["accent"] if on else "transparent",
+                    border_color=(self.colours["accent"] if on
+                                  else self.colours["muted"]))
+            except tk.TclError:
+                pass
 
     def _undo(self) -> None:
         if self.staff is not None:
@@ -767,14 +892,29 @@ class School(ctk.CTkFrame):
         events.sort(key=lambda event: (event[1], event[0]))
         return events
 
-    def _play(self) -> None:
+    def _play_dictation(self) -> None:
+        """Tocar la melodía del dictado, la que hay que escribir."""
+        item = self.exercise
+        lines = lessons_engine.given_lines(item)
+        lines[item.param("lane", lessons_engine.SOPRANO)] = [
+            (pitch, lessons_engine.FIGURE) for pitch in item.param("pitches")]
+        events = []
+        for line in lines:
+            moment = 0.0
+            for pitch, duration in line:
+                if pitch is not None:
+                    events.append((pitch, moment, duration))
+                moment += duration
+        self._play(sorted(events, key=lambda e: (e[1], e[0])))
+
+    def _play(self, events=None) -> None:
         if self._playing is not None and self._playing.is_alive():
             return
         item = self.exercise
         if item.kind == lessons_engine.TONE:
             self._playing = harmonics.play(lessons_engine.spectrum_for(item))
         else:
-            events = self._events()
+            events = events or self._events()
             if not events:
                 self._status(tr("Todavía no hay nada escrito para escuchar."))
                 return
@@ -790,7 +930,7 @@ class School(ctk.CTkFrame):
 
     def _play_buttons(self):
         found = []
-        for name in ("play_button", "listen_button"):
+        for name in ("play_button", "listen_button", "dictation_button"):
             button = getattr(self, name, None)
             if button is not None:
                 found.append(button)
@@ -808,8 +948,11 @@ class School(ctk.CTkFrame):
             self.after(SOUND_POLL_MS, self._watch_sound)
             return
         for button in self._play_buttons():
+            label = (tr("▶  Dictado")
+                     if button is getattr(self, "dictation_button", None)
+                     else tr("▶  Escuchar"))
             try:
-                button.configure(text=tr("▶  Escuchar"), state="normal")
+                button.configure(text=label, state="normal")
             except tk.TclError:
                 pass
 
@@ -940,13 +1083,18 @@ class School(ctk.CTkFrame):
         # Las respuestas van al lado de «Escuchar», y de a dos por renglón
         # cuando los rótulos son largos ---«Treinta y una centésimas por
         # debajo»---: cuatro así en fila no entran en la ventana más chica.
-        labels = [tr(option.label) for option in item.options]
-        columns = self._option_columns(labels)
+        labels = [lessons_engine.option_label(option)
+                  for option in item.options]
+        widths = self._option_widths(labels)
+        columns = self._option_columns(widths)
         options = ctk.CTkFrame(bar, fg_color="transparent")
         options.pack(side="left", fill="x", expand=True)
         for position, option in enumerate(item.options):
             button = ctk.CTkButton(
                 options, text=labels[position], height=34,
+                # A la medida del rótulo: con el ancho de fábrica de
+                # customtkinter, las siete notas no entraban en un renglón.
+                width=widths[position],
                 font=self.font(("Segoe UI", 12)),
                 fg_color=colours["surface"], hover_color=colours["raised"],
                 border_width=1, border_color=colours["border"],
@@ -957,14 +1105,11 @@ class School(ctk.CTkFrame):
             self.option_buttons[option.value] = button
         self._next_slot(bar)
 
-    def _option_columns(self, labels) -> int:
+    def _option_widths(self, labels) -> List[int]:
         """
-        Cuántas respuestas entran por renglón al lado de «Escuchar».
-
-        Medidas con la letra de verdad y no contando caracteres: «Cruce de
-        voces» y «Salto de tritono en una voz» no miden lo mismo por letra.
-        Todas en un renglón si entran ---ahorra un renglón que en la ventana
-        más chica es el de la corrección---, y si no, de a dos.
+        El ancho de cada respuesta, medido con la letra de verdad y no
+        contando caracteres: «Cruce de voces» y «Salto de tritono en una
+        voz» no miden lo mismo por letra.
         """
         try:
             # `font measure` y no un `tkfont.Font`: `app.py` anula su
@@ -974,10 +1119,27 @@ class School(ctk.CTkFrame):
                       for text in labels]
         except (tk.TclError, TypeError):
             widths = [8 * len(text) + 44 for text in labels]
+        # El ancho de fábrica de customtkinter mientras entren todas en un
+        # renglón, que es como se vieron siempre; si no, cada una a su
+        # medida, que es lo que deja las siete notas en fila.
         room = self._wrap - 150
-        return len(labels) if sum(widths) <= room else 2
+        if sum(max(DEFAULT_OPTION_WIDTH, w) + 8 for w in widths) <= room:
+            return [max(DEFAULT_OPTION_WIDTH, w) for w in widths]
+        return [max(64, w) for w in widths]
+
+    def _option_columns(self, widths) -> int:
+        """
+        Cuántas respuestas entran por renglón al lado de «Escuchar». Todas en
+        un renglón si entran ---ahorra un renglón que en la ventana más chica
+        es el de la corrección---, y si no, de a dos.
+        """
+        room = self._wrap - 150
+        return len(widths) if sum(w + 8 for w in widths) <= room else 2
 
     def _choose(self, value: str) -> None:
+        if self._practice is not None:
+            self._practice_choose(value)
+            return
         item = self.exercise
         verdict = lessons_engine.grade(item, chosen=value)
         self.verdict = verdict
@@ -1061,6 +1223,10 @@ class School(ctk.CTkFrame):
                        if r.severity == "grave" and r.bar), None)
                  or next((r for r in verdict.remarks if r.bar), None))
         staff.highlight = (self._span(first) if first is not None else None)
+        item = self.exercise
+        if verdict.passed and item.param("at") is not None:
+            # La pregunta era por una nota y no por el compás entero.
+            staff.highlight = lessons_engine.question_span(item)
         staff.redraw()
 
     def _motions(self, verdict) -> list:
@@ -1219,6 +1385,8 @@ class School(ctk.CTkFrame):
     def _following(self):
         """El ejercicio que sigue: en esta lección, o en la próxima."""
         items = lessons_engine.exercises()
+        if self.exercise not in items:
+            return None
         index = items.index(self.exercise)
         if index + 1 >= len(items):
             return None
@@ -1254,6 +1422,163 @@ class School(ctk.CTkFrame):
 
     def lesson_done_now(self) -> bool:
         return self.progress.lesson_done(self.lesson)
+
+    # -- la práctica libre de lectura ----------------------------------------
+
+    #: Cuánto se ve el «bien» antes de la nota siguiente.
+    PRACTICE_PAUSE_MS = 650
+
+    #: Las claves de la práctica, como se leen en el selector.
+    PRACTICE_CLEF_LABELS = (("sol", "Clave de sol"), ("fa", "Clave de fa"),
+                            ("ambas", "Las dos"))
+
+    def open_practice(self) -> None:
+        """Notas al azar, una por vez, sin fin y sin contar para nada."""
+        self._save_draft()
+        if self._practice is None:
+            self._practice_return = self.exercise
+        clef = self.memory.get("practice_clef", "sol")
+        if clef not in lessons_engine.PRACTICE_CLEFS:
+            clef = "sol"
+        self._render_practice(clef)
+
+    def _render_practice(self, clef: str) -> None:
+        card = self.card
+        self._wipe(card)
+        self.staff = None
+        self.verdict = None
+        self.option_buttons = {}
+        colours = self.colours
+        self._practice = {"clef": clef, "streak": 0, "times": [],
+                          "started": 0.0, "missed": False, "previous": None}
+        self.exercise = lessons_engine.practice_exercise(
+            clef, self._random)
+
+        head = ctk.CTkFrame(card, fg_color="transparent")
+        head.pack(fill="x", padx=20, pady=(16, 4))
+        self.head = head
+        self._label(head, tr("PRÁCTICA LIBRE · NO CUENTA PARA LA GRADUACIÓN"),
+                    size=10, weight="bold", colour=colours["muted"]
+                    ).pack(side="left")
+        self._button(head, tr("←  Volver a la lección"), self._leave_practice,
+                     width=170).pack(side="right")
+
+        row = ctk.CTkFrame(card, fg_color="transparent")
+        row.pack(fill="x", padx=20, pady=(4, 8))
+        names = {tr(label): key for key, label in self.PRACTICE_CLEF_LABELS}
+        selector = ctk.CTkSegmentedButton(
+            row, values=list(names), height=30,
+            font=self.font(("Segoe UI", 12)), fg_color=colours["surface"],
+            selected_color=colours["accent"],
+            selected_hover_color=colours["accent_hover"],
+            unselected_color=colours["surface"],
+            unselected_hover_color=colours["raised"],
+            text_color=colours["text"],
+            command=lambda name: self._practice_clef(names[name]))
+        selector.set(next(n for n, k in names.items() if k == clef))
+        selector.pack(side="left")
+        self.practice_stats = self._label(row, "", size=12,
+                                          colour=colours["text"])
+        self.practice_stats.pack(side="right")
+
+        self._label(card, tr("¿Qué nota es?"), size=14, weight="bold",
+                    wrap=getattr(self, "_wrap", 560)
+                    ).pack(anchor="w", padx=20, pady=(2, 10))
+        self.work = ctk.CTkFrame(card, fg_color="transparent")
+        self.work.pack(fill="x", padx=14)
+        self.controls = ctk.CTkFrame(card, fg_color="transparent")
+        self.controls.pack(fill="x", padx=20, pady=(8, 4))
+        self.status = self._label(card, "", size=11, colour=colours["muted"])
+        self.feedback = ctk.CTkScrollableFrame(card, fg_color="transparent",
+                                               height=130)
+        self.feedback.pack(fill="both", expand=True, padx=14, pady=(4, 12))
+        self._build_staff(editable=False)
+        self._build_choice_controls()
+        self._practice["started"] = time.monotonic()
+        self._practice_show_stats()
+        self._draw_trail()
+
+    def _practice_clef(self, clef: str) -> None:
+        self.memory["practice_clef"] = clef
+        self._render_practice(clef)
+
+    def _practice_show_stats(self) -> None:
+        state = self._practice
+        if state is None:
+            return
+        times = state["times"][-10:]
+        fields = dict(streak=state["streak"],
+                      best=self.progress.practice_best)
+        if times:
+            seconds = sum(times) / len(times)
+            text = trf("Racha {streak}  ·  mejor {best}  ·  {seconds} s por "
+                       "nota", seconds=(f"{seconds:.1f}" if i18n.language()
+                                        == "en" else
+                                        f"{seconds:.1f}".replace(".", ",")),
+                       **fields)
+        else:
+            text = trf("Racha {streak}  ·  mejor {best}", **fields)
+        try:
+            self.practice_stats.configure(text=text)
+        except tk.TclError:
+            pass
+
+    def _practice_choose(self, value: str) -> None:
+        state = self._practice
+        item = self.exercise
+        verdict = lessons_engine.grade(item, chosen=value)
+        colours = self.colours
+        button = self.option_buttons.get(value)
+        self._wipe(self.feedback)
+        if not verdict.passed:
+            state["streak"] = 0
+            state["missed"] = True
+            if button is not None:
+                button.configure(border_color=colours["error"],
+                                 text_color=colours["error"],
+                                 state="disabled")
+            for remark in verdict.remarks[:MAX_REMARKS]:
+                self._remark_row(self.feedback, remark)
+            self._practice_show_stats()
+            return
+        if not state["missed"]:
+            state["streak"] += 1
+            state["times"].append(time.monotonic() - state["started"])
+            self.progress.record_practice(state["streak"])
+        for key, other in self.option_buttons.items():
+            other.configure(state="disabled",
+                            text_color=(colours["ok"] if key == value
+                                        else colours["faint"]),
+                            border_color=(colours["ok"] if key == value
+                                          else colours["border"]))
+        self._located = False
+        self._remark_row(self.feedback, verdict.remarks[0])
+        self._practice_show_stats()
+        self.after(self.PRACTICE_PAUSE_MS, self._practice_next)
+
+    def _practice_next(self) -> None:
+        """Otra nota en el mismo pentagrama, sin rearmar la pantalla."""
+        state = self._practice
+        if state is None or self.staff is None:
+            return
+        previous = self.exercise.chords[0][self.exercise.param("lane")]
+        self.exercise = lessons_engine.practice_exercise(
+            state["clef"], self._random, previous)
+        state["missed"] = False
+        self._loading = True
+        self.staff.load(lessons_engine.given_lines(self.exercise))
+        self._loading = False
+        self.staff.highlight = None
+        self.staff.redraw()
+        colours = self.colours
+        for other in self.option_buttons.values():
+            other.configure(state="normal", text_color=colours["text"],
+                            border_color=colours["border"])
+        self._wipe(self.feedback)
+        state["started"] = time.monotonic()
+
+    def _leave_practice(self) -> None:
+        self._render_exercise()
 
     # -- el renglón de estado -----------------------------------------------
 

@@ -20,7 +20,7 @@ experimentador.
 
 Qué hay acá
 -----------
-* :data:`UNITS` --- las cinco unidades, con sus lecciones y ejercicios. Cada
+* :data:`UNITS` --- las ocho unidades, con sus lecciones y ejercicios. Cada
   lección cita la entrada del libro que la sostiene: la teoría es la del
   libro, con sus palabras y sus ejemplos, y la escuelita la pone a prueba.
 * :func:`grade` --- la corrección. Devuelve un :class:`Verdict` con qué está
@@ -54,7 +54,7 @@ from engine.i18n import N, tr, trf
 _FILENAME = "school.json"
 
 #: El logro que deja la graduación. Tres estrellas: es lo último que la
-#: escuelita tiene para dar y se gana aprobando treinta y tantos ejercicios.
+#: escuelita tiene para dar y se gana aprobando más de cincuenta ejercicios.
 AWARD = "legend_born"
 
 #: Con qué variable de entorno se fuerza la escena del final al abrir el
@@ -110,6 +110,23 @@ class Option:
 
     value: str
     label: str
+    #: Una respuesta que es una nota, por su clase de altura. Se muestra con
+    #: el nombre del idioma de la pantalla ---Sol, o G--- y no con ``label``:
+    #: un nombre de nota no se traduce, se dice de otra manera.
+    note: int = -1
+    #: Una respuesta que es un compás. Se muestra como «Compás 3».
+    bar: int = 0
+    #: Si la nota se nombra con bemol: «Sib» y no «La#».
+    flats: bool = False
+
+
+def option_label(option: Option) -> str:
+    """Cómo se lee una respuesta en la pantalla."""
+    if option.note >= 0:
+        return i18n.note_name(option.note, option.flats)
+    if option.bar:
+        return trf("Compás {bar}", bar=option.bar)
+    return tr(option.label)
 
 
 @dataclass(frozen=True)
@@ -147,6 +164,15 @@ class Exercise:
     options: Tuple[Option, ...] = ()
     solution: Tuple[Chord, ...] = ()
     mistake: Tuple[Chord, ...] = ()
+    #: El fragmento escrito voz por voz, con sus duraciones, para lo que no
+    #: entra en un acorde por compás: figuras, alteraciones que duran hasta
+    #: la barra, compases a medio llenar. Cuatro voces de grave a agudo,
+    #: cada una ``(altura o None, duración en negras)``. Si está, manda
+    #: sobre ``chords``, y la respuesta buena y la mala van en
+    #: ``solution_lines`` y ``mistake_lines``.
+    lines: Tuple[Tuple[Tuple[Optional[int], float], ...], ...] = ()
+    solution_lines: Tuple[Tuple[Tuple[Optional[int], float], ...], ...] = ()
+    mistake_lines: Tuple[Tuple[Tuple[Optional[int], float], ...], ...] = ()
 
     def param(self, name: str, default: Any = None) -> Any:
         for key, value in self.params:
@@ -155,7 +181,17 @@ class Exercise:
         return default
 
     @property
+    def by_lines(self) -> bool:
+        """Si el fragmento va voz por voz y no acorde por acorde."""
+        return bool(self.lines) or (not self.chords and self.kind in WRITTEN)
+
+    @property
     def bars(self) -> int:
+        if self.param("bars"):
+            return int(self.param("bars"))
+        if self.lines:
+            longest = max(sum(d for _p, d in line) for line in self.lines)
+            return max(1, int(-(-longest // FIGURE)))
         return len(self.chords)
 
 
@@ -190,7 +226,428 @@ class Unit:
 
 
 # ---------------------------------------------------------------------------
-# Unidad 1 · Movimientos de contrapunto
+# Unidad 1 · Leer la partitura
+# ---------------------------------------------------------------------------
+#
+# Antes que nada, saber qué nota es cada línea. Todo en Do mayor, con
+# redondas y una voz por pentagrama: la soprano en la clave de sol y el bajo
+# en la de fa, que es donde los pone el sistema.
+
+#: Las siete notas sin alteración, como respuestas.
+_NOTE_OPTIONS = tuple(Option(str(pc), str(pc), note=pc)
+                      for pc in (0, 2, 4, 5, 7, 9, 11))
+
+#: Los cuatro compases de un fragmento, como respuestas.
+_BAR_OPTIONS = tuple(Option(str(bar), str(bar), bar=bar) for bar in (1, 2, 3, 4))
+
+_UNIT_READING = Unit(
+    "lectura", "1", "Leer la partitura", N("Lectura"),
+    (
+        Lesson(
+            "clave_sol", "La clave de sol",
+            ("La clave de sol se dibuja enroscada en la segunda línea del "
+             "pentagrama, contando desde abajo, y esa línea pasa a ser sol. Es "
+             "el sol que está justo arriba del do central.",
+             "Desde ahí se cuenta para arriba y para abajo, una nota por línea "
+             "y otra por espacio. Las líneas son mi, sol, si, re y fa, y los "
+             "espacios fa, la, do y mi. Con encontrar el sol y contar alcanza."),
+            "pentagrama", 1,
+            (
+                Exercise(
+                    "lee_sol", CHOOSE,
+                    "La soprano canta una nota por compás. ¿Cuál es la del "
+                    "compás 3?",
+                    "note_at",
+                    chords=((None, None, None, 67), (None, None, None, 64),
+                            (None, None, None, 72), (None, None, None, 69)),
+                    lanes=(SOPRANO,),
+                    params=(("bar", 3), ("lane", SOPRANO)),
+                    options=_NOTE_OPTIONS),
+                Exercise(
+                    "escribe_sol", WRITE,
+                    "Escribí en la soprano las notas de los cuatro espacios, "
+                    "de abajo para arriba y una por compás: fa, la, do y mi.",
+                    "notes",
+                    chords=((None, None, None, None),) * 4,
+                    lanes=(SOPRANO,),
+                    params=(("lane", SOPRANO), ("pitches", (65, 69, 72, 76))),
+                    solution=((None, None, None, 65), (None, None, None, 69),
+                              (None, None, None, 72), (None, None, None, 76)),
+                    mistake=((None, None, None, 65), (None, None, None, 69),
+                             (None, None, None, 72), (None, None, None, 64))),
+            )),
+        Lesson(
+            "clave_fa", "La clave de fa",
+            ("Las voces graves se escriben en la clave de fa. Sus dos puntos "
+             "van uno arriba y otro abajo de la cuarta línea, y esa línea es "
+             "fa, el que está debajo del do central.",
+             "Se lee igual que la de sol, contando desde la línea de la clave. "
+             "Las líneas son sol, si, re, fa y la, y los espacios la, do, mi y "
+             "sol. En el sistema de dos pentagramas el bajo se escribe acá."),
+            "pentagrama", 4,
+            (
+                Exercise(
+                    "lee_fa", CHOOSE,
+                    "El bajo canta una nota por compás. ¿Cuál es la del "
+                    "compás 3?",
+                    "note_at",
+                    chords=((53, None, None, None), (48, None, None, None),
+                            (50, None, None, None), (43, None, None, None)),
+                    lanes=(BASS,),
+                    params=(("bar", 3), ("lane", BASS)),
+                    options=_NOTE_OPTIONS),
+                Exercise(
+                    "escribe_fa", WRITE,
+                    "Escribí en el bajo las notas de las cuatro primeras "
+                    "líneas, de abajo para arriba y una por compás: sol, si, "
+                    "re y fa.",
+                    "notes",
+                    chords=((None, None, None, None),) * 4,
+                    lanes=(BASS,),
+                    params=(("lane", BASS), ("pitches", (43, 47, 50, 53))),
+                    solution=((43, None, None, None), (47, None, None, None),
+                              (50, None, None, None), (53, None, None, None)),
+                    mistake=((43, None, None, None), (47, None, None, None),
+                             (50, None, None, None), (55, None, None, None))),
+            )),
+        Lesson(
+            "do_central", "El do central y las líneas adicionales",
+            ("Entre los dos pentagramas cabe una nota más, el do central. Se "
+             "escribe con una rayita propia, la línea adicional, debajo del "
+             "pentagrama de sol o encima del de fa, y en los dos lugares es la "
+             "misma tecla del piano.",
+             "Cualquier nota que se salga del pentagrama lleva una línea "
+             "adicional por cada línea que le falta, y se sigue contando "
+             "igual. Subir una octava es subir siete lugares, así que lo que "
+             "estaba en una línea vuelve a aparecer en un espacio."),
+            "pentagrama", 2,
+            (
+                Exercise(
+                    "misma_nota", CHOOSE,
+                    "En los cuatro compases el bajo y la soprano cantan una "
+                    "nota con el mismo nombre. ¿En cuál cantan exactamente la "
+                    "misma nota?",
+                    "same_note",
+                    chords=((48, None, None, 72), (52, None, None, 64),
+                            (60, None, None, 60), (55, None, None, 67)),
+                    lanes=(BASS, SOPRANO),
+                    params=(("voices", (BASS, SOPRANO)),),
+                    options=_BAR_OPTIONS),
+                Exercise(
+                    "octava_arriba", WRITE,
+                    "Leé el bajo y escribí en la soprano las mismas notas una "
+                    "octava más arriba, compás por compás.",
+                    "notes",
+                    chords=((48, None, None, None), (52, None, None, None),
+                            (55, None, None, None), (60, None, None, None)),
+                    lanes=(BASS, SOPRANO),
+                    params=(("lane", SOPRANO), ("pitches", (60, 64, 67, 72))),
+                    solution=((48, None, None, 60), (52, None, None, 64),
+                              (55, None, None, 67), (60, None, None, 72)),
+                    mistake=((48, None, None, 60), (52, None, None, 64),
+                             (55, None, None, 67), (60, None, None, 60))),
+            )),
+        Lesson(
+            "alteraciones", "Sostenidos, bemoles y becuadros",
+            ("Un sostenido delante de una nota la sube un semitono, a la tecla "
+             "de al lado, y un bemol la baja un semitono. Fa sostenido es la "
+             "tecla negra entre fa y sol, y si bemol la que está entre la y si.",
+             "El signo vale hasta la barra de compás para ese mismo lugar del "
+             "pentagrama, así que si la nota se repite en el compás sigue "
+             "alterada aunque no lo lleve. El becuadro anula la alteración y "
+             "la nota vuelve a ser natural."),
+            "pentagrama", 5,
+            (
+                Exercise(
+                    "lee_sostenido", CHOOSE,
+                    "La soprano canta negras. ¿Qué nota suena en el tercer "
+                    "tiempo del compás 1, la que está resaltada?",
+                    "note_at",
+                    lines=((), (), (),
+                           ((66, 1.0), (67, 1.0), (66, 1.0), (64, 1.0),
+                            (65, 4.0))),
+                    lanes=(SOPRANO,),
+                    params=(("at", 2.0), ("lane", SOPRANO)),
+                    options=(Option("4", "4", note=4), Option("5", "5", note=5),
+                             Option("6", "6", note=6),
+                             Option("7", "7", note=7))),
+                Exercise(
+                    "lee_becuadro", CHOOSE,
+                    "¿Y acá? ¿Qué nota suena en el tercer tiempo del compás 1?",
+                    "note_at",
+                    lines=((), (), (),
+                           ((68, 1.0), (69, 1.0), (67, 1.0), (69, 1.0),
+                            (67, 4.0))),
+                    lanes=(SOPRANO,),
+                    params=(("at", 2.0), ("lane", SOPRANO)),
+                    options=(Option("6", "6", note=6), Option("7", "7", note=7),
+                             Option("8", "8", note=8),
+                             Option("9", "9", note=9))),
+                Exercise(
+                    "escribe_alteradas", WRITE,
+                    "Escribí en la soprano, una redonda por compás: fa "
+                    "sostenido, si bemol, do sostenido y mi bemol. Elegí el "
+                    "signo antes de hacer click.",
+                    "notes",
+                    chords=((None, None, None, None),) * 4,
+                    lanes=(SOPRANO,),
+                    params=(("lane", SOPRANO), ("pitches", (66, 70, 73, 75)),
+                            ("accidentals", True), ("flats", (70, 75))),
+                    solution=((None, None, None, 66), (None, None, None, 70),
+                              (None, None, None, 73), (None, None, None, 75)),
+                    mistake=((None, None, None, 66), (None, None, None, 71),
+                             (None, None, None, 73), (None, None, None, 75))),
+            )),
+        Lesson(
+            "armadura", "La armadura",
+            ("Los sostenidos o bemoles que van al lado de la clave son la "
+             "armadura. Valen para toda la pieza y en todas las octavas: con "
+             "un sostenido en la línea del fa, cada fa que aparezca se canta "
+             "fa sostenido sin que nadie lo vuelva a escribir.",
+             "Por eso Sol mayor lleva un sostenido y Fa mayor un bemol: son "
+             "las notas de su escala que no están en la de Do. Para cantar un "
+             "fa natural en Sol mayor hace falta un becuadro."),
+            "pentagrama", 3,
+            (
+                Exercise(
+                    "lee_armadura", CHOOSE,
+                    "En Sol mayor. ¿Qué nota canta la soprano en el compás 3?",
+                    "note_at",
+                    chords=((None, None, None, 67), (None, None, None, 69),
+                            (None, None, None, 66), (None, None, None, 71)),
+                    lanes=(SOPRANO,), fifths=1, tonic=7,
+                    params=(("bar", 3), ("lane", SOPRANO)),
+                    options=(Option("4", "4", note=4), Option("5", "5", note=5),
+                             Option("6", "6", note=6),
+                             Option("7", "7", note=7))),
+                Exercise(
+                    "lee_armadura_fa", CHOOSE,
+                    "En Fa mayor. ¿Qué nota canta el bajo en el compás 2?",
+                    "note_at",
+                    chords=((53, None, None, None), (46, None, None, None),
+                            (48, None, None, None), (41, None, None, None)),
+                    lanes=(BASS,), fifths=-1, tonic=5,
+                    params=(("bar", 2), ("lane", BASS)),
+                    options=(Option("9", "9", note=9),
+                             Option("10", "10", note=10, flats=True),
+                             Option("11", "11", note=11),
+                             Option("0", "0", note=0))),
+                Exercise(
+                    "escribe_armadura", WRITE,
+                    "Re mayor lleva dos sostenidos, fa y do. Escribí en la "
+                    "soprano re, mi, fa y sol, de abajo para arriba y una por "
+                    "compás, sin poner ningún signo: de eso se encarga la "
+                    "armadura.",
+                    "notes",
+                    chords=((None, None, None, None),) * 4,
+                    lanes=(SOPRANO,), fifths=2, tonic=2,
+                    params=(("lane", SOPRANO), ("pitches", (62, 64, 66, 67))),
+                    solution=((None, None, None, 62), (None, None, None, 64),
+                              (None, None, None, 66), (None, None, None, 67)),
+                    mistake=((None, None, None, 62), (None, None, None, 64),
+                             (None, None, None, 65), (None, None, None, 67))),
+            )),
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
+# Unidad 2 · Figuras y compás
+# ---------------------------------------------------------------------------
+#
+# La única unidad donde las notas no son redondas: lo que se aprende es
+# justamente cuánto dura cada una.
+
+_FIGURE_OPTIONS = (
+    Option("4", N("Redonda")), Option("2", N("Blanca")),
+    Option("1", N("Negra")), Option("0.5", N("Corchea")),
+)
+
+_UNIT_RHYTHM = Unit(
+    "ritmo", "2", "Figuras y compás", N("Ritmo"),
+    (
+        Lesson(
+            "figuras", "Las figuras",
+            ("Lo que dice cuánto dura una nota es su figura. La redonda dura "
+             "cuatro negras, la blanca dos, la negra una y la corchea media: "
+             "cada figura vale el doble que la siguiente.",
+             "Se distinguen por la forma. La redonda es una cabeza hueca sola, "
+             "la blanca le agrega la plica, la negra tiene la cabeza llena y "
+             "la corchea suma un gancho. Varias corcheas seguidas se unen con "
+             "una barra en vez de llevar cada una el suyo."),
+            "nota", 3,
+            (
+                Exercise(
+                    "figura_cual", CHOOSE,
+                    "¿Qué figura es la segunda nota del compás 1, la que está "
+                    "resaltada?",
+                    "figure_at",
+                    lines=((), (), (),
+                           ((67, 2.0), (69, 1.0), (71, 0.5), (72, 0.5),
+                            (74, 4.0))),
+                    lanes=(SOPRANO,),
+                    params=(("at", 2.0), ("lane", SOPRANO)),
+                    options=_FIGURE_OPTIONS),
+                Exercise(
+                    "figuras_escribir", WRITE,
+                    "Escribí en la soprano, con la nota que quieras: una "
+                    "redonda en el compás 1, dos blancas en el 2, y en el 3 "
+                    "dos negras y cuatro corcheas.",
+                    "rhythm",
+                    lanes=(SOPRANO,),
+                    params=(("lane", SOPRANO), ("bars", 3),
+                            ("rhythm", ((4.0,), (2.0, 2.0),
+                                        (1.0, 1.0, 0.5, 0.5, 0.5, 0.5))),
+                            ("durations", (4.0, 2.0, 1.0, 0.5))),
+                    solution_lines=((), (), (),
+                                    ((67, 4.0), (67, 2.0), (67, 2.0),
+                                     (67, 1.0), (67, 1.0))
+                                    + ((67, 0.5),) * 4),
+                    mistake_lines=((), (), (),
+                                   ((67, 4.0), (67, 2.0), (67, 2.0),
+                                    (67, 2.0)) + ((67, 0.5),) * 4)),
+            )),
+        Lesson(
+            "compas", "El compás",
+            ("La barra de compás corta la música en tramos iguales. El 4/4 "
+             "del principio dice que en cada compás entran cuatro negras: una "
+             "redonda, dos blancas, cuatro negras o cualquier mezcla que sume "
+             "lo mismo.",
+             "Un compás no puede quedar corto ni pasarse. Lo que falta se "
+             "llena con notas, o con silencios, que son figuras que se callan "
+             "lo que duran."),
+            "pentagrama", 3,
+            (
+                Exercise(
+                    "cuantas_corcheas", CHOOSE,
+                    "Mientras el bajo sostiene la primera blanca, ¿cuántas "
+                    "corcheas canta la soprano?",
+                    "notes_during",
+                    lines=(((48, 2.0), (55, 2.0)), (), (),
+                           ((72, 0.5), (71, 0.5), (69, 0.5), (71, 0.5),
+                            (72, 0.5), (74, 0.5), (76, 0.5), (74, 0.5))),
+                    lanes=(BASS, SOPRANO),
+                    params=(("during", (BASS, 0.0)), ("lane", SOPRANO)),
+                    options=(Option("2", "2"), Option("3", "3"),
+                             Option("4", "4"), Option("8", "8"))),
+                Exercise(
+                    "completar_compases", WRITE,
+                    "Cada compás de 4/4 suma cuatro negras, y a los de la "
+                    "soprano les falta el final. Completalos con las figuras "
+                    "que hagan falta.",
+                    "fill",
+                    lines=((), (), (),
+                           ((67, 2.0), (None, 2.0),
+                            (69, 1.0), (71, 1.0), (72, 1.0), (None, 1.0),
+                            (74, 0.5), (72, 0.5), (71, 0.5), (69, 0.5),
+                            (None, 2.0))),
+                    lanes=(SOPRANO,),
+                    params=(("lane", SOPRANO),
+                            ("durations", (2.0, 1.0, 0.5))),
+                    solution_lines=((), (), (),
+                                    ((67, 2.0), (67, 2.0),
+                                     (69, 1.0), (71, 1.0), (72, 1.0),
+                                     (74, 1.0),
+                                     (74, 0.5), (72, 0.5), (71, 0.5),
+                                     (69, 0.5), (67, 2.0))),
+                    mistake_lines=((), (), (),
+                                   ((67, 2.0), (67, 2.0),
+                                    (69, 1.0), (71, 1.0), (72, 1.0),
+                                    (74, 1.0),
+                                    (74, 0.5), (72, 0.5), (71, 0.5),
+                                    (69, 0.5), (None, 2.0)))),
+            )),
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
+# Unidad 3 · El oído
+# ---------------------------------------------------------------------------
+
+_INTERVAL_OPTIONS = (
+    Option("2", N("Segunda")), Option("4", N("Tercera")),
+    Option("7", N("Quinta")), Option("12", N("Octava")),
+)
+
+_UNIT_EAR = Unit(
+    "oido", "3", "Escuchar y escribir", N("Oído"),
+    (
+        Lesson(
+            "intervalos_oido", "Los intervalos de oído",
+            ("Un intervalo se reconoce de oído antes que de vista. La segunda "
+             "es el paso de una nota a la de al lado, la tercera suena a "
+             "acorde, la quinta suena hueca y firme, y la octava es la misma "
+             "nota más aguda.",
+             "Para reconocerlos sirve cantarlos por dentro y contar los "
+             "nombres que hay entre una nota y otra: de do a mi pasan do, re y "
+             "mi, así que es una tercera."),
+            "intervalo", 0,
+            (
+                Exercise(
+                    "oido_quinta", HEAR,
+                    "Suenan dos notas, una después de la otra. ¿Qué intervalo "
+                    "hay entre ellas?",
+                    "interval_heard",
+                    chords=((None, None, None, 60), (None, None, None, 67)),
+                    lanes=(SOPRANO,),
+                    params=(("lane", SOPRANO),),
+                    options=_INTERVAL_OPTIONS),
+                Exercise(
+                    "oido_tercera", HEAR,
+                    "Otras dos, ahora en el bajo. ¿Qué intervalo es?",
+                    "interval_heard",
+                    chords=((48, None, None, None), (52, None, None, None)),
+                    lanes=(BASS,),
+                    params=(("lane", BASS),),
+                    options=_INTERVAL_OPTIONS),
+            )),
+        Lesson(
+            "dictado", "El dictado",
+            ("Un dictado es escuchar una melodía y escribirla. La primera nota "
+             "viene dada, y para cada una de las siguientes se decide si sube "
+             "o baja y cuánto.",
+             "Conviene escucharlo varias veces y escribir de a una nota. Si se "
+             "mueve por grados, cada nota cae en la línea o el espacio de al "
+             "lado; si salta, hay que contar los lugares."),
+            "pentagrama", 0,
+            (
+                Exercise(
+                    "dictado_grados", WRITE,
+                    "Escuchá el dictado. La primera nota, do4, ya está "
+                    "escrita: escribí las otras tres en la soprano, una "
+                    "redonda por compás.",
+                    "notes",
+                    chords=((None, None, None, 60), (None, None, None, None),
+                            (None, None, None, None), (None, None, None, None)),
+                    lanes=(SOPRANO,),
+                    params=(("lane", SOPRANO), ("pitches", (60, 62, 64, 62)),
+                            ("dictation", True)),
+                    solution=((None, None, None, 60), (None, None, None, 62),
+                              (None, None, None, 64), (None, None, None, 62)),
+                    mistake=((None, None, None, 60), (None, None, None, 62),
+                             (None, None, None, 65), (None, None, None, 62))),
+                Exercise(
+                    "dictado_saltos", WRITE,
+                    "Ahora con saltos. La primera nota, sol4, ya está escrita: "
+                    "escribí las otras tres.",
+                    "notes",
+                    chords=((None, None, None, 67), (None, None, None, None),
+                            (None, None, None, None), (None, None, None, None)),
+                    lanes=(SOPRANO,),
+                    params=(("lane", SOPRANO), ("pitches", (67, 64, 60, 67)),
+                            ("dictation", True)),
+                    solution=((None, None, None, 67), (None, None, None, 64),
+                              (None, None, None, 60), (None, None, None, 67)),
+                    mistake=((None, None, None, 67), (None, None, None, 64),
+                             (None, None, None, 62), (None, None, None, 67))),
+            )),
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
+# Unidad 4 · Movimientos de contrapunto
 # ---------------------------------------------------------------------------
 #
 # Todo en Do mayor y con redondas. Las alturas son MIDI: 48 es do3, 60 el
@@ -211,7 +668,7 @@ _PAIR_OPTIONS = (
 )
 
 _UNIT_COUNTERPOINT = Unit(
-    "contrapunto", "1", "Movimientos de contrapunto", N("Movimientos"),
+    "contrapunto", "4", "Movimientos de contrapunto", N("Movimientos"),
     (
         Lesson(
             "movimientos", "Los cuatro movimientos",
@@ -345,7 +802,7 @@ _UNIT_COUNTERPOINT = Unit(
 
 
 # ---------------------------------------------------------------------------
-# Unidad 2 · Armonías
+# Unidad 5 · Armonías
 # ---------------------------------------------------------------------------
 
 _FUNCTION_OPTIONS = (
@@ -355,7 +812,7 @@ _FUNCTION_OPTIONS = (
 )
 
 _UNIT_HARMONY = Unit(
-    "armonias", "2", "Armonías", "Armonías",
+    "armonias", "5", "Armonías", "Armonías",
     (
         Lesson(
             "acorde", "El acorde y su tercera",
@@ -494,7 +951,7 @@ _UNIT_HARMONY = Unit(
 
 
 # ---------------------------------------------------------------------------
-# Unidad 3 · Cadencias
+# Unidad 6 · Cadencias
 # ---------------------------------------------------------------------------
 
 _CADENCE_OPTIONS = (
@@ -505,7 +962,7 @@ _CADENCE_OPTIONS = (
 )
 
 _UNIT_CADENCES = Unit(
-    "cadencias", "3", N("Cadencias"), N("Cadencias"),
+    "cadencias", "6", N("Cadencias"), N("Cadencias"),
     (
         Lesson(
             "autentica", "La cadencia auténtica: V - I",
@@ -635,7 +1092,7 @@ _UNIT_CADENCES = Unit(
 
 
 # ---------------------------------------------------------------------------
-# Unidad 4 · Particularidades por género
+# Unidad 7 · Particularidades por género
 # ---------------------------------------------------------------------------
 #
 # Las reglas que se preguntan acá no se inventan: cada una mira un campo de
@@ -671,7 +1128,7 @@ _GENRE_OPTIONS = (
 )
 
 _UNIT_STYLES = Unit(
-    "estilos", "4", "Particularidades por género", N("Estilos"),
+    "estilos", "7", "Particularidades por género", N("Estilos"),
     (
         Lesson(
             "barroco", N("Barroco"),
@@ -781,11 +1238,11 @@ _UNIT_STYLES = Unit(
 
 
 # ---------------------------------------------------------------------------
-# Unidad 5 · Serie armónica
+# Unidad 8 · Serie armónica
 # ---------------------------------------------------------------------------
 
 _UNIT_HARMONICS = Unit(
-    "serie", "5", "La serie armónica", "Serie armónica",
+    "serie", "8", "La serie armónica", "Serie armónica",
     (
         Lesson(
             "serie", "La serie armónica",
@@ -884,8 +1341,9 @@ _UNIT_HARMONICS = Unit(
 )
 
 
-#: Las cinco unidades, en el orden en que se aprueban.
-UNITS: Tuple[Unit, ...] = (_UNIT_COUNTERPOINT, _UNIT_HARMONY, _UNIT_CADENCES,
+#: Las ocho unidades, en el orden en que se aprueban.
+UNITS: Tuple[Unit, ...] = (_UNIT_READING, _UNIT_RHYTHM, _UNIT_EAR,
+                           _UNIT_COUNTERPOINT, _UNIT_HARMONY, _UNIT_CADENCES,
                            _UNIT_STYLES, _UNIT_HARMONICS)
 
 
@@ -951,9 +1409,35 @@ def lines_from(chords: Sequence[Chord],
     return out
 
 
+def _padded(lines) -> List[Line_]:
+    """Cuatro voces, aunque el ejercicio escriba menos."""
+    out = [list(line) for line in lines][:len(VOICE_NAMES)]
+    return out + [[] for _ in range(len(VOICE_NAMES) - len(out))]
+
+
 def given_lines(item: Exercise) -> List[Line_]:
     """Lo que el pentagrama muestra al abrir el ejercicio."""
+    if item.by_lines:
+        return _padded(item.lines)
     return lines_from(item.chords, item.lanes)
+
+
+def model_lines(item: Exercise, wrong: bool = False) -> List[Line_]:
+    """La respuesta buena del ejercicio, o la mala, como voces."""
+    if item.by_lines:
+        return _padded(item.mistake_lines if wrong else item.solution_lines)
+    return lines_from(item.mistake if wrong else item.solution, item.lanes)
+
+
+def _notes_of(line: Line_) -> List[Tuple[float, int, float]]:
+    """Las notas de una voz, sin los silencios: ``(comienzo, altura,
+    duración)``."""
+    out, moment = [], 0.0
+    for pitch, duration in line:
+        if pitch is not None:
+            out.append((moment, pitch, duration))
+        moment += duration
+    return out
 
 
 def cells(lines: Sequence[Line_]) -> Dict[Tuple[int, int], Optional[int]]:
@@ -984,6 +1468,8 @@ def cells(lines: Sequence[Line_]) -> Dict[Tuple[int, int], Optional[int]]:
 
 def editable_lanes(item: Exercise) -> Tuple[int, ...]:
     """Las voces en las que el alumno escribe."""
+    if item.kind == WRITE and item.by_lines:
+        return (item.param("lane", SOPRANO),)
     if item.kind == WRITE:
         return tuple(lane for lane in item.lanes
                      if any(chord[lane] is None for chord in item.chords))
@@ -998,9 +1484,12 @@ def locked(item: Exercise) -> Dict[Tuple[int, int], Optional[int]]:
 
     En un ejercicio de escritura, lo escrito; en uno de corrección, el bajo
     entero ---la consigna es corregir sin cambiar los acordes, y el bajo es
-    lo que los sostiene---; en uno de mirar, todo.
+    lo que los sostiene---; en uno de mirar, todo. Los que van voz por voz
+    no tienen casillas: lo dado son sus notas, y las vigila `tampered`.
     """
     out: Dict[Tuple[int, int], Optional[int]] = {}
+    if item.by_lines:
+        return out
     for bar, chord in enumerate(item.chords, start=1):
         for lane in item.lanes:
             if item.kind == WRITE and chord[lane] is None:
@@ -1018,6 +1507,17 @@ def tampered(item: Exercise, lines: Sequence[Line_]
     for (bar, lane), pitch in sorted(locked(item).items()):
         if written.get((bar, lane)) != pitch:
             return bar, lane
+    if item.by_lines:
+        # Cada nota dada tiene que seguir entera donde estaba. Lo que había
+        # de silencio es lo que se puede llenar: un click dentro de una nota
+        # dada la partiría, y eso ya es cambiarla.
+        for lane, line in enumerate(given_lines(item)):
+            now = lines[lane] if lane < len(lines) else []
+            kept = _notes_of(now)
+            for start, pitch, duration in _notes_of(line):
+                if not any(abs(start - s) < 1e-6 and p == pitch
+                           and abs(duration - d) < 1e-6 for s, p, d in kept):
+                    return int(start // FIGURE) + 1, lane
     # Lo que se escriba en una voz que no es del ejercicio también es tocar
     # lo dado: esa voz viene vacía y vacía se tiene que quedar.
     for lane, line in enumerate(lines):
@@ -1131,6 +1631,148 @@ def say_pc(pc: int, flats: bool = False) -> str:
 def say_pitch(pitch: int, flats: bool = False) -> str:
     """Una altura con su octava: «sol4»."""
     return f"{say_pc(pitch, flats)}{pitch // 12 - 1}"
+
+
+#: Cuántos semitonos sobre do está cada uno de los siete nombres.
+NATURAL_SEMITONES = (0, 2, 4, 5, 7, 9, 11)
+
+#: En qué orden altera la armadura: los sostenidos fa, do, sol, re, la, mi,
+#: si, y los bemoles al revés.
+_SHARP_ORDER = (3, 0, 4, 1, 5, 2, 6)
+_FLAT_ORDER = (6, 2, 5, 1, 4, 0, 3)
+
+#: La línea de abajo de cada clave: mi4 en la de sol y sol2 en la de fa.
+BOTTOM_LINE = {True: 64, False: 43}
+
+CLEF_NAMES = {True: N("la clave de sol"), False: N("la clave de fa")}
+
+#: Los signos, por la alteración que escriben.
+SIGN_NAMES = {1: N("sostenido"), -1: N("bemol"), 0: N("becuadro")}
+
+
+def in_treble(lane: int, pitch: int) -> bool:
+    """
+    En qué clave se dibuja una nota: la de sol para la soprano y el alto,
+    la de fa para el bajo, y el tenor según la altura, del do central para
+    arriba en la de sol. Es el reparto de ``staff.GrandStaff.staff_of``, que
+    no se puede importar desde ``engine/``.
+    """
+    return lane >= ALTO or (lane == TENOR and pitch >= 60)
+
+
+def key_alteration(letter: int, fifths: int) -> int:
+    """Cuánto altera la armadura a uno de los siete nombres (do es 0)."""
+    if fifths > 0:
+        return 1 if letter in _SHARP_ORDER[:fifths] else 0
+    if fifths < 0:
+        return -1 if letter in _FLAT_ORDER[:-fifths] else 0
+    return 0
+
+
+def _natural(degree: int) -> int:
+    return (degree // 7) * 12 + NATURAL_SEMITONES[degree % 7]
+
+
+def spelled(pitch: int, fifths: int = 0, flats: bool = False
+            ) -> Tuple[int, int]:
+    """
+    Cómo escribe una altura el sistema: ``(lugar, alteración)``, donde el
+    lugar cuenta los siete nombres desde el do más grave (el do central es
+    35) y la alteración es lo que la nota tiene de más o de menos respecto
+    de la natural.
+
+    Es la cuenta de ``staff.index_for_pitch``, que desde ``engine/`` no se
+    puede importar, con el mismo desempate: primero el nombre que la
+    armadura ya altera a esa altura y, si no hay, el más cercano, con
+    sostenido. ``flats`` prefiere el bemol, que es como el sistema escribe
+    las teclas negras en los ejercicios que lo piden.
+    """
+    octave = pitch // 12
+    best, best_cost = (octave * 7, 0), 99
+    for letter in range(7):
+        for shift in (0, -1, 1):
+            degree = (octave + shift) * 7 + letter
+            distance = pitch - _natural(degree)
+            if abs(distance) > 2:
+                continue
+            if distance == key_alteration(letter, fifths):
+                cost = 0
+            else:
+                cost = abs(distance) * 2 - (1 if flats and distance < 0 else 0)
+            if cost < best_cost:
+                best, best_cost = (degree, distance), cost
+    return best
+
+
+def staff_step(pitch: int, treble: bool, fifths: int = 0,
+               flats: bool = False) -> int:
+    """Cuántos lugares, líneas y espacios, está una nota por encima de la
+    línea de abajo de su clave. Cero es esa línea; ocho, la de arriba."""
+    return (spelled(pitch, fifths, flats)[0]
+            - spelled(BOTTOM_LINE[treble])[0])
+
+
+def staff_place(pitch: int, treble: bool, fifths: int = 0,
+                flats: bool = False) -> str:
+    """Dónde se escribe una nota: «en la línea 2», «en el espacio 3»."""
+    step = staff_step(pitch, treble, fifths, flats)
+    if 0 <= step <= 8:
+        if step % 2 == 0:
+            return trf("en la línea {n}", n=step // 2 + 1)
+        return trf("en el espacio {n}", n=step // 2 + 1)
+    if step == -1:
+        return tr("justo debajo del pentagrama")
+    if step == 9:
+        return tr("justo encima del pentagrama")
+    # La primera línea adicional con palabras y las siguientes con número:
+    # «la línea adicional 1» no lo dice nadie.
+    if step < 0:
+        ledgers = -step // 2
+        if step % 2 == 0:
+            return (tr("en la primera línea adicional de abajo") if ledgers == 1
+                    else trf("en la línea adicional {n} de abajo", n=ledgers))
+        return (tr("debajo de la primera línea adicional") if ledgers == 1
+                else trf("debajo de la línea adicional {n}", n=ledgers))
+    ledgers = (step - 8) // 2
+    if step % 2 == 0:
+        return (tr("en la primera línea adicional de arriba") if ledgers == 1
+                else trf("en la línea adicional {n} de arriba", n=ledgers))
+    return (tr("encima de la primera línea adicional") if ledgers == 1
+            else trf("encima de la línea adicional {n}", n=ledgers))
+
+
+def places_of(pc: int, treble: bool) -> List[int]:
+    """Las alturas de una clase de altura que caen dentro del pentagrama,
+    de grave a agudo."""
+    low = BOTTOM_LINE[treble]
+    return [pitch for pitch in range(low, low + 18)
+            if pitch % 12 == pc and 0 <= staff_step(pitch, treble) <= 8]
+
+
+def written_signs(line: Line_, fifths: int = 0, flats: bool = False
+                  ) -> Dict[float, Optional[int]]:
+    """
+    Qué signo se escribe delante de cada nota de una voz, por su comienzo.
+
+    La regla del papel, que es la de ``staff.displayed_accidentals``: una
+    alteración vale hasta la barra para ese mismo lugar del pentagrama, así
+    que repetir la nota no repite el signo y volver a la natural pide un
+    becuadro. Lo que suena es la altura, que no cambia: esto es sólo qué se
+    ve, y es lo que la corrección tiene que poder explicar.
+    """
+    shown: Dict[float, Optional[int]] = {}
+    state: Dict[Tuple[int, int], int] = {}
+    for start, pitch, _duration in _notes_of(line):
+        degree, alteration = spelled(pitch, fifths, flats)
+        bar = int(start // FIGURE + 1e-9)
+        current = state.get((bar, degree),
+                            key_alteration(degree % 7, fifths))
+        if alteration != current:
+            shown[start] = alteration
+            state[(bar, degree)] = alteration
+        else:
+            shown[start] = None
+    return shown
 
 
 #: Los intervalos dentro de la octava, por semitonos.
@@ -1727,6 +2369,136 @@ def _check_harmonic_note(item: Exercise, lines: Sequence[Line_]
     return remarks
 
 
+def _flats_for(item: Exercise, pitch: int) -> bool:
+    """Si una altura se nombra con bemol en este ejercicio."""
+    return item.fifths < 0 or pitch in item.param("flats", ())
+
+
+def _check_notes(item: Exercise, lines: Sequence[Line_]) -> List[Remark]:
+    """
+    Cada nota en su lugar. La consigna dice los nombres; lo que se corrige
+    es que estén escritos donde van, y por eso lo que se dice de una nota
+    equivocada es dónde quedó escrita y no cuál era la buena.
+    """
+    lane = item.param("lane", SOPRANO)
+    voice = VOICE_NAMES[lane]
+    written = cells(lines)
+    signs = bool(item.param("accidentals")) or item.fifths != 0
+    remarks: List[Remark] = []
+    for bar, target in enumerate(item.param("pitches", ()), start=1):
+        pitch = written.get((bar, lane))
+        if pitch is None or pitch == target:
+            continue
+        treble = in_treble(lane, pitch)
+        flats = _flats_for(item, target)
+        remarks.append(Remark(
+            trf("En el compás {bar} escribiste {note}, que en {clef} está "
+                "{place}.", bar=bar, note=say_pitch(pitch, flats),
+                clef=tr(CLEF_NAMES[treble]),
+                place=staff_place(pitch, treble, item.fifths, flats)),
+            bar=bar, voices=(voice,)))
+        if pitch % 12 == target % 12:
+            remarks.append(Remark(
+                tr("Es la nota que se pide, pero en otra octava."),
+                bar=bar, voices=(voice,), severity="nota"))
+        elif signs and abs(pitch - target) == 1:
+            remarks.append(Remark(
+                tr("Está a un semitono de la que se pide: fijate el signo."),
+                bar=bar, voices=(voice,), severity="nota"))
+    if not remarks:
+        remarks.append(Remark(tr("Cada nota está donde tiene que estar."),
+                              severity="bien"))
+    return remarks
+
+
+#: Las figuras que se enseñan, por lo que duran en negras.
+FIGURE_NAMES = {4.0: N("redonda"), 2.0: N("blanca"), 1.0: N("negra"),
+                0.5: N("corchea")}
+
+#: Cuánto dura cada una, en tiempos de un compás de 4/4. Dicho en negras,
+#: la negra «dura una negra», que no explica nada.
+FIGURE_LENGTHS = {4.0: N("cuatro tiempos"), 2.0: N("dos tiempos"),
+                  1.0: N("un tiempo"), 0.5: N("medio tiempo")}
+
+#: Cómo se reconoce cada una a la vista.
+FIGURE_SHAPES = {
+    4.0: "La redonda es una cabeza hueca, sin plica.",
+    2.0: "La blanca es una cabeza hueca con plica.",
+    1.0: "La negra tiene la cabeza llena y plica, sin gancho.",
+    0.5: "La corchea tiene la cabeza llena, plica y un gancho, o una barra "
+         "que la une a las de al lado.",
+}
+
+
+def _bar_pieces(line: Line_, bar: int) -> List[Tuple[Optional[int], float]]:
+    """Lo que una voz tiene escrito dentro de un compás, en orden."""
+    start, end = (bar - 1) * FIGURE, bar * FIGURE
+    out, moment = [], 0.0
+    for pitch, duration in line:
+        if start - 1e-6 <= moment < end - 1e-6:
+            out.append((pitch, duration))
+        moment += duration
+    return out
+
+
+def _check_rhythm(item: Exercise, lines: Sequence[Line_]) -> List[Remark]:
+    """Las figuras de cada compás, contra las que pide la consigna."""
+    lane = item.param("lane", SOPRANO)
+    voice = (VOICE_NAMES[lane],)
+    remarks: List[Remark] = []
+    for bar, wanted in enumerate(item.param("rhythm", ()), start=1):
+        pieces = _bar_pieces(lines[lane], bar)
+        written = [d for p, d in pieces if p is not None]
+        if any(p is None for p, _d in pieces):
+            remarks.append(Remark(
+                trf("En el compás {bar} quedó un silencio.", bar=bar),
+                bar=bar, voices=voice))
+            continue
+        if [round(d, 3) for d in written] == [round(d, 3) for d in wanted]:
+            continue
+        if len(written) != len(wanted):
+            text = (trf("En el compás {bar} se pide una sola nota y hay "
+                        "{count}.", bar=bar, count=len(written))
+                    if len(wanted) == 1 else
+                    trf("En el compás {bar} se piden {wanted} notas y hay "
+                        "{count}.", bar=bar, wanted=len(wanted),
+                        count=len(written)))
+        else:
+            text = trf("En el compás {bar} hay tantas notas como se piden, "
+                       "pero no de la figura que se pide.", bar=bar)
+        remarks.append(Remark(text, bar=bar, voices=voice))
+    if not remarks:
+        remarks.append(Remark(tr("Cada compás tiene las figuras que se "
+                                 "piden."), severity="bien"))
+    return remarks
+
+
+def _beats(value: float) -> str:
+    return f"{value:g}" if i18n.language() == "en" else \
+        f"{value:g}".replace(".", ",")
+
+
+def _check_filled(item: Exercise, lines: Sequence[Line_]) -> List[Remark]:
+    """Que cada compás de la voz quede lleno de notas, sin silencios."""
+    lane = item.param("lane", SOPRANO)
+    voice = (VOICE_NAMES[lane],)
+    remarks: List[Remark] = []
+    for bar in range(1, item.bars + 1):
+        pieces = _bar_pieces(lines[lane], bar)
+        empty = FIGURE - sum(d for p, d in pieces if p is not None)
+        if empty < 1e-6:
+            continue
+        text = (trf("En el compás {bar} queda un tiempo sin nota.", bar=bar)
+                if abs(empty - 1.0) < 1e-6 else
+                trf("En el compás {bar} quedan {beats} tiempos sin nota.",
+                    bar=bar, beats=_beats(empty)))
+        remarks.append(Remark(text, bar=bar, voices=voice))
+    if not remarks:
+        remarks.append(Remark(tr("Cada compás suma cuatro negras."),
+                              severity="bien"))
+    return remarks
+
+
 def grade_written(item: Exercise, lines: Sequence[Line_]) -> Verdict:
     """Corregir lo que el alumno escribió en el pentagrama."""
     remarks = _missing(item, lines)
@@ -1741,6 +2513,12 @@ def grade_written(item: Exercise, lines: Sequence[Line_]) -> Verdict:
         return _verdict(remarks)
     if item.rule == "harmonic_note":
         return _verdict(_check_harmonic_note(item, lines))
+    if item.rule == "notes":
+        return _verdict(_check_notes(item, lines))
+    if item.rule == "rhythm":
+        return _verdict(_check_rhythm(item, lines))
+    if item.rule == "fill":
+        return _verdict(_check_filled(item, lines))
     result = read(item, lines)
     rule = item.rule
     if rule == "motions":
@@ -1976,6 +2754,8 @@ def _answer(item: Exercise) -> Tuple[str, List[Remark]]:
     rule = item.rule
     if item.kind == TONE:
         return _tone_answer(item)
+    if rule in READING_RULES:
+        return _reading_answer(item)
     result = given_reading(item)
     if rule == "motion_at":
         low, high = item.param("pair")
@@ -2146,10 +2926,255 @@ def _answer(item: Exercise) -> Tuple[str, List[Remark]]:
     return "", []
 
 
+#: Las reglas de los ejercicios de lectura, ritmo y oído. Salen de las
+#: alturas y duraciones del fragmento, no del analizador: nombrar una nota o
+#: medir una figura no es analizar nada.
+READING_RULES = ("note_at", "same_note", "figure_at", "notes_during",
+                 "interval_heard")
+
+#: Los intervalos que se reconocen de oído, por semitonos, con su artículo:
+#: «es una quinta» y «it is an octave» no se arman igual.
+HEARD_INTERVALS = {2: N("una segunda"), 4: N("una tercera"),
+                   7: N("una quinta"), 12: N("una octava")}
+
+
+def _asked_note(item: Exercise) -> Tuple[int, float, int, float]:
+    """La nota por la que pregunta un ejercicio: ``(voz, comienzo, altura,
+    duración)``. ``at`` la busca por el momento; si no, es la del comienzo
+    del compás ``bar``."""
+    lane = item.param("lane", SOPRANO)
+    moment = item.param("at")
+    if moment is None:
+        moment = (item.param("bar", 1) - 1) * FIGURE
+    for start, pitch, duration in _notes_of(given_lines(item)[lane]):
+        if start - 1e-6 <= moment < start + duration - 1e-6:
+            return lane, start, pitch, duration
+    return lane, moment, 0, 0.0
+
+
+def question_span(item: Exercise) -> Optional[Tuple[float, float]]:
+    """El tramo del que habla la pregunta, en negras, para resaltarlo."""
+    if item.rule in ("note_at", "figure_at") and item.param("at") is not None:
+        _lane, start, _pitch, duration = _asked_note(item)
+        return start, start + duration
+    if item.rule == "notes_during":
+        lane, moment = item.param("during")
+        for start, _pitch, duration in _notes_of(given_lines(item)[lane]):
+            if start - 1e-6 <= moment < start + duration - 1e-6:
+                return start, start + duration
+    step, bar = item.param("step"), item.param("bar")
+    if step:
+        return (step - 1) * FIGURE, (step + 1) * FIGURE
+    if bar:
+        return (bar - 1) * FIGURE, bar * FIGURE
+    return None
+
+
+def _sign_reason(item: Exercise, lane: int, start: float,
+                 pitch: int) -> Optional[str]:
+    """Por qué suena alterada una nota, si suena alterada."""
+    flats = _flats_for(item, pitch)
+    sign = written_signs(given_lines(item)[lane], item.fifths,
+                         flats).get(start)
+    degree, alteration = spelled(pitch, item.fifths, flats)
+    if sign == 1:
+        return tr("Lleva un sostenido, que la sube un semitono.")
+    if sign == -1:
+        return tr("Lleva un bemol, que la baja un semitono.")
+    if sign == 0:
+        return tr("Lleva un becuadro, que le saca la alteración.")
+    if not alteration:
+        return None
+    letter = say_pc(NATURAL_SEMITONES[degree % 7])
+    if alteration == key_alteration(degree % 7, item.fifths):
+        return (trf("No lleva signo, pero la armadura sube un semitono cada "
+                    "{letter} de la pieza.", letter=letter) if alteration > 0
+                else trf("No lleva signo, pero la armadura baja un semitono "
+                         "cada {letter} de la pieza.", letter=letter))
+    return trf("No lleva signo, pero antes en el mismo compás hay un {sign} "
+               "en ese lugar, y vale hasta la barra.",
+               sign=tr(SIGN_NAMES[1 if alteration > 0 else -1]))
+
+
+def _reading_answer(item: Exercise) -> Tuple[str, List[Remark]]:
+    """La respuesta de los ejercicios de lectura, ritmo y oído, sacada de
+    las alturas y las duraciones del fragmento."""
+    rule = item.rule
+    if rule == "note_at":
+        lane, start, pitch, _duration = _asked_note(item)
+        bar = int(start // FIGURE) + 1
+        treble = in_treble(lane, pitch)
+        flats = _flats_for(item, pitch)
+        remarks = [Remark(
+            trf("Es {note}, que en {clef} está {place}.",
+                note=say_pc(pitch, flats), clef=tr(CLEF_NAMES[treble]),
+                place=staff_place(pitch, treble, item.fifths, flats)),
+            bar=bar, voices=(VOICE_NAMES[lane],), severity="bien")]
+        reason = _sign_reason(item, lane, start, pitch)
+        if reason:
+            remarks.append(Remark(reason, bar=bar, severity="bien"))
+        return str(pitch % 12), remarks
+    if rule == "figure_at":
+        lane, start, _pitch, duration = _asked_note(item)
+        value = float(duration)
+        text = trf("Es una {figure}, que dura {length}.",
+                   figure=tr(FIGURE_NAMES.get(value, "")),
+                   length=tr(FIGURE_LENGTHS.get(value, "")))
+        return f"{value:g}", [Remark(text, bar=int(start // FIGURE) + 1,
+                                     voices=(VOICE_NAMES[lane],),
+                                     severity="bien")]
+    if rule == "notes_during":
+        long_lane, moment = item.param("during")
+        lane = item.param("lane", SOPRANO)
+        span = question_span(item)
+        if span is None:
+            return "", []
+        inside = [(s, d) for s, _p, d in _notes_of(given_lines(item)[lane])
+                  if span[0] - 1e-6 <= s < span[1] - 1e-6]
+        if not inside:
+            return "", []
+        long_value = span[1] - span[0]
+        short_value = inside[0][1]
+        text = trf("Mientras dura la {long} del {voice}, la {other} canta "
+                   "{count}: cada {short} dura {short_length} y la {long} "
+                   "dura {long_length}.",
+                   long=tr(FIGURE_NAMES.get(long_value, "")),
+                   voice=tr(VOICE_NAMES[long_lane]).lower(),
+                   other=tr(VOICE_NAMES[lane]).lower(), count=len(inside),
+                   short=tr(FIGURE_NAMES.get(short_value, "")),
+                   short_length=tr(FIGURE_LENGTHS.get(short_value, "")),
+                   long_length=tr(FIGURE_LENGTHS.get(long_value, "")))
+        return str(len(inside)), [Remark(text, bar=int(moment // FIGURE) + 1,
+                                         severity="bien")]
+    if rule == "interval_heard":
+        lane = item.param("lane", SOPRANO)
+        notes = _notes_of(given_lines(item)[lane])
+        if len(notes) < 2:
+            return "", []
+        low, high = sorted((notes[0][1], notes[1][1]))
+        distance = high - low
+        first, last = spelled(low)[0], spelled(high)[0]
+        names = ", ".join(say_pc(NATURAL_SEMITONES[degree % 7])
+                          for degree in range(first, last + 1))
+        text = trf("De {a} a {b} pasan {count} nombres, {names}: es "
+                   "{interval}.", a=say_pitch(notes[0][1]),
+                   b=say_pitch(notes[1][1]), count=last - first + 1,
+                   names=names,
+                   interval=tr(HEARD_INTERVALS.get(distance, "")))
+        return str(distance), [Remark(text, bar=1, until=2, severity="bien")]
+    # same_note
+    low, high = item.param("voices", (BASS, SOPRANO))
+    for bar, chord in enumerate(item.chords, start=1):
+        if chord[low] is None or chord[low] != chord[high]:
+            continue
+        pitch = chord[low]
+        text = trf("En el compás {bar} las dos cantan {note}. El bajo lo "
+                   "escribe en la clave de fa, {low_place}, y la soprano en la "
+                   "de sol, {high_place}.", bar=bar,
+                   note=say_pitch(pitch),
+                   low_place=staff_place(pitch, False),
+                   high_place=staff_place(pitch, True))
+        return str(bar), [Remark(text, bar=bar,
+                                 voices=(VOICE_NAMES[low], VOICE_NAMES[high]),
+                                 severity="bien")]
+    return "", []
+
+
+def _wrong_reading(item: Exercise, chosen: str) -> List[Remark]:
+    """Por qué no es lo elegido, sin decir qué es."""
+    if item.rule == "note_at":
+        lane, start, pitch, _duration = _asked_note(item)
+        bar = int(start // FIGURE) + 1
+        treble = in_treble(lane, pitch)
+        pc = int(chosen)
+        degree, _alteration = spelled(pitch, item.fifths,
+                                      _flats_for(item, pitch))
+        if NATURAL_SEMITONES[degree % 7] == pc:
+            # Eligió el nombre del lugar donde está escrita: lo que falta ver
+            # es qué la altera, y decir «fa no está ahí» sería falso.
+            return [Remark(trf("Está escrita en el lugar de {note}, pero algo "
+                               "la altera.", note=say_pc(pc)),
+                           bar=bar, severity="nota")]
+        # Sólo de las naturales se dice dónde van: una alterada se escribe
+        # en el lugar de su natural con un signo, y «fa sostenido está en el
+        # espacio 1» enseña algo que no es cierto.
+        found = places_of(pc, treble) if pc in NATURAL_SEMITONES else []
+        clef = tr(CLEF_NAMES[treble])
+        if not found:
+            return []
+        # Qué nota: la resaltada, la única que hay (la práctica) o la del
+        # compás. Tres frases enteras y no un pedazo pegado.
+        which = ("marked" if item.param("at") is not None
+                 else "alone" if item.key == PRACTICE_KEY else "bar")
+        if len(found) >= 2:
+            places = dict(clef=clef, note=say_pc(pc),
+                          place=staff_place(found[0], treble),
+                          place2=staff_place(found[1], treble), bar=bar)
+            text = {"marked": trf("En {clef}, {note} está {place} y {place2}, "
+                                  "y la nota resaltada no.", **places),
+                    "alone": trf("En {clef}, {note} está {place} y {place2}, "
+                                 "y esta nota no.", **places),
+                    "bar": trf("En {clef}, {note} está {place} y {place2}, y "
+                               "la nota del compás {bar} no.", **places)}[which]
+        else:
+            places = dict(clef=clef, note=say_pc(pc),
+                          place=staff_place(found[0], treble), bar=bar)
+            text = {"marked": trf("En {clef}, {note} está {place}, y la nota "
+                                  "resaltada no.", **places),
+                    "alone": trf("En {clef}, {note} está {place}, y esta nota "
+                                 "no.", **places),
+                    "bar": trf("En {clef}, {note} está {place}, y la nota del "
+                               "compás {bar} no.", **places)}[which]
+        return [Remark(text, bar=bar, severity="nota")]
+    if item.rule == "figure_at":
+        shape = FIGURE_SHAPES.get(float(chosen))
+        return [Remark(tr(shape), severity="nota")] if shape else []
+    if item.rule == "same_note":
+        low, high = item.param("voices", (BASS, SOPRANO))
+        bar = int(chosen)
+        chord = item.chords[bar - 1]
+        octaves = abs(chord[high] - chord[low]) // 12
+        text = (trf("En el compás {bar} las dos cantan {note}, pero la soprano "
+                    "lo canta una octava más arriba.", bar=bar,
+                    note=say_pc(chord[low])) if octaves == 1 else
+                trf("En el compás {bar} las dos cantan {note}, pero la soprano "
+                    "lo canta {octaves} octavas más arriba.", bar=bar,
+                    note=say_pc(chord[low]), octaves=octaves))
+        return [Remark(text, bar=bar,
+                       voices=(VOICE_NAMES[low], VOICE_NAMES[high]),
+                       severity="nota")]
+    return []
+
+
+def _reading_hint(item: Exercise) -> str:
+    """La pista de un ejercicio de lectura, ritmo u oído."""
+    if item.rule == "note_at":
+        lane, _start, _pitch, _duration = _asked_note(item)
+        altered = item.fifths != 0 or any(
+            spelled(p, item.fifths)[1] for _s, p, _d
+            in _notes_of(given_lines(item)[lane]))
+        return HINTS["note_sign" if altered else "note_at"]
+    return HINTS.get(item.rule, "")
+
+
 #: Qué mirar cuando la respuesta elegida no es, por clase de pregunta. Son
 #: pistas y no la respuesta: dicen dónde está lo que hay que ver, que es lo
 #: que haría un profesor con el cuaderno en la mano.
 HINTS = {
+    "note_sign": "Fijate si la nota lleva un signo, si antes en el mismo "
+                 "compás hay uno en ese mismo lugar, o si la armadura la "
+                 "altera.",
+    "figure_at": "Mirá la cabeza, hueca o llena, y después si tiene plica y "
+                 "si tiene gancho.",
+    "notes_during": "Contá las notas de la soprano que empiezan mientras "
+                    "suena la nota larga del bajo.",
+    "interval_heard": "Cantá las dos notas por dentro y contá los nombres "
+                      "que hay entre una y otra, contando las dos.",
+    "note_at": "Buscá la línea de la clave, sol en la de sol y fa en la de "
+               "fa, y contá desde ahí: una nota por línea y otra por espacio.",
+    "same_note": "El mismo nombre no alcanza. La misma nota es la misma tecla "
+                 "del piano, y entre las dos claves hay una sola que se puede "
+                 "escribir en las dos.",
     "parallel_pair": "Buscá dos voces que estén a una quinta justa y sigan a "
                      "una quinta en el acorde siguiente, moviéndose para el "
                      "mismo lado.",
@@ -2185,6 +3210,10 @@ def _wrong_choice(item: Exercise, chosen: str, answer: str) -> List[Remark]:
     intento en copiar. Lo que se dice es qué tiene de malo lo elegido ---si
     hay algo concreto---, y dónde mirar.
     """
+    if item.rule in READING_RULES:
+        hint = _reading_hint(item)
+        return _wrong_reading(item, chosen) + (
+            [Remark(tr(hint), severity="nota")] if hint else [])
     if item.rule == "motion_at":
         step = item.param("step")
         return [Remark(
@@ -2194,8 +3223,8 @@ def _wrong_choice(item: Exercise, chosen: str, answer: str) -> List[Remark]:
                 bar=step, next=step + 1),
             bar=step, until=step + 1, severity="nota")]
     if item.rule == "parallel_pair":
-        label = next((tr(o.label) for o in item.options if o.value == chosen),
-                     chosen)
+        label = next((option_label(o) for o in item.options
+                      if o.value == chosen), chosen)
         return [Remark(trf("Entre {pair} no hay quintas paralelas.",
                            pair=label), severity="nota"),
                 Remark(tr(HINTS["parallel_pair"]), severity="nota")]
@@ -2297,7 +3326,7 @@ def grade_choice(item: Exercise, chosen: str) -> Verdict:
         remarks[0] = Remark(first.text, first.bar, first.until, first.voices,
                             "grave")
     else:
-        label = next((tr(o.label) for o in item.options
+        label = next((option_label(o) for o in item.options
                       if o.value == chosen), chosen)
         remarks = [Remark(trf("«{label}» no es.", label=label))]
     return Verdict(False, remarks, result, answer)
@@ -2345,6 +3374,46 @@ def asked_partial(item: Exercise) -> int:
 # Lo que este usuario lleva aprobado
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# La práctica libre de lectura
+# ---------------------------------------------------------------------------
+#
+# Notas al azar, una por vez y sin fin. No es un ejercicio del curso: su
+# clave no está en `exercises()`, así que aprobarla no cuenta para nada y
+# `Progress.mark_passed` la ignora. Lo único que se guarda es la mejor racha.
+
+PRACTICE_KEY = "practica"
+
+#: Hasta dónde llega la práctica, en lugares de su clave: de la primera
+#: línea adicional de abajo a la primera de arriba.
+PRACTICE_STEPS = (-2, 10)
+
+#: Con qué clave se practica.
+PRACTICE_CLEFS = ("sol", "fa", "ambas")
+
+
+def practice_exercise(clef: str, rng, previous: Optional[int] = None
+                      ) -> Exercise:
+    """
+    Una nota natural al azar para nombrar, en la clave de ``sol``, la de
+    ``fa`` o en ``ambas``. ``previous`` no se repite: la misma nota dos
+    veces seguidas se contesta sin leer.
+    """
+    treble = clef == "sol" or (clef == "ambas" and rng.random() < 0.5)
+    lane = SOPRANO if treble else BASS
+    low = BOTTOM_LINE[treble]
+    choices = [pitch for pitch in range(low - 5, low + 20)
+               if pitch % 12 in NATURAL_SEMITONES and pitch != previous
+               and PRACTICE_STEPS[0] <= staff_step(pitch, treble)
+               <= PRACTICE_STEPS[1]]
+    chord = [None] * len(VOICE_NAMES)
+    chord[lane] = rng.choice(choices)
+    return Exercise(PRACTICE_KEY, CHOOSE, "¿Qué nota es?", "note_at",
+                    chords=(tuple(chord),), lanes=(lane,),
+                    params=(("bar", 1), ("lane", lane)),
+                    options=_NOTE_OPTIONS)
+
+
 def school_path() -> str:
     return os.path.join(history.base_directory(), _FILENAME)
 
@@ -2363,12 +3432,15 @@ class Progress:
     """
 
     def __init__(self, passed: Optional[Dict[str, str]] = None,
-                 graduated: str = "", path: Optional[str] = None):
+                 graduated: str = "", path: Optional[str] = None,
+                 practice_best: int = 0):
         known = {item.key for item in exercises()}
         self.passed: Dict[str, str] = {k: str(v) for k, v in
                                        (passed or {}).items() if k in known}
         self.graduated = str(graduated or "")
         self.path = path
+        #: La racha más larga de la práctica libre de lectura.
+        self.practice_best = practice_best
 
     @classmethod
     def load(cls, path: Optional[str] = None) -> "Progress":
@@ -2392,13 +3464,17 @@ class Progress:
         graduated = raw.get("graduated", "")
         if not isinstance(graduated, str):
             graduated = ""
-        return cls(passed, graduated, path=path)
+        best = raw.get("practice_best", 0)
+        if not isinstance(best, int) or isinstance(best, bool) or best < 0:
+            best = 0
+        return cls(passed, graduated, path=path, practice_best=best)
 
     def save(self) -> None:
         target = self.path or school_path()
         try:
             with open(target, "w", encoding="utf-8") as handle:
-                json.dump({"passed": self.passed, "graduated": self.graduated},
+                json.dump({"passed": self.passed, "graduated": self.graduated,
+                           "practice_best": self.practice_best},
                           handle, indent=2, ensure_ascii=False)
         except OSError:
             pass          # una carpeta de sólo lectura no puede romper nada
@@ -2419,23 +3495,48 @@ class Progress:
         entera. Es lo que hace que la unidad de cadencias no se pueda
         empezar sin saber qué es una quinta paralela, que es lo primero que
         la corrección de una cadencia va a mirar.
+
+        Lo que viene antes de lo último que ya se aprobó no cierra nada. Es
+        el caso de una unidad nueva que se agrega adelante, como la de
+        lectura: quien ya iba por las cadencias sabe leer, y sin esto se
+        encontraba con todo cerrado detrás de la clave de sol.
         """
-        for other in lessons():
-            if other.key == item.key:
-                return True
-            if not self.lesson_done(other):
-                return False
-        return False
+        order = lessons()
+        index = next((i for i, other in enumerate(order)
+                      if other.key == item.key), None)
+        if index is None:
+            return False
+        reached = self._reached()
+        if index <= reached:
+            return True
+        return all(self.lesson_done(other)
+                   for other in order[max(reached, 0):index])
+
+    def _reached(self) -> int:
+        """La última lección con algo aprobado, o -1."""
+        found = -1
+        for index, other in enumerate(lessons()):
+            if any(self.has(entry.key) for entry in other.exercises):
+                found = index
+        return found
 
     def unit_done(self, unit: Unit) -> bool:
         return all(self.lesson_done(item) for item in unit.lessons)
 
     def current(self) -> Lesson:
-        """La primera lección con algo pendiente, o la última."""
-        for item in lessons():
+        """
+        La primera lección con algo pendiente desde donde se venía, o la
+        primera pendiente de todas, o la última.
+
+        Desde donde se venía: quien iba por las cadencias vuelve a las
+        cadencias y no a una unidad que se agregó antes.
+        """
+        order = lessons()
+        reached = max(self._reached(), 0)
+        for item in order[reached:] + order[:reached]:
             if not self.lesson_done(item):
                 return item
-        return lessons()[-1]
+        return order[-1]
 
     def counts(self) -> Tuple[int, int]:
         everything = exercises()
@@ -2455,6 +3556,14 @@ class Progress:
         if exercise_key in self.passed or exercise(exercise_key) is None:
             return False
         self.passed[exercise_key] = datetime.now().isoformat(timespec="seconds")
+        self.save()
+        return True
+
+    def record_practice(self, streak: int) -> bool:
+        """Anotar una racha de la práctica. ``True`` si es la mejor."""
+        if streak <= self.practice_best:
+            return False
+        self.practice_best = streak
         self.save()
         return True
 
@@ -2513,7 +3622,7 @@ _GRADUATION_GREGORY: Tuple[Line, ...] = (
 _GRADUATION_BACH: Tuple[Line, ...] = (
     Line(NARRATOR, "Un golpe seco sobre la mesa, como quien pide que se "
                    "presten los cuadernos."),
-    Line(BACH, "Treinta y tres ejercicios.", pose="normal", cue="reveal"),
+    Line(BACH, "Cincuenta y tres ejercicios.", pose="normal", cue="reveal"),
     Line(BACH, "En Leipzig enseñaba en la escuela de Santo Tomás. Los alumnos "
                "me traían un bajo y yo les devolvía el cuaderno con los "
                "errores señalados en el margen.", pose="gesto"),

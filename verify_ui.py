@@ -298,6 +298,222 @@ try:
 except Exception as e:
     check("tutorial y ventana", False, f"{type(e).__name__}: {e}")
 
+print("=== 15: los carteles del arranque se van del todo ===")
+try:
+    import os, tkinter
+    import chooser, updater
+    from engine import updates
+    if not os.environ.get("CHORDWEAVER_TEST_ORIGIN"):
+        lugar = uitest._placed("1x1")
+        if lugar != "1x1":
+            os.environ["CHORDWEAVER_TEST_ORIGIN"] = lugar[len("1x1"):]
+
+    def apretar(ventana, texto):
+        # Como una persona: el mouse entra y se suelta encima, que es lo que
+        # escucha el botón de customtkinter. `invoke()` no pasa por la
+        # animación del click, que es lo que dejaba el cartel vivo.
+        pila = [ventana]
+        while pila:
+            w = pila.pop()
+            if (w.__class__.__name__ == "CTkButton"
+                    and str(w.cget("text")).startswith(texto)):
+                w._canvas.event_generate("<Enter>", x=5, y=5)
+                w._canvas.event_generate("<ButtonRelease-1>", x=5, y=5)
+                return
+            pila.extend(w.winfo_children())
+        # Sin el botón la prueba no se puede quedar esperando un click.
+        check(f"boton {texto}", False, "no esta")
+        updater.dismiss(ventana)
+
+    def sigue_viva(ventana):
+        try:
+            return bool(ventana.winfo_exists())
+        except tkinter.TclError:
+            return False
+
+    vistas = []
+    def elegir(ventana):
+        vistas.append(ventana)
+        apretar(ventana, "English")
+    elegido = chooser.ask(on_ready=elegir)
+    check("el idioma se elige", elegido == "en", f"{elegido}")
+    check("el cartel de idioma se cierra",
+          bool(vistas) and not sigue_viva(vistas[0]))
+
+    vistas.clear()
+    def ahora_no(ventana):
+        vistas.append(ventana)
+        apretar(ventana, "Ahora no")
+    nueva = updates.Release(version="9.9", page="https://example.invalid",
+                            notes="", download="", headline="")
+    sigue = updater.notice(nueva, dict(updater.FALLBACK), on_ready=ahora_no)
+    check("«Ahora no» abre el programa", sigue is True)
+    check("el cartel de version se cierra",
+          bool(vistas) and not sigue_viva(vistas[0]))
+except Exception as e:
+    check("carteles del arranque", False, f"{type(e).__name__}: {e}")
+
+print("=== 16: el velo no se lleva el Escape de nadie ===")
+try:
+    s = uitest.Session()
+    w = s.win
+    ajeno = w.bind("<Escape>", lambda _e: None, add="+")
+    w._open_overlay()
+    check("el velo suma su Escape", ajeno in w.bind("<Escape>")
+          and w._overlay_escape in w.bind("<Escape>"))
+    w._close_overlay()
+    check("al cerrar queda el ajeno", ajeno in w.bind("<Escape>"))
+    check("y se va el del velo", "_escape_overlay" not in w.bind("<Escape>")
+          and not w._overlay_escape)
+    s.close()
+except Exception as e:
+    check("velo y Escape", False, f"{type(e).__name__}: {e}")
+
+print("=== 17: escuelita, figuras, signos y practica ===")
+try:
+    import staff as pentagrama
+    from engine import school as escuela
+
+    def pump(w, seconds):
+        end = time.time() + seconds
+        while time.time() < end:
+            w.update(); time.sleep(0.02)
+
+    class Click:
+        """Un click del mouse sobre el lienzo, sin scroll."""
+        def __init__(self, x, y):
+            self.x, self.y = x, y
+
+    def escribir(ss, momento, altura, figura):
+        st = ss.staff
+        nombre = next(n for n, v in getattr(ss, "_figures", {}).items()
+                      if v == figura) if getattr(ss, "_figures", None) else None
+        if nombre:
+            ss._figure_chosen(nombre)
+        x = st._x_for(momento + st.duration / 2)
+        indice = pentagrama.index_for_pitch(altura, st.fifths)
+        y = st._y_for(indice, st.staff_of(st.active, indice))
+        st._on_click(Click(x, y))
+        pump(ss, 0.15)
+
+    def abrir(ss, clave):
+        item = escuela.exercise(clave)
+        ss.open_lesson(escuela.lesson_of(clave), item)
+        pump(ss, 0.4)
+        return item
+
+    s = uitest.Session()
+    w = s.win
+    w._open_detour("school"); pump(w, 1.0)
+    ss = w.school_screen
+
+    abrir(ss, "figuras_escribir")
+    momento = 0.0
+    for figura in (4.0, 2.0, 2.0, 1.0, 1.0, 0.5, 0.5, 0.5, 0.5):
+        escribir(ss, momento, 67, figura)
+        momento += figura
+    ss._check(); pump(w, 0.3)
+    check("figuras: escribir con el selector aprueba",
+          ss.verdict is not None and ss.verdict.passed,
+          f"{[r.text for r in (ss.verdict.problems if ss.verdict else [])]}")
+
+    abrir(ss, "escribe_alteradas")
+    for compas, (signo, altura) in enumerate(((1, 66), (-1, 70), (1, 73),
+                                               (-1, 75))):
+        ss._sign_chosen(signo)
+        natural = altura - signo
+        st = ss.staff
+        x = st._x_for(compas * 4.0 + 2.0)
+        indice = pentagrama.index_for_pitch(natural, st.fifths)
+        st._on_click(Click(x, st._y_for(indice, True)))
+        pump(w, 0.15)
+    check("signos: se apagan despues de cada nota", ss.staff.pending is None)
+    ss._check(); pump(w, 0.3)
+    check("signos: sostenidos y bemoles aprueban",
+          ss.verdict is not None and ss.verdict.passed,
+          f"{ss.staff.lines()[3]}")
+
+    item = abrir(ss, "completar_compases")
+    escribir(ss, 0.0, 72, 1.0)          # encima de la blanca dada
+    pump(w, 0.3)
+    check("lo dado no se parte",
+          escuela.tampered(item, ss.staff.lines()) is None)
+
+    ss.open_lesson(escuela.lesson("clave_sol")); pump(w, 0.4)
+    ss.open_practice(); pump(w, 0.5)
+    for _ in range(3):
+        ss._choose(escuela.correct_choice(ss.exercise)); pump(w, 0.9)
+    check("practica: la racha cuenta", ss._practice["streak"] == 3
+          and ss.progress.practice_best >= 3, f"{ss._practice['streak']}")
+    mala = next(o.value for o in ss.exercise.options
+                if o.value != escuela.correct_choice(ss.exercise))
+    ss._choose(mala); pump(w, 0.2)
+    check("practica: un error la corta", ss._practice["streak"] == 0)
+    ss._leave_practice(); pump(w, 0.3)
+    check("practica: volver deja la leccion",
+          ss._practice is None and ss.exercise.key != escuela.PRACTICE_KEY)
+    s.close()
+except Exception as e:
+    import traceback; traceback.print_exc()
+    check("escuelita interactiva", False, f"{type(e).__name__}: {e}")
+
+print("=== 18: modo profesional ===")
+try:
+    from engine import visitors as visitas, history as historial
+
+    def pump(w, seconds):
+        end = time.time() + seconds
+        while time.time() < end:
+            w.update(); time.sleep(0.02)
+
+    s = uitest.Session()
+    w = s.win
+    check("viene apagado", not w.settings.get("professional"))
+    w._open_config(); pump(w, 0.3)
+    w._set_professional(True); pump(w, 0.5)
+    check("se guarda", historial.load_settings(w.settings_path).get(
+        "professional") is True)
+    w._close_config(); pump(w, 0.2)
+    w._story_knocking = True
+    w._render(); pump(w, 0.6)
+    def textos(widget):
+        pila, out = [widget], []
+        while pila:
+            x = pila.pop()
+            try:
+                out.append(str(x.cget("text")))
+            except Exception:
+                pass
+            pila.extend(x.winfo_children())
+        return out
+    check("el inicio no llama a la puerta",
+          "Hay alguien esperando" not in textos(w))
+    w._set_professional(False); pump(w, 0.2)
+    w._story_knocking = True
+    w._render(); pump(w, 0.6)
+    check("apagado, la puerta vuelve", "Hay alguien esperando" in textos(w))
+    w._set_professional(True); pump(w, 0.4)
+    w._close_config(); pump(w, 0.2)
+    antes = len(w._scene_queue)
+    w._open_visit(visitas.BACH_BAROQUE); pump(w, 0.3)
+    check("no hay visitas", w.scene is None and len(w._scene_queue) == antes)
+    w._maybe_vision(); pump(w, 0.3)
+    check("no hay vision", w.scene is None)
+    check("el sendero no espera nada",
+          w._story_awaiting("manual") is None
+          and w._story_awaiting("harmonise") is None)
+    w._open_graduation(); pump(w, 0.6)
+    check("la graduacion sin escena", w.scene is None
+          and bool(w.school.graduated) and not w._scene_queue)
+    w._open_config(); pump(w, 0.3)
+    w._set_professional(False); pump(w, 0.5)
+    check("al apagarlo el vigia vuelve", w._story_watching)
+    w._close_config()
+    s.close()
+except Exception as e:
+    import traceback; traceback.print_exc()
+    check("modo profesional", False, f"{type(e).__name__}: {e}")
+
 print()
 print("FALLOS:" if fallos else "TODO OK")
 for f in fallos: print("  -", f)

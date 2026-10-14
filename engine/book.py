@@ -36,8 +36,9 @@ class Figure:
     """
     Un pentagrama de ejemplo, descrito en grados y no en píxeles.
 
-    Cada voz es una lista de posiciones sobre el pentagrama de sol: 0 es la
-    línea de abajo (mi4), 1 el espacio siguiente (fa4), y así hacia arriba.
+    Cada voz es una lista de posiciones sobre el pentagrama de su clave: 0 es
+    la línea de abajo (mi4 en la de sol, sol2 en la de fa), 1 el espacio
+    siguiente, y así hacia arriba.
     Por debajo de 0 y por encima de 8 la interfaz agrega líneas adicionales
     sola. ``None`` en una posición deja el hueco vacío.
 
@@ -52,6 +53,8 @@ class Figure:
     voices: Tuple[Tuple[Optional[int], ...], ...] = ()
     #: Un rótulo debajo de cada columna. Puede estar vacío.
     marks: Tuple[str, ...] = ()
+    #: ``"sol"`` o ``"fa"``.
+    clef: str = "sol"
 
 
 @dataclass(frozen=True)
@@ -146,7 +149,13 @@ _BASICS = Chapter(
              "resultados vas a ver siempre notas escritas así.",
              "Entre dos notas vecinas hay un semitono, que es la distancia "
              "más chica que usa esta música: de una tecla del piano a la de "
-             "al lado, contando las negras. Dos semitonos son un tono.")),
+             "al lado, contando las negras. Dos semitonos son un tono.",
+             "Una nota también dura, y lo que dice cuánto es su figura. La "
+             "redonda dura cuatro negras, la blanca dos, la negra una y la "
+             "corchea media, así que cada una vale el doble que la siguiente. "
+             "Se reconocen por la forma: la redonda es una cabeza hueca sola, "
+             "la blanca le agrega una plica, la negra pinta la cabeza y la "
+             "corchea le suma un gancho.")),
         Entry(
             "pentagrama", "El pentagrama",
             ("Cinco líneas y los cuatro espacios entre ellas. Cada línea y "
@@ -168,7 +177,17 @@ _BASICS = Chapter(
              "armadura, y dice qué notas van alteradas en toda la pieza. Y "
              "después van dos números, uno sobre otro: el compás, que dice "
              "cómo se agrupan los tiempos. En 4/4 hay cuatro negras por "
-             "compás."),
+             "compás.",
+             "Las voces graves se escriben en otra clave, la de fa. Sus dos "
+             "puntos rodean la cuarta línea desde abajo, y esa línea es el fa "
+             "de abajo del do central. Contando desde ahí, las líneas son sol, "
+             "si, re, fa y la, y los espacios la, do, mi y sol. El do central "
+             "cae una línea adicional por encima, y es la misma tecla que el "
+             "de abajo de la clave de sol.",
+             "Un sostenido delante de una nota la sube un semitono y un bemol "
+             "la baja. El becuadro le saca la alteración. Un signo así vale "
+             "para ese lugar del pentagrama hasta la barra de compás, y en el "
+             "compás siguiente vuelve a mandar la armadura."),
             figures=(
                 Figure(
                     caption="La clave de sol y las notas de las cinco líneas "
@@ -177,6 +196,15 @@ _BASICS = Chapter(
                     voices=((-2, 0, 1, 2, 3, 4, 5, 6, 7, 8),),
                     marks=("do4", "mi4", "fa4", "sol4", "la4", "si4",
                            "do5", "re5", "mi5", "fa5"),
+                ),
+                Figure(
+                    caption="La clave de fa y las notas de las cinco líneas y "
+                            "los cuatro espacios. La última, con su línea "
+                            "adicional, es otra vez el do central.",
+                    voices=((0, 1, 2, 3, 4, 5, 6, 7, 8, 10),),
+                    marks=("sol2", "la2", "si2", "do3", "re3", "mi3", "fa3",
+                           "sol3", "la3", "do4"),
+                    clef="fa",
                 ),
             )),
         Entry(
