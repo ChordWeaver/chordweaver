@@ -1,5 +1,7 @@
 import time
 import uitest, traceback
+import customtkinter as ctk
+from engine import session
 import engine.harmony as H
 import engine.flourish as F
 H.SET_PIECE_CHANCE = 1.0
@@ -155,6 +157,26 @@ try:
           f"{len(s.chord_headers())} cifrados")
     s.win._set_results_view("Partitura"); s.win.update()
     check("y la partitura tambien", len(s._staves()) == len(staves))
+    # «Analizar» abre la opción en el analizador, con sus notas y su estilo,
+    # y volver deja el resultado como estaba.
+    botones = []
+    def _junta(w):
+        if isinstance(w, ctk.CTkButton) and w.cget("text") == "Analizar":
+            botones.append(w)
+        for c in w.winfo_children():
+            _junta(c)
+    _junta(s.win.body)
+    check("un Analizar por opcion", len(botones) == len(o.result.solutions))
+    botones[1].invoke(); s.win.update()
+    an = s.win.analyzer
+    lanes = s.win._staff_lanes(o.spec.voices)
+    lineas = session.analysis_lines(o, 1)
+    check("llegan las notas de la opcion 2",
+          all(an.staff.lines()[lane] == lineas[v] for v, lane in enumerate(lanes)))
+    check("juzgado con el estilo del pedido", an.genre() == s.win.request.genre_key)
+    s.win._close_detour(); s.win.update()
+    check("volver deja el resultado", len(s._staves()) == len(staves)
+          and "Buscando soluciones" not in s.labels())
     s.close()
 except Exception as e:
     check("resultado en partitura", False, f"{type(e).__name__}: {e}")
@@ -452,6 +474,18 @@ try:
     ss._leave_practice(); pump(w, 0.3)
     check("practica: volver deja la leccion",
           ss._practice is None and ss.exercise.key != escuela.PRACTICE_KEY)
+    # Aprobar un ejercicio de una lección avanzada no pinta como hechas las
+    # de atrás: cada estación llena es una lección aprobada entera.
+    adelante = escuela.lessons()[20]
+    ss.progress.mark_passed(adelante.exercises[0].key)
+    ss.open_lesson(adelante); pump(w, 0.3)
+    hechas = sum(1 for item in escuela.lessons()
+                 if ss.progress.lesson_done(item))
+    llenas = len(ss.trail.find_withtag("done"))
+    vacias = len(ss.trail.find_withtag("pending"))
+    check("recorrido: llenas sólo las aprobadas",
+          llenas == hechas and llenas + vacias == len(escuela.lessons()),
+          f"{llenas} llenas, {hechas} aprobadas, {vacias} pendientes")
     s.close()
 except Exception as e:
     import traceback; traceback.print_exc()

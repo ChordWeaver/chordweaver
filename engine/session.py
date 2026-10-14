@@ -572,6 +572,78 @@ def export_outcome(
     return written
 
 
+def analysis_lines(outcome: JobOutcome, position: int
+                   ) -> List[List[Tuple[Optional[int], float]]]:
+    """
+    Una opción del resultado escrita voz por voz, para el analizador.
+
+    Es lo que llega al analizador cuando se le manda una opción sin pasar
+    por un archivo, y tiene que ser exactamente lo que daría exportarla y
+    volver a importarla. Por eso sigue paso a paso a `export.build_musicxml`:
+    la línea escrita de la voz cuando la hay (la melodía del Armonizador), y
+    si no, una nota por slot con el adorno partiendo sólo la voz que se
+    mueve, en las mismas divisiones enteras. Lo vigila `TestSendToAnalyser`.
+
+    Devuelve una lista por voz del motor (0 = la más grave) de pares (altura
+    o None, duración en negras). Una nota ligada a través de la barra llega
+    entera, como la lee el importador.
+    """
+    spec = outcome.spec
+    own = solution_slots(outcome, position)
+    if own is not spec.slots:
+        spec = replace(spec, slots=own)
+    solution = outcome.result.solutions[position]
+    units = export.DIVISIONS_PER_QUARTER
+    lines: List[List[Tuple[Optional[int], float]]] = [[] for _ in spec.voices]
+    tied = [False] * len(spec.voices)
+    sounding = 0
+    for bar_slots in export.group_slots_into_bars(spec):
+        for voice, out in enumerate(lines):
+            line = spec.line_for(voice)
+            written = (line.events_for(bar_slots[0].bar_index)
+                       if line is not None else None)
+            if written is not None:
+                for event in written:
+                    pitch, quarters = event[0], float(event[1])
+                    if (pitch is not None and tied[voice] and out
+                            and out[-1][0] == pitch):
+                        out[-1] = (pitch, out[-1][1] + quarters)
+                    else:
+                        out.append((pitch, quarters))
+                    tied[voice] = (pitch is not None and len(event) > 2
+                                   and bool(event[2]))
+                continue
+            tied[voice] = False
+            index = sounding
+            for slot in bar_slots:
+                quarters = slot.duration_quarters
+                if slot.is_rest or index >= len(solution.slots):
+                    out.append((None, quarters))
+                    continue
+                pitch = solution.slots[index][voice]
+                notes = (solution.passing[index]
+                         if index < len(solution.passing) else [])
+                moved = passing.figure(notes[voice]
+                                       if voice < len(notes) else None)
+                share = (solution.passing_share[index]
+                         if index < len(solution.passing_share)
+                         else spec.passing_share)
+                index += 1
+                if not moved:
+                    out.append((pitch, quarters))
+                    continue
+                head = quarters * (1.0 - share)
+                out.append((pitch, head))
+                whole = int(round(quarters * units))
+                held = int(round(head * units))
+                for step, note in enumerate(moved):
+                    first = held + (whole - held) * step // len(moved)
+                    last = held + (whole - held) * (step + 1) // len(moved)
+                    out.append((note, (last - first) / units))
+        sounding += sum(1 for slot in bar_slots if not slot.is_rest)
+    return lines
+
+
 def default_locked_voicing(
     chord_symbol: str,
     voice_keys: Sequence[str],

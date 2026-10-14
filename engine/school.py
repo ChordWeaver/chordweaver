@@ -3487,31 +3487,6 @@ class Progress:
     def lesson_done(self, item: Lesson) -> bool:
         return all(self.has(entry.key) for entry in item.exercises)
 
-    def lesson_open(self, item: Lesson) -> bool:
-        """
-        ¿Se puede entrar a esta lección?
-
-        En orden: una lección se abre cuando la anterior está aprobada
-        entera. Es lo que hace que la unidad de cadencias no se pueda
-        empezar sin saber qué es una quinta paralela, que es lo primero que
-        la corrección de una cadencia va a mirar.
-
-        Lo que viene antes de lo último que ya se aprobó no cierra nada. Es
-        el caso de una unidad nueva que se agrega adelante, como la de
-        lectura: quien ya iba por las cadencias sabe leer, y sin esto se
-        encontraba con todo cerrado detrás de la clave de sol.
-        """
-        order = lessons()
-        index = next((i for i, other in enumerate(order)
-                      if other.key == item.key), None)
-        if index is None:
-            return False
-        reached = self._reached()
-        if index <= reached:
-            return True
-        return all(self.lesson_done(other)
-                   for other in order[max(reached, 0):index])
-
     def _reached(self) -> int:
         """La última lección con algo aprobado, o -1."""
         found = -1

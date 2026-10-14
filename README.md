@@ -180,6 +180,11 @@ questions used when studying someone else's work.
 *The first four measures of Bach's Prelude in C major, imported and analyzed:
 I - ii4/2 - V6/5 - I, with figured bass notation underneath each chord.*
 
+Any option on the results screen opens here with its **Analyze** button, with no
+file to export or import. It arrives exactly as it would be written to MusicXML,
+with its ornaments and the Harmonizer's melody as written, and its counterpoint is
+judged by the rules of the style it was generated in.
+
 **What chord is happening at each moment, and what is it doing.** The key comes
 from the key signature, the opening chord, and the resting chord, so it can be a
 mode and not just major or minor. American chord notation appears above the staff
@@ -620,7 +625,7 @@ Before touching any musical logic, read [`MUSIC_LOGIC.md`](MUSIC_LOGIC.md).
 
 ## Status
 
-* Version 1.3.1. 681 tests over the engine, the Analyzer, the Schoolhouse
+* Version 1.3.2. 687 tests over the engine, the Analyzer, the Schoolhouse
   and export, plus `verify_ui.py` over the interface.
 
 ## License

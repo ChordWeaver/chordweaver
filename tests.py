@@ -8295,6 +8295,297 @@ class TestAnalysisReadsWhatWeWrite(unittest.TestCase):
         self.assertEqual(result.key.label, "Do mayor")
 
 
+class TestSendToAnalyser(unittest.TestCase):
+    """
+    Mandar una opción al analizador es exportarla e importarla, sin archivo.
+
+    `session.analysis_lines` arma las voces en memoria. Tienen que ser nota
+    por nota lo que el importador lee del MusicXML de esa misma opción: si
+    no, el analizador juzgaría otra pieza que la que se generó.
+    """
+
+    @staticmethod
+    def _notes(line):
+        found, moment = [], 0.0
+        for pitch, quarters in line:
+            if pitch is not None:
+                found.append((pitch, moment, quarters))
+            moment += quarters
+        return found
+
+    def _same_as_the_file(self, request, outcome):
+        self.assertTrue(outcome.succeeded, outcome.errors)
+        with tempfile.TemporaryDirectory() as folder:
+            written = session.export_outcome(
+                request, outcome, directory=folder, formats=("musicxml",),
+                record_history=False)
+            for position, path in enumerate(written):
+                score = importer.read_voices(path)
+                lines = session.analysis_lines(outcome, position)
+                self.assertEqual(len(lines), len(score.parts))
+                for line, part in zip(lines, score.parts):
+                    mine = self._notes(line)
+                    theirs = [(n.pitch, n.onset, n.duration)
+                              for n in part.notes]
+                    self.assertEqual([p for p, _o, _d in mine],
+                                     [p for p, _o, _d in theirs])
+                    for (_p, onset, quarters), (_q, o2, d2) in zip(mine,
+                                                                   theirs):
+                        self.assertAlmostEqual(onset, o2, delta=1 / 48)
+                        self.assertAlmostEqual(quarters, d2, delta=1 / 48)
+        return outcome
+
+    def test_the_organiser_with_ornaments_and_a_rest(self):
+        from engine.passing import PassingRules
+        symbols = ["C", "F", "G7", "C", "", "Am", "Dm", "G", "C"]
+        bars = [0, 0, 1, 1, 2, 3, 3, 4, 4]
+        request = session.JobRequest(
+            genre_key="classical", voice_keys=["B", "T", "A", "S"],
+            entries=[session.ChordEntry(
+                symbol=symbol or "C", is_rest=not symbol,
+                duration_quarters=2.0 if symbol else 4.0, bar_index=bar)
+                for symbol, bar in zip(symbols, bars)],
+            ga_config=GAConfig(population_size=60, generations=25,
+                               random_seed=7),
+            passing_rules=PassingRules(voices=(1, 2, 3), density=0.9),
+            solutions_wanted=2, title="Organizador")
+        outcome = self._same_as_the_file(request, session.generate(request))
+        lines = session.analysis_lines(outcome, 0)
+        self.assertTrue(any(len(line) > len(symbols) for line in lines),
+                        "ningún adorno llegó al analizador")
+        self.assertTrue(all((None, 4.0) in line for line in lines))
+
+    def test_the_generator(self):
+        request = session.GenerativeRequest(
+            genre_key="jazz", voice_keys=["B", "T", "A", "S"],
+            tonic="F", mode_key="major", slot_count=6, with_sevenths=True,
+            ga_config=GAConfig(population_size=60, generations=25,
+                               random_seed=7),
+            solutions_wanted=3, title="Generador")
+        self._same_as_the_file(request, session.generate_random(request))
+
+    def test_the_harmoniser_keeps_the_written_melody(self):
+        pitches = [72, 74, 76, 77, 79, 77, 76, 74, 72]
+        durations = [1.0, 0.5, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 4.0]
+        notes, moment = [], 0.0
+        for pitch, quarters in zip(pitches, durations):
+            notes.append(harmonize.MelodyNote(
+                pitch=pitch, duration_quarters=quarters,
+                bar_index=int(moment // 4), offset_quarters=moment % 4))
+            moment += quarters
+        request = session.HarmoniseRequest(
+            genre_key="chorale", voice_keys=["B", "T", "A", "S"],
+            melody=harmonize.Melody(
+                notes=notes,
+                bars=[harmonize.MelodyBar() for _ in range(3)],
+                melody_voice=3),
+            melody_voice=3,
+            ga_config=GAConfig(population_size=60, generations=25,
+                               random_seed=7),
+            solutions_wanted=2, title="Armonizador")
+        outcome = self._same_as_the_file(request,
+                                         session.harmonise_melody(request))
+        top = [p for p, _d in session.analysis_lines(outcome, 0)[3]
+               if p is not None]
+        self.assertEqual(top, pitches)
+
+
+class TestTheAnalyserReadsWhatWasGenerated(unittest.TestCase):
+    """
+    Lo que se manda al analizador se lee como se generó.
+
+    Varios pedidos de los tres modos, armados como los arma la pantalla
+    (tónica al principio y al final del Generador, tonalidad del Armonizador
+    por la nota final), y cada opción pasada por el camino del botón:
+    `session.analysis_lines`, la cuenta con que el pentagrama escribe cada
+    altura y `analysis.analyse` con el estilo del pedido. Ninguna nota puede
+    cambiar, la tonalidad leída tiene que ser la pedida y las fundamentales
+    tienen que coincidir con los acordes generados (salvo las lecturas que
+    son el mismo puñado de notas, como Rem7 y Fa6).
+    """
+
+    LANES = {3: [0, 2, 3], 4: [0, 1, 2, 3]}
+
+    @staticmethod
+    def _ga(seed):
+        return GAConfig(population_size=60, generations=30, random_seed=seed)
+
+    def _organiser(self, genre, symbols, seed, voices=("B", "T", "A", "S"),
+                   passing=None):
+        request = session.JobRequest(
+            genre_key=genre, voice_keys=list(voices),
+            entries=[session.ChordEntry(symbol=symbol or "C",
+                                        is_rest=not symbol,
+                                        duration_quarters=2.0,
+                                        bar_index=index // 2)
+                     for index, symbol in enumerate(symbols)],
+            ga_config=self._ga(seed), passing_rules=passing,
+            solutions_wanted=3)
+        return session.generate(request)
+
+    def _generator(self, genre, tonic, mode, seed, sevenths=False,
+                   passing=None):
+        home = "i" if mode in harmony.MINOR_MODES else "I"
+        request = session.GenerativeRequest(
+            genre_key=genre, voice_keys=["B", "T", "A", "S"], tonic=tonic,
+            mode_key=mode, slot_count=8, with_sevenths=sevenths,
+            ga_config=self._ga(seed), passing_rules=passing,
+            start_roman=home, end_roman=home, endpoints_required=True,
+            solutions_wanted=3)
+        return session.generate_random(request)
+
+    def _harmoniser(self, genre, pitches, seed, signature_tonic=0,
+                    voices=("B", "T", "A", "S"), durations=None):
+        durations = durations or [1.0] * len(pitches)
+        tonic, mode = harmonize.key_of_ending(pitches[-1], signature_tonic)
+        notes, moment = [], 0.0
+        for pitch, quarters in zip(pitches, durations):
+            notes.append(harmonize.MelodyNote(
+                pitch=pitch, duration_quarters=quarters,
+                bar_index=int(moment // 4), offset_quarters=moment % 4))
+            moment += quarters
+        bars = [harmonize.MelodyBar(tonic=tonic, mode_key=mode)
+                for _ in range(int(math.ceil(moment / 4)))]
+        top = len(voices) - 1
+        request = session.HarmoniseRequest(
+            genre_key=genre, voice_keys=list(voices),
+            melody=harmonize.Melody(notes=notes, bars=bars, melody_voice=top),
+            melody_voice=top, ga_config=self._ga(seed), solutions_wanted=3)
+        return session.harmonise_melody(request)
+
+    def _read(self, outcome, position, genre):
+        """Una opción tal como la recibe y la analiza el analizador."""
+        import staff
+        fifths = outcome.spec.key_hint or 0
+        lines = session.analysis_lines(outcome, position)
+        names = list(reversed(staff.GRAND_VOICES))
+        parts, sent = [], []
+        for voice, lane in enumerate(self.LANES[len(lines)]):
+            notes, moment = [], 0.0
+            for pitch, quarters in lines[voice]:
+                if pitch is not None:
+                    index = staff.index_for_pitch(pitch, fifths)
+                    written = staff.pitch_at(
+                        index, fifths,
+                        staff.accidental_for(pitch, index, fifths))
+                    self.assertEqual(written, pitch)
+                    notes.append(analysis.Note(pitch=written, onset=moment,
+                                               duration=quarters))
+                    sent.append((pitch, moment, quarters))
+                moment += quarters
+            parts.append(analysis.Part(name=names[lane], notes=notes))
+        signature = outcome.spec.time_signature
+        result = analysis.analyse(
+            analysis.Score(parts=parts, fifths=fifths, beats=signature.beats,
+                           beat_type=signature.beat_type, title="x"),
+            genre=genre)
+        read = [(n.pitch, n.onset, n.duration)
+                for part in result.score.parts for n in part.notes]
+        self.assertEqual(sorted(read), sorted(sent), "el análisis cambió notas")
+        return result
+
+    def _check(self, outcome, genre, key, strict=False):
+        self.assertTrue(outcome.succeeded, outcome.errors)
+        total = agree = 0
+        for position in range(len(outcome.result.solutions)):
+            result = self._read(outcome, position, genre)
+            self.assertEqual(result.key.label, key,
+                             "opción %d" % (position + 1))
+            if strict:
+                self.assertFalse([f for f in result.findings
+                                  if f.severity == "grave" and f.kind in
+                                  ("quintas_paralelas", "octavas_paralelas")])
+            slots = session.solution_slots(outcome, position)
+            solution = outcome.result.solutions[position]
+            moment = 0.0
+            for column, slot in enumerate(slots):
+                if not slot.is_rest:
+                    option = (slot.options[min(solution.choices[column],
+                                               len(slot.options) - 1)]
+                              if slot.options else slot)
+                    root = option.requirement.plan.chord.root_pc
+                    segment = next(s for s in result.segments
+                                   if s.start - 1e-6 <= moment < s.end - 1e-6)
+                    total += 1
+                    agree += bool(segment.reading
+                                  and segment.reading.root_pc == root)
+                moment += slot.duration_quarters
+        self.assertGreaterEqual(agree / total, 0.9, "%d de %d" % (agree, total))
+
+    def test_the_organiser(self):
+        from engine.passing import PassingRules
+        self._check(self._organiser(
+            "classical", ["C", "Am", "Dm", "G7", "C", "F", "G", "C"], 1),
+            "classical", "Do mayor", strict=True)
+        self._check(self._organiser(
+            "chorale", ["F", "Bb", "C7", "F", "Dm", "Gm", "C", "F"], 2),
+            "chorale", "Fa mayor", strict=True)
+        self._check(self._organiser(
+            "jazz", ["Dm7", "G7", "Cmaj7", "A7", "Dm7", "G7", "Cmaj7",
+                     "Cmaj7"], 3), "jazz", "Do mayor")
+        self._check(self._organiser(
+            "classical", ["C", "F", "", "G7", "C", "Am", "G7", "C"], 4,
+            passing=PassingRules(voices=(1, 2, 3), density=0.8)),
+            "classical", "Do mayor", strict=True)
+        self._check(self._organiser(
+            "classical", ["Am", "Dm", "E7", "Am", "F", "Dm", "E", "Am"], 5),
+            "classical", "La menor", strict=True)
+        self._check(self._organiser(
+            "classical", ["C", "G", "Am", "F", "C", "G", "C", "C"], 6,
+            voices=("B", "T", "S")), "classical", "Do mayor", strict=True)
+        self._check(self._organiser(
+            "gregorian", ["Dm", "C", "Dm", "Am", "F", "C", "Dm", "Dm"], 7),
+            "gregorian", "Re dórico")
+
+    def test_the_generator(self):
+        from engine.passing import PassingRules
+        self._check(self._generator("classical", "C", "major", 11),
+                    "classical", "Do mayor", strict=True)
+        self._check(self._generator("chorale", "G", "major", 12),
+                    "chorale", "Sol mayor", strict=True)
+        self._check(self._generator("jazz", "F", "major", 13, sevenths=True),
+                    "jazz", "Fa mayor")
+        self._check(self._generator("classical", "D", "minor", 14),
+                    "classical", "Re menor", strict=True)
+        self._check(self._generator(
+            "classical", "Bb", "major", 15,
+            passing=PassingRules(voices=(1, 2, 3), density=0.8)),
+            "classical", "Sib mayor", strict=True)
+        self._check(self._generator("gregorian", "D", "dorian", 16),
+                    "gregorian", "Re dórico")
+        self._check(self._generator("chorale", "A", "minor", 18),
+                    "chorale", "La menor", strict=True)
+
+    def test_the_harmoniser(self):
+        """
+        Sin `strict`: la búsqueda ve la melodía una nota por acorde, así que
+        una nota de la melodía entre dos acordes puede formar paralelas que
+        el analizador marca y el Armonizador no vio.
+        """
+        self._check(self._harmoniser(
+            "classical", [72, 74, 76, 77, 79, 77, 76, 74, 72], 21),
+            "classical", "Do mayor")
+        self._check(self._harmoniser(
+            "chorale", [65, 67, 69, 70, 72, 70, 69, 67, 65], 22,
+            signature_tonic=5), "chorale", "Fa mayor")
+        self._check(self._harmoniser(
+            "jazz", [76, 74, 72, 71, 72, 74, 76, 79, 77, 76, 74, 72], 23),
+            "jazz", "Do mayor")
+        self._check(self._harmoniser(
+            "classical", [67, 69, 71, 72, 74, 72, 71, 69, 67], 25,
+            durations=[1, 0.5, 0.5, 1, 1, 1, 1, 2, 4]),
+            "classical", "Do mayor")
+        self._check(self._harmoniser(
+            "chorale", [69, 72, 71, 69, 68, 69, 71, 72, 71, 68, 69], 27),
+            "chorale", "La menor")
+        self._check(self._harmoniser(
+            "classical", [74, 76, 78, 79, 76, 74, 73, 74], 28,
+            signature_tonic=2), "classical", "Re mayor")
+        self._check(self._harmoniser(
+            "classical", [72, 71, 69, 67, 69, 71, 72], 29,
+            voices=("B", "T", "S")), "classical", "Do mayor")
+
+
 class TestStaffWriting(unittest.TestCase):
     """
     Las cuentas con las que el pentagrama escribe.
@@ -9644,22 +9935,18 @@ class TestSchool(unittest.TestCase):
         self.assertEqual(result.key.tonic_pc, 0)
         self.assertEqual(result.cadences[-1].kind, "cadencia rota")
 
-    def test_lessons_open_in_order_and_the_progress_survives_a_restart(self):
+    def test_the_progress_follows_the_order_and_survives_a_restart(self):
         school = self._school()
         with tempfile.TemporaryDirectory() as folder:
             path = os.path.join(folder, "school.json")
             progress = school.Progress.load(path)
             lessons = school.lessons()
-            self.assertTrue(progress.lesson_open(lessons[0]))
-            self.assertFalse(progress.lesson_open(lessons[1]))
             self.assertIs(progress.current(), lessons[0])
             for item in lessons[0].exercises[:-1]:
                 progress.mark_passed(item.key)
-            self.assertFalse(progress.lesson_open(lessons[1]))
+            self.assertFalse(progress.lesson_done(lessons[0]))
             self.assertTrue(progress.mark_passed(lessons[0].exercises[-1].key))
             self.assertFalse(progress.mark_passed(lessons[0].exercises[-1].key))
-            self.assertTrue(progress.lesson_open(lessons[1]))
-            self.assertFalse(progress.lesson_open(lessons[2]))
             again = school.Progress.load(path)
             self.assertTrue(again.lesson_done(lessons[0]))
             self.assertIs(again.current(), lessons[1])
@@ -9931,12 +10218,11 @@ class TestSchool(unittest.TestCase):
             moves = next(u for u in school.UNITS if u.key == "contrapunto")
             for item in moves.lessons[0].exercises:
                 progress.mark_passed(item.key)
-            self.assertTrue(progress.lesson_open(moves.lessons[0]))
-            self.assertTrue(progress.lesson_open(moves.lessons[1]))
-            self.assertFalse(progress.lesson_open(moves.lessons[2]))
             self.assertIs(progress.current(), moves.lessons[1])
-            # Y la lectura sigue abierta, para hacerla cuando quiera.
-            self.assertTrue(progress.lesson_open(school.UNITS[0].lessons[2]))
+            # Y la lectura sigue sin aprobar: aprobar adelante no da por
+            # hecho nada de atrás.
+            self.assertFalse(any(progress.lesson_done(item)
+                                 for item in school.UNITS[0].lessons))
 
     def test_the_award_exists_with_three_stars(self):
         school = self._school()

@@ -8234,6 +8234,23 @@ class ChordWeaverApp(ctk.CTk):
     def _screen_results(self) -> None:
         self.results_container = ctk.CTkFrame(self.body, fg_color="transparent")
         self.results_container.pack(fill="both", expand=True)
+        # Volver de un desvío ---el analizador, el libro, los logros--- rearma
+        # esta pantalla con la búsqueda ya terminada. Sin esto quedaba
+        # «Buscando soluciones» para siempre y el resultado no se veía más.
+        # `_results_ready` se apaga al arrancar cada búsqueda, así que una
+        # nueva no muestra la anterior.
+        if self.outcome is not None and getattr(self, "_results_ready", False):
+            self.results_container.pack_forget()
+            pending = getattr(self, "_story_continue_row", None) is not None
+            listened = getattr(self, "_story_listened", False)
+            self._draw_outcome(self.outcome)
+            # El candado del sendero vivía en el panel viejo: se vuelve a
+            # poner, abierto si ya se había escuchado.
+            if pending:
+                self._story_offer_continue()
+                if listened:
+                    self._story_mark_listened()
+            return
 
         accent = self._mode_accent()
         # Centrado y en una columna angosta. Arrimado arriba a la izquierda,
@@ -8316,19 +8333,7 @@ class ChordWeaverApp(ctk.CTk):
 
         self.outcome = outcome
         if not outcome.succeeded:
-            ctk.CTkLabel(self.results_container, text=tr("No se encontró solución"),
-                         font=scaled(("Segoe UI Semibold", 16)), text_color=ERROR
-                         ).pack(anchor="w")
-            for message in outcome.errors:
-                ctk.CTkLabel(self.results_container, text=tr(message), font=FONT_SMALL,
-                             text_color=TEXT_MUTED, wraplength=900, justify="left"
-                             ).pack(anchor="w", pady=2)
-            ctk.CTkLabel(self.results_container,
-                         text=tr("Probá aflojar alguna regla en la pantalla "
-                                 "anterior o ampliar los rangos de las "
-                                 "voces."),
-                         font=FONT_SMALL, text_color=WARN).pack(anchor="w", pady=(10, 0))
-            self._show_results()
+            self._draw_outcome(outcome)
             return
 
         try:
@@ -8363,6 +8368,31 @@ class ChordWeaverApp(ctk.CTk):
                 self.celebrations.append(("blast", None))
                 if self.overlay is None:
                     self.after(700, self._next_celebration)
+        self._draw_outcome(outcome)
+
+    def _draw_outcome(self, outcome) -> None:
+        """
+        Dibujar un resultado en el panel de resultados, que ya está vacío.
+
+        Sólo el dibujo: lo que pasa una vez por búsqueda ---adornos,
+        historial, logros, visitas, sendero--- queda en `_on_finished`. Por
+        eso `_screen_results` puede volver a llamarla al volver de un desvío.
+        """
+        if not outcome.succeeded:
+            ctk.CTkLabel(self.results_container, text=tr("No se encontró solución"),
+                         font=scaled(("Segoe UI Semibold", 16)), text_color=ERROR
+                         ).pack(anchor="w")
+            for message in outcome.errors:
+                ctk.CTkLabel(self.results_container, text=tr(message), font=FONT_SMALL,
+                             text_color=TEXT_MUTED, wraplength=900, justify="left"
+                             ).pack(anchor="w", pady=2)
+            ctk.CTkLabel(self.results_container,
+                         text=tr("Probá aflojar alguna regla en la pantalla "
+                                 "anterior o ampliar los rangos de las "
+                                 "voces."),
+                         font=FONT_SMALL, text_color=WARN).pack(anchor="w", pady=(10, 0))
+            self._show_results()
+            return
         if getattr(outcome, "set_piece", None) is not None:
             banner = ctk.CTkFrame(self.results_container, fg_color=SET_PIECE_TINT,
                                   corner_radius=11)
@@ -8708,6 +8738,18 @@ class ChordWeaverApp(ctk.CTk):
         Tooltip(play, tr("Reproduce los acordes en orden con un sonido "
                          "simple, respetando sus duraciones. Las notas de "
                          "adorno no se incluyen."))
+        # Con menos de tres voces el analizador no tiene acordes que leer.
+        if len(voice_names) >= analyzer.MIN_VOICES:
+            study = ctk.CTkButton(
+                heading, text=tr("Analizar"), width=110, height=32,
+                font=FONT_SMALL, fg_color="transparent", border_width=1,
+                border_color=TEXT_MUTED, hover_color=SURFACE,
+                text_color=TEXT_NORMAL,
+                command=lambda: self._analyse_option(outcome, position))
+            study.pack(side="right", padx=(0, 8))
+            Tooltip(study, tr("Abre esta opción en el analizador, juzgada "
+                              "con las reglas del estilo con que se "
+                              "generó."))
         # Each option carries its own chords. Reading them off the slot
         # showed the same progression above all three, because the slot
         # only remembers whichever chord the best solution chose.
@@ -8939,6 +8981,13 @@ class ChordWeaverApp(ctk.CTk):
         legendary = bool(getattr(self, "_story_piece_result", False))
         labels = [(info["label"], info["roman"], info["resting"],
                    self._column_colour(info, legendary)) for info in columns]
+        self._result_staff(block, heading, lanes, voice_names, chords,
+                           durations, labels, getattr(spec, "key_hint", None)
+                           or 0, self._spec_metres(spec), written)
+
+    @staticmethod
+    def _spec_metres(spec) -> List[Tuple[int, int, int]]:
+        """Los cambios de compás de una partitura: (compás, tiempos, figura)."""
         signature = spec.time_signature
         metres = [(1, signature.beats, signature.beat_type)]
         last = (signature.beats, signature.beat_type)
@@ -8947,9 +8996,47 @@ class ChordWeaverApp(ctk.CTk):
             if (metre.beats, metre.beat_type) != last:
                 metres.append((bar, metre.beats, metre.beat_type))
                 last = (metre.beats, metre.beat_type)
-        self._result_staff(block, heading, lanes, voice_names, chords,
-                           durations, labels, getattr(spec, "key_hint", None)
-                           or 0, metres, written)
+        return metres
+
+    def _analyse_option(self, outcome, position: int) -> None:
+        """
+        Abrir una opción del resultado en el analizador, ya escrita.
+
+        Va sin archivo: `session.analysis_lines` da lo mismo que exportarla
+        e importarla, y el contrapunto se juzga con el estilo con que se
+        buscó (el coral, si se pidió el contrapunto estricto). Con más de
+        cuatro voces se reduce como al importar, momento a momento.
+        """
+        from engine.analysis import Note, Part
+        lines = session.analysis_lines(outcome, position - 1)
+        voices = outcome.spec.voices
+        if len(lines) > GRAND_VOICE_COUNT:
+            parts = []
+            for voice, line in enumerate(lines):
+                notes, moment = [], 0.0
+                for pitch, quarters in line:
+                    if pitch is not None:
+                        notes.append(Note(pitch=pitch, onset=moment,
+                                          duration=quarters))
+                    moment += quarters
+                parts.append(Part(name=voices[voice].name, notes=notes))
+            kept = importer.kept_voices(parts, GRAND_VOICE_COUNT)
+            lines = [importer.written_line(part) for part in kept]
+            lanes = list(range(len(lines)))
+        else:
+            lanes = self._staff_lanes(voices)
+        placed: List[list] = [[] for _ in range(GRAND_VOICE_COUNT)]
+        for voice, lane in enumerate(lanes):
+            placed[lane] = lines[voice]
+        fifths = getattr(outcome.spec, "key_hint", None) or 0
+        if all(fifths != f for _name, f in self.KEY_SIGNATURES):
+            fifths = 0
+        piece = SimpleNamespace(
+            lines=placed, fifths=fifths,
+            metres=self._spec_metres(outcome.spec),
+            genre=getattr(self.request, "genre_key", None),
+            position=position)
+        self._open_detour("analysis", piece)
 
     def _result_staff(self, block, heading, lanes: List[int],
                       voice_names: List[str], chords, durations: List[float],
@@ -11084,8 +11171,11 @@ class ChordWeaverApp(ctk.CTk):
     #: de poderse agarrar una sola con el mouse.
     LAB_WIDTH = 1140
 
-    def _screen_analysis(self, _payload=None) -> None:
-        """El analizador, a pantalla completa."""
+    def _screen_analysis(self, piece=None) -> None:
+        """El analizador, a pantalla completa.
+
+        ``piece`` es una opción del resultado que llega ya escrita (ver
+        `_analyse_option`); sin ella el sistema arranca vacío."""
         # Se entrega al abrirlo y no al analizar algo: el logro premia haber
         # encontrado la puerta, igual que el del experimentador.
         self._award({"analyser_first"})
@@ -11094,8 +11184,10 @@ class ChordWeaverApp(ctk.CTk):
         ctk.CTkLabel(header, text=tr("Analizador"),
                      font=scaled(("Georgia", 22, "bold"))).pack(side="left")
         ctk.CTkLabel(header,
-                     text=tr("escribí o importá una partitura para "
-                             "analizarla"),
+                     text=(trf("la opción {position} del resultado",
+                               position=piece.position) if piece is not None
+                           else tr("escribí o importá una partitura para "
+                                   "analizarla")),
                      font=FONT_SMALL, text_color=TEXT_MUTED
                      ).pack(side="left", padx=12)
 
@@ -11127,6 +11219,9 @@ class ChordWeaverApp(ctk.CTk):
             on_rest=lambda: self._award({"first_rest"}),
             on_analysed=self._analysed)
         self.analyzer.pack(fill="both", expand=True)
+        if piece is not None:
+            self.analyzer.load_piece(piece.lines, piece.fifths, piece.metres,
+                                     genre=piece.genre)
 
     def _analysed(self, result) -> None:
         """El analizador terminó de leer una partitura.

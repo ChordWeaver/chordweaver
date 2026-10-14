@@ -1309,28 +1309,13 @@ class Analyzer(ctk.CTkFrame):
 
         written = len(score.parts)
         parts = importer.kept_voices(score.parts, MAX_VOICES)
-        # Cuántas voces hay lo dice la partitura. El compás también, y sus
-        # cambios: una pieza que arranca en cuatro por cuatro y pasa a tres
-        # se escribía entera en cuatro, y con las barras corridas se corría
-        # todo lo que se apoya en ellas.
-        self._metres = {1: (score.beats, score.beat_type)}
-        for bar, beats, beat_type in score.metres:
-            self._metres[max(1, bar)] = (beats, beat_type)
-        self.metre_menu.set(f"{score.beats}/{score.beat_type}")
-        self.metre_from.delete(0, "end")
-        self.metre_from.insert(0, "1")
-        label = next((name for name, f in self.key_signatures
-                      if f == score.fifths), None)
-        if label:
-            self.key_menu.set(tr(label))
-        self._pickup = score.pickup_quarters
-        self.staff.set_key(score.fifths, score.beats, score.beat_type)
-        self.staff.pickup = score.pickup_quarters
         # Las voces se acomodan de grave a aguda contra los carriles del
         # sistema, que es el orden en el que el pentagrama las escribe.
-        self.staff.load([importer.written_line(part) for part in parts])
-        self._apply_metres()
-        self._voice_changed()
+        self.load_piece([importer.written_line(part) for part in parts],
+                        score.fifths,
+                        [(1, score.beats, score.beat_type)]
+                        + list(score.metres),
+                        pickup=score.pickup_quarters)
         if self.on_imported is not None:
             self.on_imported()
         names = ", ".join(list(reversed(GRAND_VOICES))[:len(parts)])
@@ -1343,6 +1328,44 @@ class Analyzer(ctk.CTkFrame):
                 "aguda y las dos del medio que más le agregan al acorde.",
                 voices=written)
         messagebox.showinfo(tr("Partitura importada"), message)
+
+    def load_piece(self, lines, fifths: int,
+                   metres: Sequence[Tuple[int, int, int]],
+                   genre: Optional[str] = None, pickup: float = 0.0) -> None:
+        """
+        Escribir en el sistema una pieza entera y dejarla analizándose.
+
+        ``lines`` va una por carril, de grave a aguda, en pares (altura o
+        None, duración). La usan el importador y la pantalla de resultados,
+        que manda una opción sin pasar por un archivo y con el estilo con
+        que se generó (``genre``, una clave de `STYLES`).
+        """
+        # Cuántas voces hay lo dice la partitura. El compás también, y sus
+        # cambios: una pieza que arranca en cuatro por cuatro y pasa a tres
+        # se escribía entera en cuatro, y con las barras corridas se corría
+        # todo lo que se apoya en ellas.
+        metres = list(metres) or [(1, 4, 4)]
+        self._metres = {}
+        for bar, beats, beat_type in metres:
+            self._metres[max(1, bar)] = (beats, beat_type)
+        beats, beat_type = self._metres.get(1, metres[0][1:])
+        self._metres[1] = (beats, beat_type)
+        self.metre_menu.set(f"{beats}/{beat_type}")
+        self.metre_from.delete(0, "end")
+        self.metre_from.insert(0, "1")
+        label = next((name for name, f in self.key_signatures
+                      if f == fifths), None)
+        if label:
+            self.key_menu.set(tr(label))
+        style = next((name for name, key in STYLES if key == genre), None)
+        if style:
+            self.style_menu.set(tr(style))
+        self._pickup = pickup
+        self.staff.set_key(fifths, beats, beat_type)
+        self.staff.pickup = pickup
+        self.staff.load(lines)
+        self._apply_metres()
+        self._voice_changed()
 
     def _export(self) -> None:
         if self.result is None:

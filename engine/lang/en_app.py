@@ -1047,4 +1047,10 @@ CATALOG = {
     'Primera estrella': 'First star',
     'Segunda estrella': 'Second star',
     'Tercera estrella': 'Third star',
+    # Mandar una opción del resultado al analizador.
+    'Analizar': 'Analyze',
+    'Abre esta opción en el analizador, juzgada con las reglas del estilo con que se generó.':
+        'Opens this option in the Analyzer, judged by the rules of the '
+        'style it was generated in.',
+    'la opción {position} del resultado': 'option {position} of the result',
 }

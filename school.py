@@ -265,8 +265,11 @@ class School(ctk.CTkFrame):
                                text=f"{unit.numeral} · {tr(unit.short)}",
                                fill=colour,
                                font=self.font(("Segoe UI Semibold", 10)))
+        # Dos estados y nada más: aprobada entera o pendiente. Cualquier
+        # lección se abre, así que un tercero ---«abierta»--- no decía nada, y
+        # pintado con el color se leía como hecha: aprobar un ejercicio
+        # adelante encendía todas las de atrás y no se sabía cuáles faltaban.
         for index, (x, item, _number) in enumerate(stations):
-            opened = self.progress.lesson_open(item)
             done = self.progress.lesson_done(item)
             chosen = item.key == self.lesson.key
             if chosen:
@@ -274,19 +277,17 @@ class School(ctk.CTkFrame):
                                    outline=accent, width=2)
             if done:
                 canvas.create_oval(x - 7, line_y - 7, x + 7, line_y + 7,
-                                   fill=accent, outline=accent)
-            elif opened:
-                canvas.create_oval(x - 7, line_y - 7, x + 7, line_y + 7,
-                                   fill=colours["surface"], outline=accent,
-                                   width=2)
+                                   fill=accent, outline=accent,
+                                   tags=("station", "done"))
             else:
                 canvas.create_oval(x - 6, line_y - 6, x + 6, line_y + 6,
-                                   fill=colours["surface"], outline=faint,
-                                   width=1)
+                                   fill=colours["surface"],
+                                   outline=colours["muted"], width=1,
+                                   tags=("station", "pending"))
             if index == self._hover_station:
                 label = tr(item.title)
                 canvas.create_text(x, line_y + 18, text=label,
-                                   fill=colours["text"] if opened else faint,
+                                   fill=colours["text"],
                                    font=self.font(("Segoe UI", 10)))
         # La graduación, al final del camino. Una estrella apagada hasta que
         # se la vive: es la única estación que no es una lección.
