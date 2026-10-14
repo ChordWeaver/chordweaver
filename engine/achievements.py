@@ -34,12 +34,12 @@ from . import history
 from .fitness import GENRE_PROFILES, parallel_interval_violation
 from .harmony import DOMINANT, SET_PIECES, is_applied_dominant
 from .theory import ROLE_FIFTH, ROLE_SEVENTH, ROLE_THIRD, Chord
-from engine.i18n import tr, trf, trs
+from engine.i18n import N, tr, trf, trs
 
 _FILENAME = "achievements.json"
 
 #: Título por completar las tres estrellas.
-TRIUMPH_TITLE = "Triunfador"
+TRIUMPH_TITLE = N("Triunfador")
 
 #: Cuántas estrellas hay.
 STAR_COUNT = 3

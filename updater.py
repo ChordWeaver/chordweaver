@@ -182,8 +182,8 @@ def notice(release: updates.Release, colours: Dict[str, str],
                  text_color=colours["text"]).pack(anchor="w", padx=26,
                                                   pady=(24, 2))
     ctk.CTkLabel(caja,
-                 text="ChordWeaver %s  ·  la tuya es la %s"
-                      % (release.version, current),
+                 text=trf("ChordWeaver {nueva}  ·  la tuya es la {actual}",
+                          nueva=release.version, actual=current),
                  font=fuente(("Segoe UI", 12)),
                  text_color=colours["gold"]).pack(anchor="w", padx=26,
                                                   pady=(0, 14))

@@ -59,7 +59,7 @@ from .achievements import BLUES_PACT, first_match, matched_tonics
 from .theory import (ROLE_FIFTH, ROLE_ROOT, ROLE_SEVENTH, SHARP_NAMES,
                      Chord, build_voice_parts, parse_chord)
 from .voicing import build_requirement
-from engine.i18n import tr, trf, trs
+from engine.i18n import N, tr, trf, trs
 
 _FILENAME = "story.json"
 
@@ -874,7 +874,7 @@ def _bars(*rows: Tuple[str, ...]) -> Tuple[Tuple[str, float], ...]:
 #: segundo compás y el giro de vuelta en el último, que es lo que hace que la
 #: rueda no pare nunca.
 TWELVE_BAR_BLUES = Piece(
-    title="Doce compases",
+    title=N("Doce compases"),
     genre_key="jazz",
     time_signature="4/4",
     chords=_bars(("C7", "F7", "C7", "C7"),

@@ -11,6 +11,26 @@ editan a mano: las saca `python -m engine.lang.audit --missing`.
 
 CATALOG = {
     # -- los logros: nombres -------------------------------------------------
+    # Los nombres sin acento: la cosecha no los veía hasta que `audit` leyó
+    # los argumentos de `Achievement`. Los que ya estaban en inglés quedan
+    # igual.
+    'Aprendiz': 'Apprentice',
+    'Caminamos juntos': 'Walking together',
+    'Cantando juntos': 'Singing together',
+    'Comienzos': 'Beginnings',
+    'Director divino': 'Divine conductor',
+    'Feel the Swing': 'Feel the Swing',
+    'Lector comprometido': 'Dedicated reader',
+    'Navegando nuevos mares': 'Sailing new seas',
+    'Ole!': 'Ole!',
+    'Shhhh!': 'Shhhh!',
+    'Take Five': 'Take Five',
+    'Take the road Jack!': 'Take the road Jack!',
+    'Tomando nota': 'Taking notes',
+    'Unidos estamos, unidos triunfamos': 'United we stand, united we triumph',
+    'Vine preparado': 'I came prepared',
+    'Estaba destinado a suceder.': 'It was meant to happen.',
+    'Triunfador': 'Champion',
     'Aprendiz de Bach': 'Bach’s apprentice',
     'Armando y uniendo': 'Building and binding',
     'Contrapunto del aprendiz': 'The apprentice’s counterpoint',
@@ -144,6 +164,7 @@ CATALOG = {
     '—  cuatro voces y una congregación  —':
         '—  four voices and a congregation  —',
     '—  el quinto trabajo entregado  —': '—  the fifth work handed in  —',
+    '—  alguien vino a escuchar  —': '—  somebody came to listen  —',
     '—  no queda nada por conseguir  —': '—  there is nothing left to earn  —',
     '—  tres sonidos que no existían  —':
         '—  three sounds that did not exist  —',
@@ -400,6 +421,10 @@ CATALOG = {
     'La guitarra de Django': 'Django’s guitar',
     'La que no existe': 'The one that does not exist',
     'La rueda': 'The wheel',
+    'Tres puertas abiertas': 'Three open doors',
+    'Dos acordes': 'Two chords',
+    'Siete notas': 'Seven notes',
+    'Doce compases': 'Twelve bars',
     'Una canción entera': 'A whole song',
     '★  La escalera': '★  The staircase',
     '★  La gracia': '★  Grace',

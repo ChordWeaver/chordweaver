@@ -10062,7 +10062,7 @@ class ChordWeaverApp(ctk.CTk):
             if star >= achievements.STAR_COUNT:
                 title = ctk.CTkLabel(
                     holder, text=trf("Título obtenido: {TRIUMPH_TITLE}",
-                                     TRIUMPH_TITLE=achievements.TRIUMPH_TITLE),
+                                     TRIUMPH_TITLE=tr(achievements.TRIUMPH_TITLE)),
                     font=scaled(("Segoe UI Semibold", 19)), text_color=GOLD)
                 title.pack(pady=(14, 0))
                 start_shimmer(title)
@@ -10832,8 +10832,8 @@ class ChordWeaverApp(ctk.CTk):
         scroll = ctk.CTkScrollableFrame(self.body, fg_color="transparent")
         scroll.pack(fill="both", expand=True, pady=(4, 6))
 
-        ordinals = {1: "Primera estrella", 2: "Segunda estrella",
-                    3: "Tercera estrella"}
+        ordinals = {1: N("Primera estrella"), 2: N("Segunda estrella"),
+                    3: N("Tercera estrella")}
         for star in range(1, achievements.STAR_COUNT + 1):
             got, needed = tracker.star_progress(star)
             head = ctk.CTkFrame(scroll, fg_color="transparent")
@@ -12205,7 +12205,7 @@ class ChordWeaverApp(ctk.CTk):
             entries=entries,
             time_signature=signature,
             bar_time_signatures=[signature] * max(1, piece.bar_count),
-            title=piece.title,
+            title=tr(piece.title),
             switch_overrides=dict(story.FIXED_PIECE_RULES),
             ga_config=GAConfig(population_size=8, generations=1, elitism=1,
                                tournament_size=2),

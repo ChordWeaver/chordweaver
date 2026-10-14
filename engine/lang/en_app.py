@@ -1036,4 +1036,8 @@ CATALOG = {
     'Violonchelo do2–mi4, viola do3–do5, segundo violín sol3–mi5 y primer violín sol3–la5: cada uno desde su cuerda más grave.':
         'Cello C2–E4, viola C3–C5, second violin G3–E5 and first violin '
         'G3–A5: each one from its lowest string.',
+    # Las tres estrellas de la lista de logros.
+    'Primera estrella': 'First star',
+    'Segunda estrella': 'Second star',
+    'Tercera estrella': 'Third star',
 }

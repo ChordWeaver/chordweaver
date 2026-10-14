@@ -217,7 +217,8 @@ CATALOG = {
     # -- el cartel de versión nueva ------------------------------------------
     'Actualizar': 'Update',
     'Ahora no': 'Not now',
-    'ChordWeaver %s  ·  la tuya es la %s': 'ChordWeaver %s  ·  yours is %s',
+    'ChordWeaver {nueva}  ·  la tuya es la {actual}':
+        'ChordWeaver {nueva}  ·  yours is {actual}',
     'Hay una versión nueva': 'There is a new version',
     'No perdés tu progreso. Los logros, el libro, el sendero y el historial se pasan a la carpeta nueva, y la página explica cómo.':
         'You won’t lose your progress. Your achievements, book, path and '

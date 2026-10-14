@@ -54,7 +54,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from . import history
 from .story import DEVIL, Line, NARRATOR
-from engine.i18n import tr, trf, trs
+from engine.i18n import N, tr, trf, trs
 
 _FILENAME = "visitors.json"
 
@@ -436,7 +436,7 @@ VISITS: Dict[str, Visit] = {
     GREGORY_CHANT: Visit(
         GREGORY_CHANT, GREGORY, _GREGORY,
         dream="—  una sola línea, sin acordes debajo  —",
-        title="—  alguien vino a escuchar  —",
+        title=N("—  alguien vino a escuchar  —"),
         name="Gregorio I"),
     WATCHER_ALL: Visit(
         WATCHER_ALL, WATCHER, _WATCHER,

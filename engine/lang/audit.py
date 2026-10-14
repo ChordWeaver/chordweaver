@@ -83,8 +83,11 @@ IGNORED = {
 #: Los títulos de las tablas, por posición del argumento. Un título de una
 #: palabra sin acento ---«Nota», «Acorde»--- no parece prosa y la cosecha no
 #: lo veía, pero se dibuja con `tr()` como cualquier otro: en inglés el libro
-#: decía «Nota» arriba de un párrafo en inglés.
-TITLES = {"Entry": (1,), "Chapter": (1,), "Lesson": (1,), "Unit": (2, 3)}
+#: decía «Nota» arriba de un párrafo en inglés. Lo mismo los nombres de los
+#: logros y los de los tramos del sendero: «Aprendiz», «Tomando nota» o
+#: «Dos acordes» salían en castellano.
+TITLES = {"Entry": (1,), "Chapter": (1,), "Lesson": (1,), "Unit": (2, 3),
+          "Achievement": (1, 2), "Step": (2,)}
 
 
 def _ignored(text: str) -> bool:
