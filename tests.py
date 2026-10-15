@@ -8558,32 +8558,103 @@ class TestTheAnalyserReadsWhatWasGenerated(unittest.TestCase):
 
     def test_the_harmoniser(self):
         """
-        Sin `strict`: la búsqueda ve la melodía una nota por acorde, así que
-        una nota de la melodía entre dos acordes puede formar paralelas que
-        el analizador marca y el Armonizador no vio.
+        Con `strict` también acá: la melodía se mueve adentro de cada acorde
+        y la búsqueda mide las paralelas contra lo que suena en el cambio
+        (`RunSettings.melody_edges`). Los casos 25, 27 y 29 tenían paralelas
+        con una nota de la melodía entre dos acordes antes de eso.
         """
         self._check(self._harmoniser(
             "classical", [72, 74, 76, 77, 79, 77, 76, 74, 72], 21),
-            "classical", "Do mayor")
+            "classical", "Do mayor", strict=True)
         self._check(self._harmoniser(
             "chorale", [65, 67, 69, 70, 72, 70, 69, 67, 65], 22,
-            signature_tonic=5), "chorale", "Fa mayor")
+            signature_tonic=5), "chorale", "Fa mayor", strict=True)
         self._check(self._harmoniser(
             "jazz", [76, 74, 72, 71, 72, 74, 76, 79, 77, 76, 74, 72], 23),
             "jazz", "Do mayor")
         self._check(self._harmoniser(
             "classical", [67, 69, 71, 72, 74, 72, 71, 69, 67], 25,
             durations=[1, 0.5, 0.5, 1, 1, 1, 1, 2, 4]),
-            "classical", "Do mayor")
+            "classical", "Do mayor", strict=True)
         self._check(self._harmoniser(
             "chorale", [69, 72, 71, 69, 68, 69, 71, 72, 71, 68, 69], 27),
-            "chorale", "La menor")
+            "chorale", "La menor", strict=True)
         self._check(self._harmoniser(
             "classical", [74, 76, 78, 79, 76, 74, 73, 74], 28,
-            signature_tonic=2), "classical", "Re mayor")
+            signature_tonic=2), "classical", "Re mayor", strict=True)
         self._check(self._harmoniser(
             "classical", [72, 71, 69, 67, 69, 71, 72], 29,
-            voices=("B", "T", "S")), "classical", "Do mayor")
+            voices=("B", "T", "S")), "classical", "Do mayor", strict=True)
+
+    def test_the_bach_sixth_leaves_no_parallels(self):
+        """
+        La sexta de Bach esquiva unas quintas paralelas: no puede dejar
+        otras. Moviendo una voz un tono, o intercambiando dos en el vecino,
+        las armaba con otra voz o con la nota de la melodía que suena en el
+        cambio de acorde. Se fuerza la sexta en todas.
+        """
+        from unittest import mock
+        from engine import flourish
+        rng = random.Random(5)
+        pool = ["C", "Dm", "Em", "F", "G", "Am", "G7", "Dm7"]
+        sixths = 0
+        with mock.patch.object(flourish, "SIXTH_CHANCE", 1.0):
+            for seed in range(16):
+                genre = "classical" if seed % 2 else "chorale"
+                if seed % 2:
+                    outcome = self._organiser(
+                        genre, ["C"] + [rng.choice(pool) for _ in range(6)]
+                        + ["C"], 300 + seed)
+                    session.apply_flourishes(outcome, genre, 0)
+                else:
+                    notes = [72, 74, 76, 74, 72, 71, 69, 71, 72, 74, 72]
+                    outcome = self._harmoniser(
+                        genre, notes, 300 + seed,
+                        durations=[1, 0.5, 0.5, 1, 1, 1, 0.5, 0.5, 1, 1, 4])
+                self.assertTrue(outcome.succeeded)
+                sixths += outcome.flourishes.sixth_slot is not None
+                for position in range(len(outcome.result.solutions)):
+                    result = self._read(outcome, position, genre)
+                    self.assertFalse(
+                        [f for f in result.findings if f.severity == "grave"
+                         and f.kind in ("quintas_paralelas",
+                                        "octavas_paralelas")],
+                        "semilla %d, opción %d" % (seed, position + 1))
+        self.assertTrue(sixths, "la sexta no se puso nunca")
+
+
+class TestMelodyEdges(unittest.TestCase):
+    """
+    Lo que la melodía del Armonizador canta en cada cambio de acorde.
+    """
+
+    def test_the_edges_are_the_first_and_last_note_of_each_spot(self):
+        notes = [harmonize.MelodyNote(pitch=p, duration_quarters=d,
+                                      bar_index=0, offset_quarters=o)
+                 for p, d, o in [(72, 1.0, 0.0), (71, 1.0, 1.0),
+                                 (69, 2.0, 2.0)]]
+        melody = harmonize.Melody(notes=notes, bars=[harmonize.MelodyBar()])
+        spots = [harmonize.HarmonySpot(0, 0.0, 2.0, note=notes[0]),
+                 harmonize.HarmonySpot(0, 2.0, 2.0, note=notes[2])]
+        edges = session._melody_edges(melody, [(spot, None) for spot in spots])
+        # El primero entra con su nota fijada y sale con la siguiente; el
+        # segundo es una sola nota.
+        self.assertEqual(edges, [(None, 71), (None, None)])
+
+    def test_the_search_measures_parallels_against_the_last_note(self):
+        """
+        Mi en el bajo y do arriba; la melodía baja a si antes de que los dos
+        bajen juntos un tono: mi-si, re-la. Contra la nota fijada (do) no hay
+        quintas; contra la que suena, sí.
+        """
+        profile = GENRE_PROFILES["classical"]
+        voices = build_voice_parts(["B", "S"])
+        chords = [[52, 72], [50, 69]]
+        plain = RunSettings(profile=profile, voices=voices, melody_voice=1)
+        self.assertTrue(evaluate(chords, plain).valid)
+        heard = RunSettings(profile=profile, voices=voices, melody_voice=1,
+                            melody_edges=[(None, 71), (None, None)])
+        self.assertFalse(evaluate(chords, heard).valid)
 
 
 class TestStaffWriting(unittest.TestCase):

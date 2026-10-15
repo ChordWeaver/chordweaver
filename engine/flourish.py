@@ -152,6 +152,8 @@ def apply_sixth(
     voice_count: int,
     rng: random.Random,
     frozen: Sequence = (),
+    melody_voice: Optional[int] = None,
+    melody_edges: Optional[Sequence[Tuple[Optional[int], Optional[int]]]] = None,
 ) -> Optional[Tuple[int, int]]:
     """
     Rewrite one chord as a sixth and force its neighbour into parallel fifths.
@@ -167,6 +169,13 @@ def apply_sixth(
     ``frozen`` dice, lugar por lugar, qué voces no se pueden tocar: la
     melodía que el usuario escribió en el armonizador. Ni la quinta que se
     vuelve sexta ni el intercambio del vecino pueden caer en una de ellas.
+
+    Una sexta que deja quintas u octavas paralelas se descarta: es el
+    recurso para esquivarlas, y moviendo una voz un tono, o intercambiando
+    dos en el vecino, las armaba con otra voz. ``melody_voice`` y
+    ``melody_edges`` son lo que la melodía del Armonizador canta al empezar
+    y al terminar cada acorde (`RunSettings.melody_edges`): se mueve adentro
+    del acorde, y las paralelas se miden contra lo que suena en el cambio.
     """
     options = eligible_sixth_slots(chords, locked, voice_count)
     if not options:
@@ -213,6 +222,9 @@ def apply_sixth(
             # into place. Leaving the neighbour alone is fine: the sixth
             # still stands on its own as a colour, it simply is not
             # dramatising an avoided parallel.
+            if _leaves_parallels(chords, {slot: moved},
+                                 melody_voice, melody_edges):
+                continue
             chords[slot] = moved
             return slot, slot, fifth_voice
         if neighbour < len(frozen) and {fifth_voice, holder} & set(frozen[neighbour]):
@@ -222,10 +234,37 @@ def apply_sixth(
         if forced != sorted(forced) or set(forced) != set(other):
             continue
 
+        if _leaves_parallels(chords, {slot: moved, neighbour: forced},
+                             melody_voice, melody_edges):
+            continue
         chords[slot] = moved
         chords[neighbour] = forced
         return slot, neighbour, fifth_voice
     return None
+
+
+def _leaves_parallels(chords, changed: Dict[int, List[int]],
+                      melody_voice: Optional[int], edges) -> bool:
+    """
+    ¿Los acordes cambiados dejan quintas u octavas paralelas en los cambios
+    de acorde que tocan, contando lo que canta la melodía si la hay?
+    """
+    from .fitness import parallel_interval_violation
+    edges = edges if melody_voice is not None else None
+    trial = [changed.get(index, chord) for index, chord in enumerate(chords)]
+    touched = {i for index in changed for i in (index, index + 1)
+               if 0 < i < len(trial)}
+    for index in sorted(touched):
+        before, after = list(trial[index - 1]), list(trial[index])
+        if edges and index - 1 < len(edges) and edges[index - 1][1] is not None:
+            before[melody_voice] = edges[index - 1][1]
+        if edges and index < len(edges) and edges[index][0] is not None:
+            after[melody_voice] = edges[index][0]
+        for a in range(len(before)):
+            for b in range(a + 1, len(before)):
+                if any(parallel_interval_violation(before, after, a, b)):
+                    return True
+    return False
 
 
 def sixth_symbol(base_symbol: str) -> str:

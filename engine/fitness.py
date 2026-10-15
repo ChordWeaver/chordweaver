@@ -542,6 +542,14 @@ class RunSettings:
     #: below it, so one number describes the pair. ``None`` switches the
     #: organum rules off entirely.
     principalis_voice: Optional[int] = None
+    #: Lo que la melodía del Armonizador canta al empezar y al terminar cada
+    #: acorde, cuando no es la nota fijada en el acorde: ``(entrada,
+    #: salida)`` por acorde, ``None`` donde coincide. La melodía se mueve
+    #: adentro del acorde mientras las otras voces sostienen, así que al
+    #: cambiar de acorde lo que suena es su última nota y no la fijada:
+    #: midiendo las paralelas contra la fijada, el analizador encontraba
+    #: quintas que la búsqueda nunca vio.
+    melody_edges: Optional[List[Tuple[Optional[int], Optional[int]]]] = None
 
     def with_overrides(self, **kwargs) -> "RunSettings":
         """Return a copy whose profile has the given fields replaced."""
@@ -553,6 +561,7 @@ class RunSettings:
             colour_pitch_classes=self.colour_pitch_classes,
             melody_voice=self.melody_voice,
             principalis_voice=self.principalis_voice,
+            melody_edges=self.melody_edges,
         )
 
 
@@ -831,9 +840,24 @@ def evaluate(
 
     # --- transition checks -------------------------------------------------
     voice_count = len(voices)
+    edges = settings.melody_edges
+    melody = settings.melody_voice
     for index in range(1, len(chords)):
         previous = chords[index - 1]
         current = chords[index]
+        # Lo que suena en el cambio de acorde, que es contra lo que se miden
+        # las paralelas: en la voz de la melodía, su última nota del acorde
+        # que se deja y la que suena al empezar el que llega.
+        before, after = previous, current
+        if edges is not None and melody is not None:
+            leaving = edges[index - 1][1] if index - 1 < len(edges) else None
+            arriving = edges[index][0] if index < len(edges) else None
+            if leaving is not None:
+                before = list(previous)
+                before[melody] = leaving
+            if arriving is not None:
+                after = list(current)
+                after[melody] = arriving
 
         if profile.forbid_melodic_tritone and has_melodic_tritone(previous, current):
             result.valid = False
@@ -843,7 +867,7 @@ def evaluate(
 
         for a in range(voice_count):
             for b in range(a + 1, voice_count):
-                fifth, octave = parallel_interval_violation(previous, current, a, b)
+                fifth, octave = parallel_interval_violation(before, after, a, b)
                 if fifth and profile.forbid_parallel_fifths:
                     result.valid = False
                     result.violation = f"transition {index - 1}->{index}: parallel fifths"
@@ -884,11 +908,11 @@ def evaluate(
             result.contrary_bonus += profile.weight_contrary_bonus * _contrary_pairs(movements)
 
         if profile.weight_direct_fifths and voice_count >= 2:
-            if direct_perfect_violation(previous, current, 0, voice_count - 1):
+            if direct_perfect_violation(before, after, 0, voice_count - 1):
                 result.direct_perfect += profile.weight_direct_fifths
 
         # --- genre-idiomatic per-transition rules ---
-        result.style += profile.weight_overlap * voice_overlap_count(previous, current)
+        result.style += profile.weight_overlap * voice_overlap_count(before, after)
         result.style += common_tone_reward(previous, current, profile.weight_common_tone)
         result.style += bass_contrary_reward(previous, current, profile.weight_bass_contrary)
         result.style += organum_parallel_reward(

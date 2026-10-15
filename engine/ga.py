@@ -495,6 +495,7 @@ class _ScoreContext:
             # working: dropping it here silently switched them off.
             melody_voice=base.melody_voice,
             principalis_voice=base.principalis_voice,
+            melody_edges=base.melody_edges,
         )
 
     def tidy(self, choices: Sequence[int]) -> List[int]:
@@ -890,7 +891,17 @@ def _seed_chromosome(
             if previous is None:
                 best_pick, best_option = pick, option
                 break
-            trial = evaluate([previous, pick], pair_settings)
+            # La melodía del Armonizador, con lo que suena en este cambio:
+            # sin eso la siembra aprobaba pares que la evaluación entera
+            # después anula, y la población salía vacía.
+            pair = pair_settings
+            if settings.melody_edges is not None:
+                edges = settings.melody_edges
+                pair = replace(pair_settings,
+                               melody_voice=settings.melody_voice,
+                               melody_edges=[edges[slot_index - 1],
+                                             edges[slot_index]])
+            trial = evaluate([previous, pick], pair)
             if trial.valid:
                 best_pick, best_option = pick, option
                 break

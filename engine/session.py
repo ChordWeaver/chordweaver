@@ -139,6 +139,10 @@ class JobOutcome:
     #: Devices found or applied in the winning solution, for the interface
     #: to point out.
     flourishes: Optional[flourish.FlourishResult] = None
+    #: Lo que la melodía del Armonizador canta al empezar y al terminar cada
+    #: acorde, por opción (`_melody_edges`). La sexta de Bach lo mira para no
+    #: dejar paralelas contra la melodía real.
+    melody_edges: Dict[int, Any] = field(default_factory=dict)
 
     @property
     def succeeded(self) -> bool:
@@ -1148,8 +1152,11 @@ def apply_flourishes(
     # The sixth: common practice only, and only when the dice say so.
     rng = random.Random()
     if genre_key in ("classical", "chorale") and rng.random() < flourish.SIXTH_CHANCE:
-        applied = flourish.apply_sixth(best.slots, locked, voice_count, rng,
-                                       frozen=frozen)
+        melody = getattr(outcome, "melody", None)
+        applied = flourish.apply_sixth(
+            best.slots, locked, voice_count, rng, frozen=frozen,
+            melody_voice=getattr(melody, "melody_voice", None),
+            melody_edges=(getattr(outcome, "melody_edges", None) or {}).get(0))
         if applied is not None:
             sixth, forced, _voice = applied
             # En columnas de la partitura, que es como las cuenta la grilla.
@@ -1408,13 +1415,18 @@ def harmonise_melody(
                          else base_seed + 1000 * (variant + 1)),
         )
         share = (1.0 - MAIN_SHARE) / max(1, request.solutions_wanted - 1)
-        outcome = run(built, settings, lighter, solutions_wanted=1,
+        edges = _melody_edges(melody, progression)
+        outcome = run(built, replace(settings, melody_edges=edges),
+                      lighter, solutions_wanted=1,
                       tonic_pc=bar.tonic,
                       progress=phase(MAIN_SHARE + share * variant, share,
                                      lighter.generations))
-        return built, (outcome.solutions[0] if outcome.solutions else None)
+        return built, edges, (outcome.solutions[0] if outcome.solutions
+                              else None)
 
-    result = run(slots, settings, request.ga_config,
+    edges = _melody_edges(melody, chosen)
+    result = run(slots, replace(settings, melody_edges=edges),
+                 request.ga_config,
                  progress=phase(0.0, MAIN_SHARE, request.ga_config.generations),
                  solutions_wanted=1, tonic_pc=bar.tonic)
 
@@ -1422,9 +1434,9 @@ def harmonise_melody(
     # written for.
     alternates = []
     for variant, progression in enumerate(attempts[1:]):
-        built, solution = voice(progression, variant)
+        built, heard, solution = voice(progression, variant)
         if solution is not None:
-            alternates.append((built, solution))
+            alternates.append((built, heard, solution))
 
     # Y recién acá se ordenan las tres por costo, todas juntas.
     #
@@ -1437,10 +1449,10 @@ def harmonise_melody(
     # Cada solución viaja pegada a los slots con los que se escribió, porque
     # cada una tiene su propia progresión: ordenar las soluciones sin mover
     # los slots pondría los acordes de una arriba de las notas de otra.
-    ranked = [(result.solutions[0], slots)] if result.solutions else []
-    ranked += [(solution, built) for built, solution in alternates]
-    ranked.sort(key=lambda pair: pair[0].cost)
-    result.solutions = [solution for solution, _built in ranked]
+    ranked = [(result.solutions[0], slots, edges)] if result.solutions else []
+    ranked += [(solution, built, heard) for built, heard, solution in alternates]
+    ranked.sort(key=lambda entry: entry[0].cost)
+    result.solutions = [solution for solution, _built, _heard in ranked]
 
     spec = export.ScoreSpec(
         slots=slots, voices=settings.voices,
@@ -1466,12 +1478,46 @@ def harmonise_melody(
     # `spec.slots` y se la dejaba fuera del diccionario, pero después de
     # ordenar por costo cualquiera de las tres puede encabezar.
     outcome.alternate_slots = {position: built
-                               for position, (_s, built) in enumerate(ranked)}
+                               for position, (_s, built, _h) in enumerate(ranked)}
+    outcome.melody_edges = {position: heard
+                            for position, (_s, _b, heard) in enumerate(ranked)}
     if not result.solutions:
         outcome.errors.append(result.message or "No se encontró una solución.")
     else:
         apply_flourishes(outcome, request.genre_key, bar.tonic)
     return outcome
+
+
+def _melody_edges(melody, progression
+                  ) -> List[Tuple[Optional[int], Optional[int]]]:
+    """
+    Lo que la melodía canta al empezar y al terminar cada lugar de acorde.
+
+    Un par ``(entrada, salida)`` por lugar, ``None`` donde coincide con la
+    nota que el lugar fija (`RunSettings.melody_edges`). La melodía sigue
+    moviéndose adentro del acorde mientras las otras voces sostienen, y al
+    cambiar de acorde lo que se oye es su última nota: es contra esa que el
+    analizador mide las paralelas.
+    """
+    edges: List[Tuple[Optional[int], Optional[int]]] = []
+    for spot, _option in progression:
+        pinned = spot.note.pitch if spot.note is not None else None
+        start = spot.offset_quarters
+        end = start + spot.duration_quarters
+        inside = sorted(
+            (note for note in melody.notes
+             if note.bar_index == spot.bar_index and not note.is_rest
+             and note.pitch is not None
+             and note.offset_quarters < end - 1e-6
+             and note.offset_quarters + note.duration_quarters > start + 1e-6),
+            key=lambda note: note.offset_quarters)
+        if pinned is None or not inside:
+            edges.append((None, None))
+            continue
+        first, last = inside[0].pitch, inside[-1].pitch
+        edges.append((first if first != pinned else None,
+                      last if last != pinned else None))
+    return edges
 
 
 def _close_on_the_root(requirement, pinned: Dict[int, int],
